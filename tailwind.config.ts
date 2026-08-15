@@ -52,12 +52,12 @@ const config: Config = {
           foreground: "hsl(var(--card-foreground))",
         },
         board: {
-          light: "#f0d9b5",
-          dark: "#b58863",
-          selected: "rgba(16, 185, 129, 0.55)",
-          legal: "rgba(16, 185, 129, 0.28)",
-          lastmove: "rgba(251, 191, 36, 0.35)",
-          check: "#ef4444",
+          light: "#EFE6D2",
+          dark: "#6A5D4F",
+          selected: "rgba(201, 168, 106, 0.45)",
+          legal: "rgba(201, 168, 106, 0.7)",
+          lastmove: "rgba(201, 168, 106, 0.30)",
+          check: "rgba(190, 66, 56, 0.5)",
         },
       },
       borderRadius: {
@@ -67,26 +67,22 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
-        display: ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
+        display: ["var(--font-inter)", "system-ui", "sans-serif"],
+        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       keyframes: {
         "fade-in-up": {
-          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "0%": { opacity: "0", transform: "translateY(8px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
         "pulse-soft": {
           "0%, 100%": { opacity: "1" },
-          "50%": { opacity: "0.55" },
-        },
-        shimmer: {
-          "0%": { backgroundPosition: "-400px 0" },
-          "100%": { backgroundPosition: "400px 0" },
+          "50%": { opacity: "0.5" },
         },
       },
       animation: {
-        "fade-in-up": "fade-in-up 0.5s ease-out both",
+        "fade-in-up": "fade-in-up 0.4s ease-out both",
         "pulse-soft": "pulse-soft 2s ease-in-out infinite",
-        shimmer: "shimmer 1.4s linear infinite",
       },
     },
   },

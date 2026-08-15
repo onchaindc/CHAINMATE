@@ -2,76 +2,72 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Gamepad2, Plus, Users } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Bot, Plus } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { getGameBackend } from "@/lib/config";
 
 const LINKS = [
-  { href: "/create?mode=ai", label: "Play vs AI", icon: Bot },
-  { href: "/create", label: "Create game", icon: Plus },
-  { href: "/join", label: "Join game", icon: Users },
+  { href: "/create", label: "Play" },
+  { href: "/join", label: "Join" },
+  { href: "/create?mode=ai", label: "Solo" },
 ];
 
 export function SiteNav() {
   const pathname = usePathname();
-  const backend = getGameBackend();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur-md">
-      <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
-        <Link href="/" className="group flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-transform group-hover:scale-105">
-            <Gamepad2 className="h-5 w-5" aria-hidden />
-          </span>
-          <span className="font-display text-lg font-bold tracking-tight">
-            ChainMate
-          </span>
+    <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur-md">
+      <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
+        <Link href="/" className="group flex shrink-0 items-center" aria-label="ChainMate home">
+          <img
+            src="/logo.svg"
+            alt="ChainMate"
+            className="h-8 w-auto opacity-90 transition-opacity group-hover:opacity-100"
+          />
         </Link>
 
-        <nav className="flex items-center gap-1.5 sm:gap-3">
-          <Badge
-            variant={backend === "local" ? "secondary" : "gold"}
-            className="hidden md:inline-flex"
-            title={
-              backend === "genlayer"
-                ? "Playing on the GenLayer network"
-                : backend === "hosted"
-                  ? "Playing through the shared multiplayer store (Vercel KV)"
-                  : "Playing with the built-in offline backend (same-browser only)"
-            }
-          >
-            {backend === "genlayer"
-              ? "● on GenLayer"
-              : backend === "hosted"
-                ? "● online mode"
-                : "● local mode"}
-          </Badge>
-          {LINKS.map(({ href, label, icon: Icon }) => {
+        <nav className="flex items-center gap-1 sm:gap-2">
+          {LINKS.map(({ href, label }) => {
             const path = href.split("?")[0];
-            const active = pathname.startsWith(path);
+            const active = pathname.startsWith(path) && pathname !== "/";
             return (
               <Link
                 key={href}
                 href={href}
                 className={cn(
-                  buttonVariants({ variant: active ? "secondary" : "ghost", size: "sm" }),
-                  "hidden sm:inline-flex",
+                  "relative px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground",
+                  active && "text-foreground",
                 )}
               >
-                <Icon aria-hidden />
                 {label}
+                {active && (
+                  <span className="absolute inset-x-2.5 -bottom-px h-px bg-primary" aria-hidden />
+                )}
               </Link>
             );
           })}
           <Link
+            href="/create?mode=ai"
+            aria-label="Play vs AI"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "hidden sm:inline-flex")}
+          >
+            <Bot className="h-3.5 w-3.5" aria-hidden />
+            Play vs AI
+          </Link>
+          <Link
             href="/create"
             aria-label="Create game"
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "sm:hidden")}
+            className={cn(buttonVariants({ size: "icon", className: "sm:hidden" }))}
           >
             <Plus aria-hidden />
           </Link>
+          <span
+            className="ml-2 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:flex"
+            title="Chess rules are enforced by an intelligent contract on the GenLayer network"
+          >
+            <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
+            Secured by GenLayer
+          </span>
         </nav>
       </div>
     </header>

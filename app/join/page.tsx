@@ -3,12 +3,11 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Loader2, Sparkles, Users } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { getGameBackend } from "@/lib/config";
 import { getStoreForId } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -49,46 +48,36 @@ export default function JoinGamePage() {
   );
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 py-14 sm:px-6 lg:py-20">
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 py-14 sm:px-6 lg:py-20">
       <div className="animate-fade-in-up w-full text-center">
-        <Badge variant="secondary" className="mb-4">
-          <Users className="mr-1 h-3 w-3 text-emerald-400" aria-hidden />
-          {backend === "genlayer"
-            ? "GenLayer network"
-            : backend === "hosted"
-              ? "Online mode"
-              : "Local mode"}
-        </Badge>
-        <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
-          Join a game
-        </h1>
-        <p className="mx-auto mt-3 max-w-md text-muted-foreground">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+          Invite
+        </p>
+        <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Join a game</h1>
+        <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">
           Enter the game id or paste the invite link your opponent shared.
           You&rsquo;ll play Black.
         </p>
       </div>
 
-      <Card className="mt-8 w-full max-w-md animate-fade-in-up [animation-delay:100ms]">
-        <CardHeader>
-          <CardTitle>Game invite</CardTitle>
-          <CardDescription>One click and you&rsquo;re in the match.</CardDescription>
-        </CardHeader>
-        <CardContent>
+      <Card className="mt-8 animate-fade-in-up [animation-delay:80ms]">
+        <CardContent className="p-5">
           <form onSubmit={join} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="game-id">Game id or link</Label>
+              <Label htmlFor="game-id" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Game id or link
+              </Label>
               <Input
                 id="game-id"
                 placeholder={
                   backend === "genlayer"
-                    ? "0x1a2b3c… or https://…/game/0x1a2b3c"
-                    : backend === "hosted"
-                      ? "hosted_ab12cd or https://…/game/hosted_ab12cd"
-                      : "local_ab12cd or https://…/game/local_ab12cd"
+                    ? "0x1a2b3c… or the full game link"
+                    : "hosted_ab12cd or the full game link"
                 }
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 autoComplete="off"
+                className="h-11"
               />
             </div>
 
@@ -109,20 +98,9 @@ export default function JoinGamePage() {
                   Joining…
                 </>
               ) : (
-                <>
-                  <Users aria-hidden />
-                  Join game
-                </>
+                "Join game"
               )}
             </Button>
-
-            <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-secondary/25 px-3 py-2.5">
-              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-              <p className="text-xs leading-snug text-muted-foreground">
-                The invite link already contains the game id — you can paste the
-                whole link or just the id. No account or keys needed to play.
-              </p>
-            </div>
 
             <p className="text-center text-xs text-muted-foreground">
               Don&rsquo;t have an invite?{" "}
@@ -133,7 +111,7 @@ export default function JoinGamePage() {
                   "h-auto p-0 text-primary",
                 )}
               >
-                Create a game
+                Create a new game
               </Link>
             </p>
           </form>
