@@ -23,13 +23,20 @@ const GAMES_FILE = path.join(DATA_DIR, "games.json");
 /** In-memory cache of the games file (object keyed by game id). */
 let cache: Record<string, string> | null = null;
 let writeChain: Promise<void> = Promise.resolve();
+/** False once a filesystem write fails (read-only host, e.g. Vercel /var/task). */
+let diskWritable = true;
 
 async function readAll(): Promise<Record<string, string>> {
   if (cache) return cache;
+  if (!diskWritable) {
+    cache = {};
+    return cache;
+  }
   try {
     const raw = await fs.readFile(GAMES_FILE, "utf8");
     cache = JSON.parse(raw) as Record<string, string>;
   } catch {
+    // First run (no file yet) or read-only host: start with an empty store.
     cache = {};
   }
   return cache;
@@ -41,10 +48,24 @@ function persist(all: Record<string, string>): Promise<void> {
       // A failed write must not poison the chain for later writes.
     })
     .then(async () => {
-      await fs.mkdir(DATA_DIR, { recursive: true });
-      const tmp = `${GAMES_FILE}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(all), "utf8");
-      await fs.rename(tmp, GAMES_FILE);
+      if (!diskWritable) return;
+      try {
+        await fs.mkdir(DATA_DIR, { recursive: true });
+        const tmp = `${GAMES_FILE}.tmp`;
+        await fs.writeFile(tmp, JSON.stringify(all), "utf8");
+        await fs.rename(tmp, GAMES_FILE);
+      } catch (err) {
+        // Read-only filesystem (serverless hosts like Vercel expose /var/task
+        // as read-only). Never crash the game flow — fall back to serving this
+        // instance from memory. Games persist for the life of the instance;
+        // configure Vercel KV for durable cross-instance multiplayer.
+        diskWritable = false;
+        console.warn(
+          "[chainmate] persistent game store unavailable (read-only filesystem?), " +
+            "using in-memory storage for this instance:",
+          err instanceof Error ? err.message : err,
+        );
+      }
     });
   return writeChain;
 }

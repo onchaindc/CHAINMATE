@@ -1,15 +1,17 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { AlertCircle, Loader2, Sparkles, Users } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { getGameBackend } from "@/lib/config";
 import { getStoreForId } from "@/lib/store";
+import { cn } from "@/lib/utils";
 
 function normalizeId(value: string): string {
   const trimmed = value.trim();
@@ -91,9 +93,13 @@ export default function JoinGamePage() {
             </div>
 
             {error && (
-              <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </p>
+              <div className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-destructive">Could not join</p>
+                  <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
+                </div>
+              </div>
             )}
 
             <Button type="submit" disabled={busy || !value.trim()} className="w-full" size="lg">
@@ -109,6 +115,27 @@ export default function JoinGamePage() {
                 </>
               )}
             </Button>
+
+            <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-secondary/25 px-3 py-2.5">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+              <p className="text-xs leading-snug text-muted-foreground">
+                The invite link already contains the game id — you can paste the
+                whole link or just the id. No account or keys needed to play.
+              </p>
+            </div>
+
+            <p className="text-center text-xs text-muted-foreground">
+              Don&rsquo;t have an invite?{" "}
+              <Link
+                href="/create"
+                className={cn(
+                  buttonVariants({ variant: "link", size: "sm" }),
+                  "h-auto p-0 text-primary",
+                )}
+              >
+                Create a game
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>
