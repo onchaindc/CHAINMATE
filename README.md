@@ -24,23 +24,40 @@ npm run dev
 ```
 
 That's it — **the app runs with zero configuration and zero API keys.** Out of
-the box it uses the built-in **local mode**: game state lives in the browser
-(localStorage) and syncs across tabs via `BroadcastChannel`, so two players on
-one machine can play a full game immediately.
+the box you get:
 
-To play on the actual GenLayer chain, see [Playing on GenLayer](#playing-on-genlayer).
+- **Play vs AI** — a single-player match against the on-device chess engine
+  (no opponent, no setup, works anywhere)
+- **Online multiplayer (default)** — create a game, share the link, and a
+  friend joins as Black from any device. Games live in a shared server store:
+  Vercel KV when configured, otherwise a built-in file store (`.data/games.json`,
+  gitignored) that works in previews and containers with zero setup.
+- **Local two-player mode** — game state lives in the browser (localStorage)
+  and syncs across tabs via `BroadcastChannel`, for quick same-browser play
 
-### Two-player local demo
+To play on the actual GenLayer chain, see
+[Playing on GenLayer](#playing-on-genlayer).
+
+### Instant single-player (Play vs AI)
+
+1. Open `/create?mode=ai` (or hit **Play vs AI** on the landing page).
+2. Pick a difficulty — **Casual** (2-ply search) or **Competitive** (3-ply).
+3. Play White against the AI (Black). It moves through the exact same
+   validation + commentary path as a human, entirely in your browser.
+
+### Two-player online demo
 
 1. Open `http://localhost:3000/create` → **Create game** (you are White).
-2. Copy the share link and open it in a **second tab** (or a different browser
-   window) → **Join as Black**.
-3. Play! Moves, commentary and results sync live between the tabs.
+2. Copy the share link and send it to a friend — or open it in a **second
+   tab** of your browser (each tab gets its own identity, so it joins as
+   Black). Works across devices out of the box.
+3. Play! Moves, commentary and results sync live between the players.
 
 ---
 
 ## Features
 
+- **Play vs AI** — single-player mode with an on-device minimax engine
 - **Create / Join games** — one-click flows, no accounts required
 - **Real-time chess board** — live updates for both players
 - **On-chain move validation** — full chess rules enforced by the contract
@@ -79,6 +96,7 @@ app/                        Next.js App Router
   page.tsx                  landing page
   create/  join/  game/[id] game flows
   api/games/                on-chain game actions (create/join/move/resign/summary)
+  api/hosted/games/         shared multiplayer store (Vercel KV or file store)
   api/ai/                   optional LLM commentary/summary
 components/
   ui/                       shadcn-style primitives
@@ -87,33 +105,63 @@ components/
 hooks/
   use-game.ts               game state, live subscription, actions
   use-ai-commentary.ts      LLM commentary for the latest move
+  use-ai-opponent.ts        drives the single-player AI opponent
 lib/
   chess.ts                  chess.js helpers
+  ai-engine.ts              on-device chess AI (minimax + alpha-beta)
+  game-logic.ts             shared pure game rules (all stores use this)
   commentary.ts             rule-based commentary engine
   summary.ts                rule-based match summary
-  store/local-store.ts      offline backend (localStorage + BroadcastChannel)
+  store/local-store.ts      offline backend (localStorage + BroadcastChannel + AI games)
+  store/hosted-store.ts     shared multiplayer backend (talks to /api/hosted/games)
   store/genlayer-store.ts   on-chain backend (talks to /api/games)
+  server/hosted.ts          Vercel KV-backed game store
   server/genlayer.ts        genlayer-js: deploy, read, write, receipt handling
   server/ai.ts              OpenAI-compatible LLM calls
 contracts/
   chainmate.py              the GenLayer intelligent contract (Python)
 ```
 
-### Two backends, one interface
+### Three backends, one interface
 
-Both stores implement the same `GameStore` interface (create/join/move/resign/
-summary/subscribe). The id decides the backend: local games start with
-`local_`, on-chain games are `0x…` contract addresses.
+All stores implement the same `GameStore` interface (create/join/move/resign/
+summary/subscribe) and share the same pure game rules (`lib/game-logic.ts`),
+so the app behaves identically on every backend. The game id decides the
+backend automatically: `local_…` → browser store, `hosted_…` → shared server
+store, `0x…` → GenLayer contract.
 
-| | Local mode (default) | GenLayer mode |
-| --- | --- | --- |
-| State | localStorage + BroadcastChannel | the smart contract |
-| Setup | none | deploy contract + 2 signing keys |
-| Move latency | instant | seconds (testnet) |
-| Verifiability | demo only | full on-chain |
+| | Hosted mode (default) | Local mode | GenLayer mode |
+| --- | --- | --- | --- |
+| State | shared server store (Vercel KV or file store) | localStorage + BroadcastChannel | the smart contract |
+| Cross-device | yes | no (same browser only) | yes |
+| Single-player AI | yes (local engine) | yes | yes |
+| Setup | none (KV optional for production) | none | deploy contract + 2 signing keys |
+| Move latency | instant | instant | seconds (testnet) |
+| Verifiability | demo | demo | full on-chain |
 
-Set `NEXT_PUBLIC_GAME_BACKEND=genlayer` to switch the default; game ids are
-auto-detected either way.
+Set `NEXT_PUBLIC_GAME_BACKEND=local` (or `genlayer`) to change the default
+backend; game ids are auto-detected either way.
+
+---
+
+## Playing across devices
+
+Multiplayer is the **default** mode: games live in a shared server store, so a
+link created on your laptop opens and joins fine on a phone — no "Game not
+found" when a friend taps the invite. The store uses:
+
+- **Vercel KV** (Upstash Redis) when `KV_REST_API_URL` + `KV_REST_API_TOKEN`
+  are set — the durable production path (Vercel → Storage → KV injects them
+  automatically once attached; on Freebuff, paste them into the Keys / API
+  keys panel).
+- Otherwise, a **built-in file store** (`.data/games.json`, gitignored) —
+  zero-configuration cross-device play in previews, containers and local dev.
+
+> Note: the file store persists per instance. On multi-instance serverless
+> hosting without KV, games can be lost between cold starts — add Vercel KV
+> for durable production multiplayer.
+
+To play on-chain instead, see [Playing on GenLayer](#playing-on-genlayer).
 
 ---
 
@@ -127,7 +175,9 @@ The smart contract lives in [`contracts/chainmate.py`](contracts/chainmate.py)
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `NEXT_PUBLIC_GAME_BACKEND` | no | `local` (default) or `genlayer` |
+| `NEXT_PUBLIC_GAME_BACKEND` | no | `hosted` (default, shared server store), `local`, or `genlayer` |
+| `KV_REST_API_URL` | production | Vercel KV REST endpoint (Upstash Redis) — durable multiplayer |
+| `KV_REST_API_TOKEN` | production | Vercel KV REST token — durable multiplayer |
 | `NEXT_PUBLIC_GENLAYER_NETWORK` | no | `testnetBradbury` (default), `localnet`, `studionet`, `testnetAsimov` |
 | `NEXT_PUBLIC_GENLAYER_RPC_URL` | no | RPC override (defaults to the network's public RPC) |
 | `GENLAYER_PRIVATE_KEY` | genlayer mode | hex private key of the app's **White** signing account (also deploys games) |

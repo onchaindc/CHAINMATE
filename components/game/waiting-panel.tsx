@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, Link2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export function WaitingPanel({ gameId }: { gameId: string }) {
+export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolean }) {
   const [copied, setCopied] = useState(false);
   const [url, setUrl] = useState("");
 
@@ -29,9 +29,13 @@ export function WaitingPanel({ gameId }: { gameId: string }) {
           <Link2 className="h-4 w-4 text-accent" aria-hidden />
         </span>
         <div>
-          <h3 className="text-sm font-semibold">Game created — invite your opponent</h3>
+          <h3 className="text-sm font-semibold">
+            {local ? "Local game — this browser only" : "Game created — invite your opponent"}
+          </h3>
           <p className="text-xs text-muted-foreground">
-            Share this link. They join as Black with one click.
+            {local
+              ? "This game lives on this device. Open the link in another tab or browser of this machine to play Black."
+              : "Share this link. They join as Black with one click."}
           </p>
         </div>
       </div>

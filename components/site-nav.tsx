@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Gamepad2, Plus, Users } from "lucide-react";
+import { Bot, Gamepad2, Plus, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getGameBackend } from "@/lib/config";
 
 const LINKS = [
+  { href: "/create?mode=ai", label: "Play vs AI", icon: Bot },
   { href: "/create", label: "Create game", icon: Plus },
   { href: "/join", label: "Join game", icon: Users },
 ];
@@ -31,18 +32,25 @@ export function SiteNav() {
 
         <nav className="flex items-center gap-1.5 sm:gap-3">
           <Badge
-            variant={backend === "genlayer" ? "gold" : "secondary"}
+            variant={backend === "local" ? "secondary" : "gold"}
             className="hidden md:inline-flex"
             title={
               backend === "genlayer"
                 ? "Playing on the GenLayer network"
-                : "Playing with the built-in offline backend (no chain required)"
+                : backend === "hosted"
+                  ? "Playing through the shared multiplayer store (Vercel KV)"
+                  : "Playing with the built-in offline backend (same-browser only)"
             }
           >
-            {backend === "genlayer" ? "● on GenLayer" : "● local mode"}
+            {backend === "genlayer"
+              ? "● on GenLayer"
+              : backend === "hosted"
+                ? "● online mode"
+                : "● local mode"}
           </Badge>
           {LINKS.map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href);
+            const path = href.split("?")[0];
+            const active = pathname.startsWith(path);
             return (
               <Link
                 key={href}

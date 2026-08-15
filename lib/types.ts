@@ -1,6 +1,12 @@
 /** Shared types for the ChainMate dApp. */
 
-export type GameBackend = "local" | "genlayer";
+export type GameBackend = "local" | "hosted" | "genlayer";
+
+/** Strength preset for the built-in on-device chess AI. */
+export type AiDifficulty = "casual" | "competitive";
+
+/** The opponent id used by single-player games (plays Black). */
+export const AI_PLAYER_ID = "ai";
 
 export type GameStatus =
   | "waiting"
@@ -34,7 +40,7 @@ export interface GameState {
   id: string;
   /** White player's address / id. */
   creator: string;
-  /** Black player's address / id ("" while waiting). */
+  /** Black player's address / id ("" while waiting, "ai" for single-player). */
   opponent: string;
   status: GameStatus;
   winner: string;
@@ -43,13 +49,19 @@ export interface GameState {
   commentary: CommentaryEntry[];
   summary: string;
   backend: GameBackend;
+  /** Only set on single-player games — how strong the AI opponent plays. */
+  aiDifficulty?: AiDifficulty;
 }
 
 export interface GameStore {
   createGame(): Promise<GameState>;
+  /** Start a single-player game against the built-in on-device AI. */
+  createAiGame(difficulty?: AiDifficulty): Promise<GameState>;
   joinGame(id: string): Promise<GameState>;
   getGame(id: string): Promise<GameState | null>;
   submitMove(id: string, from: string, to: string, promotion?: string): Promise<GameState>;
+  /** Let the AI opponent (if this is an AI game) make its move. */
+  submitAiMove(id: string): Promise<GameState>;
   resign(id: string): Promise<GameState>;
   generateSummary(id: string): Promise<GameState>;
   /** Subscribe to live updates for a game. Returns an unsubscribe fn. */

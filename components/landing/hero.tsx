@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Gamepad2, Sparkles } from "lucide-react";
+import { ArrowRight, Bot, Gamepad2, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { BoardVisual } from "@/components/landing/board-visual";
@@ -22,22 +22,30 @@ export function Hero() {
             . Played on-chain.
           </h1>
           <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            ChainMate is a two-player chess dApp where every move is validated
-            by a GenLayer intelligent contract, every move gets instant AI
+            ChainMate is a chess dApp where every move is validated by a
+            GenLayer intelligent contract, every move gets instant AI
             commentary, and every finished game receives a post-game analysis —
-            written on-chain.
+            written on-chain. No opponent online? Practice against the
+            on-device AI instead.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link
-              href="/create"
+              href="/create?mode=ai"
               className={cn(buttonVariants({ size: "lg" }), "shadow-lg shadow-primary/25")}
+            >
+              <Bot aria-hidden />
+              Play vs AI
+            </Link>
+            <Link
+              href="/create"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
             >
               <Gamepad2 aria-hidden />
               Create a game
             </Link>
             <Link
               href="/join"
-              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+              className={cn(buttonVariants({ variant: "ghost", size: "lg" }))}
             >
               Join a game
               <ArrowRight aria-hidden />

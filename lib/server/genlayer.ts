@@ -146,7 +146,15 @@ export async function deployChainMate(): Promise<{ address: string; myId: string
   const hash = await client.deployContract({ account, code: contractSource() });
   const receipt = await waitForWrite(hash, "deploy");
   const decoded = receipt.txDataDecoded as DecodedDeployData | undefined;
-  const contractAddress = decoded?.contractAddress ?? hash;
+  const contractAddress = decoded?.contractAddress;
+  if (!contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
+    // Never fall back to the tx hash: a hash is not a contract address, so
+    // the game id would be dead and every read would report "Game not found".
+    throw new Error(
+      "Could not determine the deployed contract address from the deploy receipt. " +
+        "The GenLayer RPC may be misconfigured or the deployment is still finalising — please retry.",
+    );
+  }
   return { address: contractAddress, myId: account.address };
 }
 

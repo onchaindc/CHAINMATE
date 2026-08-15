@@ -77,6 +77,10 @@ export function useGame(id: string) {
       runAction("move", () => storeRef.current!.submitMove(id, from, to, promotion)),
     [id, runAction],
   );
+  const submitAiMove = useCallback(
+    () => runAction("move", () => storeRef.current!.submitAiMove(id)),
+    [id, runAction],
+  );
   const resign = useCallback(
     () => runAction("resign", () => storeRef.current!.resign(id)),
     [id, runAction],
@@ -123,6 +127,7 @@ export function useGame(id: string) {
     winnerSide,
     join,
     submitMove,
+    submitAiMove,
     resign,
     generateSummary,
   };

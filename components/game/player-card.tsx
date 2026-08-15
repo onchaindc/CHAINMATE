@@ -1,9 +1,9 @@
 "use client";
 
-import { Crown, User } from "lucide-react";
+import { Bot, Crown, User } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { shortId, type PlayerSide } from "@/lib/types";
+import { AI_PLAYER_ID, shortId, type PlayerSide } from "@/lib/types";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -22,6 +22,8 @@ export function PlayerCard({
   isTurn,
   waiting,
 }: PlayerCardProps) {
+  const isAi = playerId === AI_PLAYER_ID;
+
   return (
     <div
       className={cn(
@@ -47,6 +49,12 @@ export function PlayerCard({
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
             <span className="capitalize">{side}</span>
+            {isAi && (
+              <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px]">
+                <Bot className="h-3 w-3" aria-hidden />
+                AI
+              </Badge>
+            )}
             {isYou && (
               <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
                 you
@@ -60,8 +68,17 @@ export function PlayerCard({
             )}
           </p>
           <p className="flex items-center gap-1 truncate font-mono text-xs text-muted-foreground">
-            <User className="h-3 w-3 shrink-0" aria-hidden />
-            {playerId ? shortId(playerId) : waiting ? "Waiting…" : "—"}
+            {isAi ? (
+              <>
+                <Bot className="h-3 w-3 shrink-0" aria-hidden />
+                on-device engine
+              </>
+            ) : (
+              <>
+                <User className="h-3 w-3 shrink-0" aria-hidden />
+                {playerId ? shortId(playerId) : waiting ? "Waiting…" : "—"}
+              </>
+            )}
           </p>
         </div>
       </div>
