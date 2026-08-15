@@ -320,6 +320,30 @@ export async function listHostedGames(opts: {
   return { games: await fetchGames(entries, 12) };
 }
 
+/** Real platform-wide counts derived from the games index. */
+export async function getPlatformStats(): Promise<{
+  totalGames: number;
+  gamesThisWeek: number;
+  totalPlayers: number;
+}> {
+  const entries = await readIndex();
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const players = new Set<string>();
+  for (const e of entries) {
+    if (e.creator) players.add(e.creator);
+    if (e.opponent && e.opponent !== "ai") players.add(e.opponent);
+  }
+  const gamesThisWeek = entries.filter((e) => {
+    const ts = e.endedAt ?? e.updatedAt;
+    return isGameOver(e.status) && ts >= weekAgo;
+  }).length;
+  return {
+    totalGames: entries.length,
+    gamesThisWeek,
+    totalPlayers: players.size,
+  };
+}
+
 /** The current player's stats + their recent games (for the profile page). */
 export async function getPlayerProfile(playerId: string): Promise<{
   stats: PlayerStats;
