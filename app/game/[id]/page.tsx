@@ -5,7 +5,6 @@ import Link from "next/link";
 import { AlertCircle, Bot, Flag, Loader2, Users } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChessBoard } from "@/components/game/chess-board";
 import { CommentaryPanel } from "@/components/game/commentary-panel";
@@ -48,15 +47,15 @@ export default function GamePage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-3">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="aspect-square w-full rounded-xl" />
-            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-11 w-full" />
+            <Skeleton className="aspect-square w-full" />
+            <Skeleton className="h-11 w-full" />
           </div>
-          <div className="space-y-4">
-            <Skeleton className="h-40 w-full" />
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full" />
             <Skeleton className="h-64 w-full" />
           </div>
         </div>
@@ -72,8 +71,8 @@ export default function GamePage() {
         : "This on-chain game could not be found on the network. It may still be finalising, or the id is wrong.";
     return (
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
-        <AlertCircle className="h-10 w-10 text-destructive" aria-hidden />
-        <h1 className="font-display mt-4 text-2xl font-bold">Game not found</h1>
+        <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
+        <h1 className="font-display mt-4 text-2xl font-bold tracking-tight">Game not found</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           {error ?? reason}
         </p>
@@ -103,20 +102,22 @@ export default function GamePage() {
     : null;
   const spectator = mySide === null && !waiting;
   const aiThinking = isAiGame && game.status === "active" && !myTurn;
+  const moveNumber = Math.floor(game.moves.length / 2) + 1;
 
   const aiHint = aiEnabled
     ? null
     : "Set NEXT_PUBLIC_AI_ENABLED=true and an AI_API_KEY to unlock deeper LLM commentary.";
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       {/* Header */}
-      <div className="mb-6 flex flex-wrap items-center gap-3">
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
         <div>
-          <h1 className="font-display text-xl font-bold tracking-tight">Chess match</h1>
-          <p className="font-mono text-xs text-muted-foreground">{shortId(game.id)}</p>
+          <h1 className="font-display text-lg font-bold tracking-tight">Chess match</h1>
+          <p className="font-mono text-[11px] text-muted-foreground">{shortId(game.id)}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <StatusBar game={game} turnSide={turnSide} inCheck={pos?.inCheck ?? false} />
           {spectator && <Badge variant="secondary">spectating</Badge>}
         </div>
@@ -133,28 +134,9 @@ export default function GamePage() {
         </div>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* Board column */}
-        <div className="mx-auto w-full max-w-[640px] space-y-3 lg:mx-0">
-          <PlayerCard
-            side="white"
-            playerId={game.creator}
-            isYou={mySide === "white"}
-            isWinner={winnerSide === "white"}
-            isTurn={turnSide === "white" && !gameOver && !waiting}
-            waiting={waiting && !game.opponent}
-          />
-          <ChessBoard
-            fen={game.fen}
-            orientation={orientation}
-            interactive={interactive}
-            inCheck={pos?.inCheck ?? false}
-            lastMove={lastMove}
-            onMove={(from, to, promotion) => {
-              void submitMove(from, to, promotion);
-            }}
-            busy={busy === "move"}
-          />
+        <div className="mx-auto w-full max-w-[680px] space-y-3 lg:mx-0">
           <PlayerCard
             side="black"
             playerId={game.opponent}
@@ -163,9 +145,30 @@ export default function GamePage() {
             isTurn={turnSide === "black" && !gameOver && !waiting}
             waiting={waiting && !game.opponent}
           />
+          <div className="overflow-hidden rounded-md ring-1 ring-border/40">
+            <ChessBoard
+              fen={game.fen}
+              orientation={orientation}
+              interactive={interactive}
+              inCheck={pos?.inCheck ?? false}
+              lastMove={lastMove}
+              onMove={(from, to, promotion) => {
+                void submitMove(from, to, promotion);
+              }}
+              busy={busy === "move"}
+            />
+          </div>
+          <PlayerCard
+            side="white"
+            playerId={game.creator}
+            isYou={mySide === "white"}
+            isWinner={winnerSide === "white"}
+            isTurn={turnSide === "white" && !gameOver && !waiting}
+            waiting={waiting && !game.opponent}
+          />
 
           {/* Actions */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             {game.status === "active" && mySide && (
               <Button
                 variant="destructive"
@@ -202,7 +205,7 @@ export default function GamePage() {
                 : game.status === "active" && mySide === null
                   ? "Spectating — the game updates live."
                   : game.status === "active" && aiThinking
-                    ? "The AI is thinking…"
+                    ? "The engine is thinking…"
                     : game.status === "active" && !myTurn
                       ? "Waiting for your opponent to move…"
                       : game.status === "active" && myTurn
@@ -214,33 +217,40 @@ export default function GamePage() {
           </div>
         </div>
 
-        {/* Side column */}
-        <div className="space-y-4">
-          {waiting ? (
-            mySide === "white" ? (
-              <WaitingPanel gameId={game.id} local={isLocalGameId(game.id)} />
-            ) : (
-              <Card>
-                <CardContent className="p-4 text-sm text-muted-foreground">
-                  The creator of this game hasn&rsquo;t been matched yet. Join as
-                  Black to start playing.
-                </CardContent>
-              </Card>
-            )
-          ) : null}
+        {/* Side panel */}
+        <div className="space-y-4 lg:min-w-0">
+          {waiting && mySide === "white" && (
+            <WaitingPanel gameId={game.id} local={isLocalGameId(game.id)} />
+          )}
+          {waiting && mySide === null && (
+            <div className="rounded-lg border border-border/60 bg-card/40 px-4 py-3 text-sm text-muted-foreground">
+              The creator of this game hasn&rsquo;t been matched yet. Join as Black
+              to start playing.
+            </div>
+          )}
 
           {gameOver && (
             <GameOverPanel game={game} busy={busy === "summary"} onGenerateSummary={generateSummary} />
           )}
 
-          <MoveHistory moves={game.moves} currentPly={game.moves.length - 1} />
-          <CommentaryPanel
-            entries={game.commentary}
-            aiInsight={insight}
-            aiLoading={aiLoading}
-            aiEnabled={aiEnabled}
-            aiHint={aiHint}
-          />
+          <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Game
+              </span>
+              <span className="font-mono text-xs tabular-nums text-foreground/80">
+                Move {moveNumber}
+              </span>
+            </div>
+            <MoveHistory moves={game.moves} currentPly={game.moves.length - 1} />
+            <CommentaryPanel
+              entries={game.commentary}
+              aiInsight={insight}
+              aiLoading={aiLoading}
+              aiEnabled={aiEnabled}
+              aiHint={aiHint}
+            />
+          </div>
         </div>
       </div>
     </div>

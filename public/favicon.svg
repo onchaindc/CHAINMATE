@@ -1,5 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#0d1511"/>
-  <rect width="32" height="32" rx="7" fill="none" stroke="#10b981" stroke-opacity="0.5" stroke-width="1.5"/>
-  <text x="16" y="23" font-family="Georgia, serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#fbbf24">♞</text>
+  <defs>
+    <clipPath id="cl">
+      <rect x="0" y="0" width="16" height="32"/>
+    </clipPath>
+    <clipPath id="cr">
+      <rect x="16" y="0" width="16" height="32"/>
+    </clipPath>
+    <linearGradient id="ivory" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F5F0E6"/>
+      <stop offset="1" stop-color="#D6CBB6"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#0B0C0E"/>
+  <rect width="31" height="31" x="0.5" y="0.5" rx="6.5" fill="none" stroke="#2A2D33" stroke-width="1"/>
+  <text x="15" y="25" font-family="Georgia, 'Times New Roman', serif" font-size="23" text-anchor="middle" fill="#F2EDE1" clip-path="url(#cl)">&#9822;</text>
+  <text x="15" y="25" font-family="Georgia, 'Times New Roman', serif" font-size="23" text-anchor="middle" fill="#23262B" clip-path="url(#cr)">&#9822;</text>
+  <g clip-path="url(#cr)" fill="none" stroke="#C9A86A" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="17.5,27 20,23.5 18.5,21 22,17.5 20.5,15 24.5,11.5"/>
+  </g>
+  <g clip-path="url(#cr)" fill="#C9A86A">
+    <circle cx="20" cy="23.5" r="0.9"/>
+    <circle cx="22" cy="17.5" r="0.9"/>
+    <circle cx="24.5" cy="11.5" r="0.9"/>
+  </g>
 </svg>

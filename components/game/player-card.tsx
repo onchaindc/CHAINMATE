@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Crown, User } from "lucide-react";
+import { Bot, Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AI_PLAYER_ID, shortId, type PlayerSide } from "@/lib/types";
@@ -27,20 +27,20 @@ export function PlayerCard({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 transition-colors",
+        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 transition-colors",
         isTurn && !waiting
-          ? "border-primary/50 bg-primary/10 shadow-[0_0_18px_-6px] shadow-primary/40"
-          : "border-border/70 bg-card/60",
-        isWinner && "border-accent/60 bg-accent/10",
+          ? "border-primary/40 bg-primary/[0.06]"
+          : "border-border/60 bg-card/40",
+        isWinner && "border-primary/50 bg-accent/5",
       )}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span
           className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-base",
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm",
             side === "white"
-              ? "border-zinc-300 bg-zinc-100 text-zinc-900"
-              : "border-zinc-700 bg-zinc-900 text-zinc-100",
+              ? "border-zinc-400 bg-zinc-100 text-zinc-800"
+              : "border-zinc-600 bg-zinc-800 text-zinc-100",
           )}
           aria-hidden
         >
@@ -67,34 +67,23 @@ export function PlayerCard({
               </Badge>
             )}
           </p>
-          <p className="flex items-center gap-1 truncate font-mono text-xs text-muted-foreground">
-            {isAi ? (
-              <>
-                <Bot className="h-3 w-3 shrink-0" aria-hidden />
-                on-device engine
-              </>
-            ) : (
-              <>
-                <User className="h-3 w-3 shrink-0" aria-hidden />
-                {playerId ? shortId(playerId) : waiting ? "Waiting…" : "—"}
-              </>
-            )}
+          <p className="truncate font-mono text-[11px] text-muted-foreground">
+            {isAi ? "on-device engine" : playerId ? shortId(playerId) : waiting ? "Waiting…" : "—"}
           </p>
         </div>
       </div>
 
-      {isTurn && !waiting && (
-        <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
-          <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-emerald-400" />
+      {isTurn && !waiting ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary">
+          <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
           to move
         </span>
-      )}
-      {waiting && (
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-accent" />
+      ) : waiting ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="h-1 w-1 animate-pulse-soft rounded-full bg-primary/60" aria-hidden />
           waiting
         </span>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -129,11 +129,11 @@ export function ChessBoard({
   const squareStyles = useMemo(() => {
     const styles: Record<string, React.CSSProperties> = {};
     if (lastMove) {
-      styles[lastMove.from] = { backgroundColor: "var(--board-lastmove, rgba(251, 191, 36, 0.3))" };
-      styles[lastMove.to] = { backgroundColor: "var(--board-lastmove, rgba(251, 191, 36, 0.3))" };
+      styles[lastMove.from] = { backgroundColor: "rgba(201, 168, 106, 0.30)" };
+      styles[lastMove.to] = { backgroundColor: "rgba(201, 168, 106, 0.30)" };
     }
     if (selected) {
-      styles[selected] = { backgroundColor: "rgba(16, 185, 129, 0.5)" };
+      styles[selected] = { backgroundColor: "rgba(201, 168, 106, 0.45)" };
     }
     if (inCheck) {
       try {
@@ -143,7 +143,7 @@ export function ChessBoard({
           const square = `${"abcdefgh"[i % 8]}${Math.floor(i / 8) + 1}`;
           const piece = chess.get(square as Square);
           if (piece && piece.type === "k" && piece.color === turn) {
-            styles[square] = { backgroundColor: "rgba(239, 68, 68, 0.55)" };
+            styles[square] = { backgroundColor: "rgba(190, 66, 56, 0.5)" };
           }
         }
       } catch {
@@ -153,8 +153,7 @@ export function ChessBoard({
     for (const target of legalTargets) {
       if (target !== selected) {
         styles[target] = {
-          backgroundColor: "rgba(16, 185, 129, 0.25)",
-          boxShadow: "inset 0 0 0 2px rgba(16, 185, 129, 0.35)",
+          background: "radial-gradient(circle, rgba(201, 168, 106, 0.65) 0 20%, rgba(201, 168, 106, 0.15) 38%, transparent 42%)",
         };
       }
     }
@@ -183,8 +182,8 @@ export function ChessBoard({
           },
           onSquareClick: handleSquareClick,
           onPieceDrop: handlePieceDrop,
-          darkSquareStyle: { backgroundColor: "#b58863" },
-          lightSquareStyle: { backgroundColor: "#f0d9b5" },
+          darkSquareStyle: { backgroundColor: "#6A5D4F" },
+          lightSquareStyle: { backgroundColor: "#EFE6D2" },
         }}
       />
 

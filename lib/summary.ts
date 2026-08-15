@@ -6,6 +6,57 @@ import { isGameOver } from "@/lib/types";
  * Deterministic post-game analysis. Used by the local backend and as the
  * fallback when the on-chain LLM summary isn't available.
  */
+export interface KeyMoments {
+  opening: string;
+  turningPoint: string;
+  finalTactic: string;
+}
+
+/**
+ * Derive the key moments of a finished game from its move record — the
+ * opening, the first decisive moment, and how it ended. Pure data, used by
+ * the game-result report.
+ */
+export function keyMoments(game: GameState): KeyMoments {
+  const moves = game.moves;
+  const opening = moves.slice(0, 4).map((m) => m.san).join(" ") || "—";
+
+  const decisiveIdx = moves.findIndex(
+    (m) => m.san.includes("x") || m.san.includes("+") || m.san.includes("#"),
+  );
+  let turningPoint: string;
+  if (decisiveIdx === -1) {
+    turningPoint = "A quiet positional game — no captures or checks until the end.";
+  } else {
+    const m = moves[decisiveIdx];
+    const kind = m.san.includes("#")
+      ? "checkmate"
+      : m.san.includes("+")
+        ? "check"
+        : "capture";
+    turningPoint = `Move ${m.number} — ${m.san} (${kind}) shifted the balance.`;
+  }
+
+  const last = moves[moves.length - 1];
+  let finalTactic: string;
+  if (!last) {
+    finalTactic =
+      game.status === "resigned"
+        ? "The game was resigned before any moves were played."
+        : "The game ended before any moves were played.";
+  } else if (game.status === "checkmate") {
+    finalTactic = `Move ${last.number} — ${last.san} delivers checkmate.`;
+  } else if (game.status === "resigned") {
+    finalTactic = `Move ${last.number} — ${last.san}, then the game was resigned.`;
+  } else if (game.status === "stalemate") {
+    finalTactic = `Move ${last.number} — ${last.san} left no legal moves. Stalemate.`;
+  } else {
+    finalTactic = `Move ${last.number} — ${last.san} ended the game.`;
+  }
+
+  return { opening, turningPoint, finalTactic };
+}
+
 export function buildRuleSummary(game: GameState): string {
   const totalPly = game.moves.length;
   const captures = countCaptures(game.moves);

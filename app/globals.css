@@ -4,26 +4,26 @@
 
 @layer base {
   :root {
-    --background: 150 16% 4%;
-    --foreground: 45 28% 93%;
-    --card: 150 14% 6%;
-    --card-foreground: 45 28% 93%;
-    --popover: 150 14% 6%;
-    --popover-foreground: 45 28% 93%;
-    --primary: 158 82% 38%;
-    --primary-foreground: 155 50% 97%;
-    --secondary: 150 12% 12%;
-    --secondary-foreground: 45 28% 93%;
-    --muted: 150 12% 12%;
-    --muted-foreground: 45 10% 58%;
-    --accent: 42 92% 55%;
-    --accent-foreground: 150 16% 5%;
-    --destructive: 0 68% 48%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 150 10% 15%;
-    --input: 150 10% 15%;
-    --ring: 158 82% 38%;
-    --radius: 0.75rem;
+    --background: 220 10% 5%;
+    --foreground: 45 18% 90%;
+    --card: 220 9% 7%;
+    --card-foreground: 45 18% 90%;
+    --popover: 220 9% 7%;
+    --popover-foreground: 45 18% 90%;
+    --primary: 42 45% 60%;
+    --primary-foreground: 220 12% 6%;
+    --secondary: 220 8% 9%;
+    --secondary-foreground: 45 18% 88%;
+    --muted: 220 8% 9%;
+    --muted-foreground: 220 8% 60%;
+    --accent: 42 45% 66%;
+    --accent-foreground: 220 12% 6%;
+    --destructive: 0 55% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 8% 15%;
+    --input: 220 8% 15%;
+    --ring: 42 45% 60%;
+    --radius: 0.5rem;
   }
 
   * {
@@ -36,11 +36,11 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "rlig" 1, "calt" 1, "tnum" 1;
   }
 
   ::selection {
-    background: hsl(158 82% 38% / 0.35);
+    background: hsl(42 45% 60% / 0.28);
   }
 }
 
@@ -49,28 +49,49 @@
     text-wrap: balance;
   }
 
-  .glass {
-    background: hsl(150 14% 8% / 0.7);
-    backdrop-filter: blur(12px);
+  /* Subtle, theme-aware scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(220 8% 20%) transparent;
   }
-}
 
-/* Slim, theme-aware scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: hsl(150 10% 22%) transparent;
-}
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
 
-*::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
+  *::-webkit-scrollbar-thumb {
+    background: hsl(220 8% 20%);
+    border-radius: 8px;
+  }
 
-*::-webkit-scrollbar-thumb {
-  background: hsl(150 10% 22%);
-  border-radius: 8px;
-}
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 
-*::-webkit-scrollbar-track {
-  background: transparent;
+  /* Minimal animated indicator for the analysis engine */
+  .dots::after {
+    content: "···";
+    animation: dots 1.4s steps(4, end) infinite;
+    display: inline-block;
+    width: 1.2em;
+    text-align: left;
+    letter-spacing: 0.15em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @keyframes dots {
+    0% {
+      content: "";
+    }
+    25% {
+      content: "·";
+    }
+    50% {
+      content: "··";
+    }
+    75% {
+      content: "···";
+    }
+  }
 }

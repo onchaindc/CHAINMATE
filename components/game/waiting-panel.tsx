@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, Link2, Loader2 } from "lucide-react";
+import { Check, Copy, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolean }) {
@@ -23,18 +23,10 @@ export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolea
   }, [url]);
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-accent/30 bg-accent/5 p-4">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-accent/10 blur-2xl"
-      />
-      <div className="relative flex items-center gap-2">
-        <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15">
-          <span
-            aria-hidden
-            className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/20"
-          />
-          <Link2 className="relative h-4 w-4 text-accent" aria-hidden />
+    <div className="rounded-lg border border-border/70 bg-card/50 p-4">
+      <div className="flex items-center gap-2">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10">
+          <Link2 className="h-4 w-4 text-primary" aria-hidden />
         </span>
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">
@@ -48,7 +40,7 @@ export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolea
         </div>
       </div>
 
-      <div className="relative mt-3 flex gap-2">
+      <div className="mt-3 flex gap-2">
         <input
           readOnly
           value={url}
@@ -62,13 +54,13 @@ export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolea
         </Button>
       </div>
 
-      <p className="relative mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="relative flex h-2 w-2">
+      <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="relative flex h-1.5 w-1.5">
           <span
             aria-hidden
-            className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60"
+            className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60"
           />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
         </span>
         Waiting for your opponent to join…
       </p>

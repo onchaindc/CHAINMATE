@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 136">
+  <defs>
+    <clipPath id="cl">
+      <rect x="0" y="0" width="32" height="64"/>
+    </clipPath>
+    <clipPath id="cr">
+      <rect x="32" y="0" width="32" height="64"/>
+    </clipPath>
+    <linearGradient id="ivory" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F5F0E6"/>
+      <stop offset="1" stop-color="#D8CDB8"/>
+    </linearGradient>
+    <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#33373D"/>
+      <stop offset="1" stop-color="#1D2025"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(88 0)">
+    <text x="30" y="50" font-family="Georgia, 'Times New Roman', serif" font-size="46" text-anchor="middle" fill="url(#ivory)" clip-path="url(#cl)">&#9822;</text>
+    <text x="30" y="50" font-family="Georgia, 'Times New Roman', serif" font-size="46" text-anchor="middle" fill="url(#dark)" clip-path="url(#cr)">&#9822;</text>
+    <g clip-path="url(#cr)" fill="none" stroke="#C9A86A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+      <polyline points="34,52 40,46 36,40 44,32 40,26 50,19 55,17"/>
+    </g>
+    <g clip-path="url(#cr)" fill="#C9A86A">
+      <circle cx="40" cy="46" r="1.7"/>
+      <circle cx="44" cy="32" r="1.7"/>
+      <circle cx="50" cy="19" r="1.7"/>
+    </g>
+  </g>
+  <text x="120" y="86" text-anchor="middle" font-family="system-ui, 'Helvetica Neue', Arial, sans-serif" font-size="24" font-weight="700" letter-spacing="5">
+    <tspan fill="#EDE7DA">CHAIN</tspan><tspan fill="#C9A86A">MATE</tspan>
+  </text>
+  <text x="120" y="108" text-anchor="middle" font-family="system-ui, 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="500" letter-spacing="4" fill="#6B7077">PLAY CHESS. THINK DEEPER.</text>
+</svg>
