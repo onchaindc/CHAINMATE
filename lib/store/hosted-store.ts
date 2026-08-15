@@ -28,7 +28,6 @@ interface ApiResponse {
   recent?: GameIndexEntry[];
   players?: PlayerStats[];
   stats?: PlayerStats;
-  platformStats?: { totalGames: number; gamesThisWeek: number; totalPlayers: number };
   myId?: string;
   error?: string;
 }
@@ -198,11 +197,6 @@ export class HostedGameStore implements GameStore {
   async leaderboard(): Promise<PlayerStats[]> {
     const data = await api("/api/hosted/leaderboard");
     return data.players ?? [];
-  }
-
-  async stats(): Promise<{ totalGames: number; gamesThisWeek: number; totalPlayers: number }> {
-    const data = await api("/api/hosted/stats");
-    return data.platformStats ?? { totalGames: 0, gamesThisWeek: 0, totalPlayers: 0 };
   }
 
   async myProfile(): Promise<{ stats: PlayerStats; games: GameState[] }> {
