@@ -19,7 +19,7 @@ const FEATURES = [
     icon: Radio,
     title: "Real-time play",
     description:
-      "Live board updates for both players as moves finalise on the network — with a zero-setup local mode for instant two-player games.",
+      "Live board updates for both players — or play solo against the on-device AI, which moves through the same validation path as a human.",
   },
   {
     icon: Sparkles,

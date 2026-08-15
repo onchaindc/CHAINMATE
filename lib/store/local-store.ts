@@ -1,37 +1,31 @@
 "use client";
 
-import {
-  applyChessMove,
-  describePosition,
-} from "@/lib/chess";
+import { applyMoveToGame, joinPlayerToGame, resignPlayerFromGame } from "@/lib/game-logic";
+import { chooseAiMove } from "@/lib/ai-engine";
 import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
 import { buildRuleSummary } from "@/lib/summary";
 import {
+  AI_PLAYER_ID,
   isGameOver,
-  type CommentaryEntry,
+  type AiDifficulty,
   type GameState,
   type GameStore,
 } from "@/lib/types";
 import { START_FEN } from "@/lib/types";
+import { randomHex } from "@/lib/utils";
 
 /**
  * Built-in offline game store. Game state lives in localStorage and syncs
  * across tabs of the same browser via BroadcastChannel + storage events, so
  * two players on one machine can play a full game with zero setup.
  *
- * Move validation mirrors the GenLayer contract (contracts/chainmate.py)
- * using chess.js, so the two backends behave identically.
+ * Also owns single-player games against the on-device chess AI (the AI plays
+ * Black and moves through the same validation path as a human).
  */
 
 const GAMES_KEY = "chainmate:games:v1";
 const CHANNEL = "chainmate-sync";
 const SUMMARY_API = "/api/ai";
-
-function randomHex(bytes: number): string {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 function getPlayerId(): string {
   // sessionStorage keeps a per-tab identity, so two tabs can play each other.
@@ -64,6 +58,9 @@ type Listener = (state: GameState) => void;
 export class LocalGameStore implements GameStore {
   private listeners = new Map<string, Set<Listener>>();
   private channel: BroadcastChannel | null = null;
+  /** Guard against duplicate AI turns (same fen scheduled twice). */
+  private aiMoveInFlight = false;
+  private aiMoveFen = "";
 
   constructor() {
     if (typeof BroadcastChannel !== "undefined") {
@@ -124,15 +121,33 @@ export class LocalGameStore implements GameStore {
     return game;
   }
 
+  async createAiGame(difficulty: AiDifficulty = "casual"): Promise<GameState> {
+    const id = `${LOCAL_GAME_PREFIX}${randomHex(6)}`;
+    const game: GameState = {
+      id,
+      creator: getPlayerId(),
+      opponent: AI_PLAYER_ID,
+      status: "active",
+      winner: "",
+      fen: START_FEN,
+      moves: [],
+      commentary: [],
+      summary: "",
+      backend: "local",
+      aiDifficulty: difficulty,
+    };
+    this.save(game);
+    return game;
+  }
+
   async joinGame(id: string): Promise<GameState> {
     const game = this.getGameSync(id);
     if (!game) throw new Error("Game not found");
-    if (game.status !== "waiting") throw new Error("This game is not waiting for players");
     const me = getPlayerId();
-    if (game.creator === me) throw new Error("You cannot join your own game");
-    const next: GameState = { ...game, opponent: me, status: "active" };
-    this.save(next);
-    return next;
+    const res = joinPlayerToGame(game, me);
+    if (!res.ok) throw new Error(res.error);
+    this.save(res.game);
+    return res.game;
   }
 
   async getGame(id: string): Promise<GameState | null> {
@@ -147,101 +162,55 @@ export class LocalGameStore implements GameStore {
   ): Promise<GameState> {
     const game = this.getGameSync(id);
     if (!game) throw new Error("Game not found");
-    if (game.status !== "active") throw new Error("The game is not active");
-
     const me = getPlayerId();
-    const mySide = game.creator === me ? "white" : game.opponent === me ? "black" : null;
-    if (!mySide) throw new Error("You are not a player in this game");
+    const res = applyMoveToGame(game, me, from, to, promotion);
+    if (!res.ok) throw new Error(res.error);
+    this.save(res.game);
+    return res.game;
+  }
 
-    const info = describePosition(game.fen);
-    const expected = info.turn === "w" ? "white" : "black";
-    if (mySide !== expected) throw new Error("It is not your turn");
+  async submitAiMove(id: string): Promise<GameState> {
+    const game = this.getGameSync(id);
+    if (!game) throw new Error("Game not found");
+    if (game.opponent !== AI_PLAYER_ID) {
+      throw new Error("This game has no AI opponent");
+    }
+    if (game.status !== "active") return game;
 
-    const outcome = applyChessMove(game.fen, from, to, promotion);
-    if (!outcome.ok || !outcome.move || !outcome.fen) {
-      throw new Error(outcome.error ?? "Illegal move");
+    const fen = game.fen;
+    // Idempotency guard: if an AI move for this exact position is already in
+    // flight (or already applied), don't move twice.
+    if (this.aiMoveInFlight && this.aiMoveFen === fen) return game;
+
+    const aiSide = game.creator === AI_PLAYER_ID ? "white" : "black";
+    const info = fen.split(" ")[1] ?? "w";
+    if ((aiSide === "white" && info !== "w") || (aiSide === "black" && info !== "b")) {
+      return game; // not the AI's turn — nothing to do
     }
 
-    const after = describePosition(outcome.fen);
-    const capturedName =
-      outcome.move.captured === "p" ? "pawn" : outcome.move.captured ?? null;
-    let text: string;
-    if (outcome.move.san === "O-O" || outcome.move.san === "O-O-O") {
-      text = `${mySide === "white" ? "White" : "Black"} castles ${
-        outcome.move.san === "O-O" ? "kingside" : "queenside"
-      }, tucking the king behind a wall of pawns (${outcome.move.san}).`;
-    } else if (outcome.move.promotion) {
-      text = `Promotion! ${mySide === "white" ? "White" : "Black"} plays ${outcome.move.san}.`;
-    } else if (capturedName) {
-      text = `${mySide === "white" ? "White" : "Black"} captures a ${capturedName} with ${outcome.move.san}.`;
-    } else {
-      text = `${mySide === "white" ? "White" : "Black"} plays ${outcome.move.san}.`;
+    this.aiMoveInFlight = true;
+    this.aiMoveFen = fen;
+    try {
+      const aiMove = chooseAiMove(fen, game.aiDifficulty ?? "casual");
+      if (!aiMove) return game;
+      const res = applyMoveToGame(game, AI_PLAYER_ID, aiMove.from, aiMove.to, aiMove.promotion);
+      if (!res.ok) return game;
+      this.save(res.game);
+      return res.game;
+    } finally {
+      this.aiMoveInFlight = false;
+      this.aiMoveFen = "";
     }
-    if (after.isCheckmate) {
-      text += " That is checkmate — the game is over!";
-    } else if (after.inCheck) {
-      text += " This move puts the opponent in check.";
-    }
-    const entry: CommentaryEntry = { move: outcome.move.san, side: mySide, text, source: "chain" };
-
-    let status: GameState["status"] = "active";
-    let winner = "";
-    if (after.isCheckmate) {
-      status = "checkmate";
-      winner = me;
-    } else if (after.isStalemate) {
-      status = "stalemate";
-    } else if (after.isDraw) {
-      status = "draw";
-    }
-
-    const next: GameState = {
-      ...game,
-      fen: outcome.fen,
-      status,
-      winner,
-      moves: [
-        ...game.moves,
-        {
-          number: game.moves.length + 1,
-          side: mySide,
-          from,
-          to,
-          promotion: promotion ?? "",
-          san: outcome.move.san,
-        },
-      ],
-      commentary: [...game.commentary, entry],
-    };
-    this.save(next);
-    return next;
   }
 
   async resign(id: string): Promise<GameState> {
     const game = this.getGameSync(id);
     if (!game) throw new Error("Game not found");
-    if (game.status !== "active") throw new Error("The game is not active");
-
     const me = getPlayerId();
-    const mySide = game.creator === me ? "white" : game.opponent === me ? "black" : null;
-    if (!mySide) throw new Error("You are not a player in this game");
-
-    const next: GameState = {
-      ...game,
-      status: "resigned",
-      winner: mySide === "white" ? game.opponent : game.creator,
-      commentary: [
-        ...game.commentary,
-        {
-          move: "",
-          side: mySide,
-          text: `${mySide === "white" ? "White" : "Black"} resigned the game.`,
-          source: "chain",
-        },
-      ],
-    };
-    this.save(next);
-    return next;
+    const res = resignPlayerFromGame(game, me);
+    if (!res.ok) throw new Error(res.error);
+    this.save(res.game);
+    return res.game;
   }
 
   async generateSummary(id: string): Promise<GameState> {

@@ -33,6 +33,9 @@ next-env.d.ts
 /keypair.json
 /genlayer_data/
 
+# built-in hosted game store (file-backed fallback)
+/.data/
+
 # python
 __pycache__/
 *.pyc

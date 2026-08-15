@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { getGameBackend } from "@/lib/config";
-import { getStore } from "@/lib/store";
+import { getStoreForId } from "@/lib/store";
 
 function normalizeId(value: string): string {
   const trimmed = value.trim();
@@ -35,7 +35,7 @@ export default function JoinGamePage() {
       setBusy(true);
       setError(null);
       try {
-        const store = getStore();
+        const store = getStoreForId(id);
         const game = await store.joinGame(id);
         router.push(`/game/${game.id}`);
       } catch (err) {
@@ -51,7 +51,11 @@ export default function JoinGamePage() {
       <div className="animate-fade-in-up w-full text-center">
         <Badge variant="secondary" className="mb-4">
           <Users className="mr-1 h-3 w-3 text-emerald-400" aria-hidden />
-          {backend === "genlayer" ? "GenLayer network" : "Local mode"}
+          {backend === "genlayer"
+            ? "GenLayer network"
+            : backend === "hosted"
+              ? "Online mode"
+              : "Local mode"}
         </Badge>
         <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
           Join a game
@@ -76,7 +80,9 @@ export default function JoinGamePage() {
                 placeholder={
                   backend === "genlayer"
                     ? "0x1a2b3c… or https://…/game/0x1a2b3c"
-                    : "local_ab12cd or https://…/game/local_ab12cd"
+                    : backend === "hosted"
+                      ? "hosted_ab12cd or https://…/game/hosted_ab12cd"
+                      : "local_ab12cd or https://…/game/local_ab12cd"
                 }
                 value={value}
                 onChange={(e) => setValue(e.target.value)}

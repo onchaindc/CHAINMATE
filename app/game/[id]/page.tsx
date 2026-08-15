@@ -1,8 +1,9 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { AlertCircle, Flag, Loader2, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { AlertCircle, Bot, Flag, Loader2, Users } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,8 +15,10 @@ import { PlayerCard } from "@/components/game/player-card";
 import { StatusBar } from "@/components/game/status-bar";
 import { WaitingPanel } from "@/components/game/waiting-panel";
 import { useAiCommentary } from "@/hooks/use-ai-commentary";
+import { useAiOpponent } from "@/hooks/use-ai-opponent";
 import { useGame } from "@/hooks/use-game";
-import { isGameOver, shortId } from "@/lib/types";
+import { isHostedGameId, isLocalGameId } from "@/lib/config";
+import { AI_PLAYER_ID, isGameOver, shortId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export default function GamePage() {
@@ -34,11 +37,14 @@ export default function GamePage() {
     winnerSide,
     join,
     submitMove,
+    submitAiMove,
     resign,
     generateSummary,
   } = useGame(id);
 
   const { insight, loading: aiLoading, enabled: aiEnabled } = useAiCommentary(game);
+  const isAiGame = game?.opponent === AI_PLAYER_ID;
+  useAiOpponent({ game, submitAiMove, disabled: busy !== null });
 
   if (loading) {
     return (
@@ -59,16 +65,28 @@ export default function GamePage() {
   }
 
   if (!game) {
+    const reason = isLocalGameId(id)
+      ? "This game was created in local mode, so it only exists in the browser where it was created. Open the original tab to keep playing — or start a fresh game."
+      : isHostedGameId(id)
+        ? "This game could not be found in the shared store. The link may be stale or the id mistyped — create a new game and share the fresh invite."
+        : "This on-chain game could not be found on the network. It may still be finalising, or the id is wrong.";
     return (
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
         <AlertCircle className="h-10 w-10 text-destructive" aria-hidden />
         <h1 className="font-display mt-4 text-2xl font-bold">Game not found</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {error ?? "This game does not exist or is unreachable."}
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          {error ?? reason}
         </p>
-        <div className="mt-6 flex gap-3">
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Button onClick={() => (window.location.href = "/create")}>Create a game</Button>
-          <Button variant="outline" onClick={() => (window.location.href = "/")}>
+          <Link
+            href="/create?mode=ai"
+            className={cn(buttonVariants({ variant: "outline" }))}
+          >
+            <Bot aria-hidden />
+            Play vs AI
+          </Link>
+          <Button variant="ghost" onClick={() => (window.location.href = "/")}>
             Back home
           </Button>
         </div>
@@ -84,6 +102,7 @@ export default function GamePage() {
     ? { from: game.moves[game.moves.length - 1].from, to: game.moves[game.moves.length - 1].to }
     : null;
   const spectator = mySide === null && !waiting;
+  const aiThinking = isAiGame && game.status === "active" && !myTurn;
 
   const aiHint = aiEnabled
     ? null
@@ -179,13 +198,15 @@ export default function GamePage() {
                 ? "You'll play Black once you join."
                 : game.status === "active" && mySide === null
                   ? "Spectating — the game updates live."
-                  : game.status === "active" && !myTurn
-                    ? "Waiting for your opponent to move…"
-                    : game.status === "active" && myTurn
-                      ? "Your turn — click a piece, then a destination."
-                      : gameOver
-                        ? "The game has ended."
-                        : ""}
+                  : game.status === "active" && aiThinking
+                    ? "The AI is thinking…"
+                    : game.status === "active" && !myTurn
+                      ? "Waiting for your opponent to move…"
+                      : game.status === "active" && myTurn
+                        ? "Your turn — click a piece, then a destination."
+                        : gameOver
+                          ? "The game has ended."
+                          : ""}
             </p>
           </div>
         </div>
@@ -194,7 +215,7 @@ export default function GamePage() {
         <div className="space-y-4">
           {waiting ? (
             mySide === "white" ? (
-              <WaitingPanel gameId={game.id} />
+              <WaitingPanel gameId={game.id} local={isLocalGameId(game.id)} />
             ) : (
               <Card>
                 <CardContent className="p-4 text-sm text-muted-foreground">

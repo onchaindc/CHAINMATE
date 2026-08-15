@@ -1,17 +1,17 @@
 "use client";
 
-import type { GameState, GameStore } from "@/lib/types";
+import { HOSTED_PLAYER_KEY } from "@/lib/config";
+import type { AiDifficulty, GameState, GameStore } from "@/lib/types";
+import { randomHex } from "@/lib/utils";
 
 /**
- * On-chain game store. Every write is signed server-side (see
- * lib/server/genlayer.ts) and state is read back from the contract.
- * Live updates come from polling get_game; on testnet a move typically
- * finalises in a few seconds (LLM-heavy calls longer).
+ * Shared multiplayer store. Game state lives in Vercel KV (server-side) and
+ * this store talks to /api/hosted/games — so two players on different
+ * devices can join the same game. Live updates come from polling; a move is
+ * typically visible to the opponent within ~2s.
  */
 
-const SLOT_KEY = "chainmate:genlayer:slot";
-const MY_ID_KEY = "chainmate:genlayer:my-id";
-const POLL_MS = 2500;
+const POLL_MS = 2000;
 
 interface ApiResponse {
   game?: GameState;
@@ -19,14 +19,17 @@ interface ApiResponse {
   error?: string;
 }
 
-function readLocal(key: string): string | null {
-  if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem(key);
-}
-
-function writeLocal(key: string, value: string) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(key, value);
+function getMyPlayerId(): string {
+  // sessionStorage keeps a per-tab identity (like the local store), so two
+  // tabs of the same browser can join each other's game. The id survives a
+  // refresh in the same tab, so players keep their side across reloads.
+  const storage = typeof sessionStorage !== "undefined" ? sessionStorage : null;
+  const store = storage ?? (typeof localStorage !== "undefined" ? localStorage : null);
+  const existing = store?.getItem(HOSTED_PLAYER_KEY);
+  if (existing) return existing;
+  const id = `0x${randomHex(20)}`;
+  store?.setItem(HOSTED_PLAYER_KEY, id);
+  return id;
 }
 
 async function api(path: string, init?: RequestInit): Promise<ApiResponse> {
@@ -41,36 +44,35 @@ async function api(path: string, init?: RequestInit): Promise<ApiResponse> {
   return data;
 }
 
-export class GenLayerGameStore implements GameStore {
+export class HostedGameStore implements GameStore {
   private listeners = new Map<string, Set<(state: GameState) => void>>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private lastState = new Map<string, string>();
 
   async createGame(): Promise<GameState> {
-    const data = await api("/api/games", { method: "POST" });
+    const data = await api("/api/hosted/games", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId() }),
+    });
     if (!data.game) throw new Error("Failed to create game");
-    writeLocal(SLOT_KEY, "1");
-    if (data.myId) writeLocal(MY_ID_KEY, data.myId);
     return data.game;
   }
 
-  async createAiGame(): Promise<GameState> {
+  async createAiGame(_difficulty?: AiDifficulty): Promise<GameState> {
     throw new Error("Single-player games run in the built-in offline store");
   }
 
   async joinGame(id: string): Promise<GameState> {
-    const data = await api(`/api/games/${encodeURIComponent(id)}`, {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",
-      body: JSON.stringify({ action: "join" }),
+      body: JSON.stringify({ action: "join", playerId: getMyPlayerId() }),
     });
     if (!data.game) throw new Error("Failed to join game");
-    writeLocal(SLOT_KEY, "2");
-    if (data.myId) writeLocal(MY_ID_KEY, data.myId);
     return data.game;
   }
 
   async getGame(id: string): Promise<GameState | null> {
-    const data = await api(`/api/games/${encodeURIComponent(id)}`);
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`);
     return data.game ?? null;
   }
 
@@ -80,11 +82,11 @@ export class GenLayerGameStore implements GameStore {
     to: string,
     promotion?: string,
   ): Promise<GameState> {
-    const data = await api(`/api/games/${encodeURIComponent(id)}`, {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",
       body: JSON.stringify({
         action: "move",
-        player: this.mySlot(),
+        playerId: getMyPlayerId(),
         move: { from, to, promotion },
       }),
     });
@@ -97,25 +99,21 @@ export class GenLayerGameStore implements GameStore {
   }
 
   async resign(id: string): Promise<GameState> {
-    const data = await api(`/api/games/${encodeURIComponent(id)}`, {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",
-      body: JSON.stringify({ action: "resign", player: this.mySlot() }),
+      body: JSON.stringify({ action: "resign", playerId: getMyPlayerId() }),
     });
     if (!data.game) throw new Error("Resignation failed");
     return data.game;
   }
 
   async generateSummary(id: string): Promise<GameState> {
-    const data = await api(`/api/games/${encodeURIComponent(id)}`, {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",
-      body: JSON.stringify({ action: "summary" }),
+      body: JSON.stringify({ action: "summary", playerId: getMyPlayerId() }),
     });
     if (!data.game) throw new Error("Summary generation failed");
     return data.game;
-  }
-
-  private mySlot(): 1 | 2 {
-    return readLocal(SLOT_KEY) === "2" ? 2 : 1;
   }
 
   subscribe(id: string, callback: (state: GameState) => void): () => void {
@@ -155,6 +153,6 @@ export class GenLayerGameStore implements GameStore {
   }
 
   getMyPlayerId(): string {
-    return readLocal(MY_ID_KEY) ?? "0x…";
+    return getMyPlayerId();
   }
 }
