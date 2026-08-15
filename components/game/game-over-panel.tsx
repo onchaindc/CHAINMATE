@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Play, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { GameState } from "@/lib/types";
@@ -12,9 +12,10 @@ interface GameOverPanelProps {
   game: GameState;
   busy?: boolean;
   onGenerateSummary: () => void;
+  onReplay: () => void;
 }
 
-export function GameOverPanel({ game, busy, onGenerateSummary }: GameOverPanelProps) {
+export function GameOverPanel({ game, busy, onGenerateSummary, onReplay }: GameOverPanelProps) {
   const winnerSide =
     game.winner === game.creator ? "White" : game.winner === game.opponent ? "Black" : null;
   const resultLabel: Record<string, string> = {
@@ -114,6 +115,10 @@ export function GameOverPanel({ game, busy, onGenerateSummary }: GameOverPanelPr
       )}
 
       <div className="mt-5 flex gap-2 border-t border-border/60 pt-4">
+        <Button size="sm" variant="outline" className="flex-1" onClick={onReplay}>
+          <Play aria-hidden />
+          Replay
+        </Button>
         <Button
           size="sm"
           className="flex-1"

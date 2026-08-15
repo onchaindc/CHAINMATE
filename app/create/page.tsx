@@ -23,15 +23,19 @@ const MODES: { id: GameMode; label: string; icon: typeof Users }[] = [
 ];
 
 const DIFFICULTIES: { id: AiDifficulty; label: string; hint: string }[] = [
-  { id: "casual", label: "Casual", hint: "2-ply search" },
-  { id: "competitive", label: "Competitive", hint: "3-ply search" },
+  { id: "casual", label: "Casual", hint: "2-ply" },
+  { id: "competitive", label: "Competitive", hint: "3-ply" },
 ];
+
+const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
 
 export default function CreateGamePage() {
   const router = useRouter();
   const backend = getGameBackend();
   const [mode, setMode] = useState<GameMode>(initialMode);
   const [difficulty, setDifficulty] = useState<AiDifficulty>("casual");
+  const [timeControl, setTimeControl] = useState<string>("10 + 0");
+  const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,13 +46,13 @@ export default function CreateGamePage() {
       const game =
         mode === "ai"
           ? await getStore("local").createAiGame(difficulty)
-          : await getStore().createGame();
+          : await getStore().createGame({ timeControl, visibility });
       router.push(`/game/${game.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create the game");
       setBusy(false);
     }
-  }, [router, mode, difficulty]);
+  }, [router, mode, difficulty, timeControl, visibility]);
 
   const selected = MODES.find((m) => m.id === mode)!;
 
@@ -101,6 +105,82 @@ export default function CreateGamePage() {
             </div>
           </div>
 
+          {/* Time control — segmented control (PvP) */}
+          {mode === "pvp" && (
+            <div className="animate-fade-in-up">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Time control
+              </p>
+              <div
+                className="grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                role="radiogroup"
+                aria-label="Time control"
+              >
+                {TIME_CONTROLS.map((tc) => (
+                  <button
+                    key={tc}
+                    type="button"
+                    role="radio"
+                    aria-checked={timeControl === tc}
+                    onClick={() => setTimeControl(tc)}
+                    className={cn(
+                      "rounded-md px-2 py-2 font-mono text-sm tabular-nums transition-all",
+                      timeControl === tc
+                        ? "bg-card text-foreground shadow-sm ring-1 ring-primary/30"
+                        : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
+                    )}
+                  >
+                    {tc}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Minutes per side + increment per move. Timed clocks are not part
+                of this build — the control is recorded on the game.
+              </p>
+            </div>
+          )}
+
+          {/* Visibility — segmented control (PvP) */}
+          {mode === "pvp" && (
+            <div className="animate-fade-in-up">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Game type
+              </p>
+              <div
+                className="grid grid-cols-2 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                role="radiogroup"
+                aria-label="Game visibility"
+              >
+                {(
+                  [
+                    { id: "private", label: "Private", hint: "invite only" },
+                    { id: "public", label: "Public", hint: "listed on Watch" },
+                  ] as const
+                ).map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={visibility === v.id}
+                    onClick={() => setVisibility(v.id)}
+                    className={cn(
+                      "rounded-md px-3 py-2 text-sm font-medium transition-all",
+                      visibility === v.id
+                        ? "bg-card text-foreground shadow-sm ring-1 ring-primary/30"
+                        : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
+                    )}
+                  >
+                    {v.label}
+                    <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
+                      {v.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* AI difficulty — segmented control */}
           {mode === "ai" && (
             <div className="animate-fade-in-up">
@@ -148,7 +228,7 @@ export default function CreateGamePage() {
               <p className="text-xs text-muted-foreground">
                 {mode === "ai"
                   ? "The on-device engine plays Black — instant, no setup."
-                  : "White moves first."}
+                  : "White moves first. Games are rated by default."}
               </p>
             </div>
             <ShieldCheck className="h-4 w-4 shrink-0 text-primary/70" aria-hidden />

@@ -1,5 +1,5 @@
 import { Chess, type Move, type Square } from "chess.js";
-import { START_FEN } from "@/lib/types";
+import { START_FEN, type MoveRecord } from "@/lib/types";
 
 /** Wrapper helpers around chess.js. The same validation logic is mirrored
  *  in the GenLayer contract (contracts/chainmate.py). */
@@ -129,4 +129,28 @@ export function countCaptures(moves: { from: string; to: string }[]): number {
 /** Full move count = number of plies. */
 export function totalPly(moves: unknown[]): number {
   return moves.length;
+}
+
+/**
+ * Replay a recorded move list and return the FEN after `ply` plies
+ * (0 = starting position, moves.length = final position). Falls back to the
+ * starting position if the record cannot be replayed.
+ */
+export function fenAfterPly(moves: MoveRecord[], ply: number): string {
+  const chess = new Chess(START_FEN);
+  const end = Math.max(0, Math.min(ply, moves.length));
+  for (let i = 0; i < end; i++) {
+    const m = moves[i];
+    try {
+      const move = chess.move({
+        from: m.from as Square,
+        to: m.to as Square,
+        promotion: (m.promotion || undefined) as "q" | "r" | "b" | "n" | undefined,
+      });
+      if (!move) return START_FEN;
+    } catch {
+      return START_FEN;
+    }
+  }
+  return chess.fen();
 }

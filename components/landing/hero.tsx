@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { BoardVisual } from "@/components/landing/board-visual";
+import { HeroPreview } from "@/components/home/hero-preview";
 import { cn } from "@/lib/utils";
 
 export function Hero() {
@@ -43,7 +43,7 @@ export function Hero() {
           </div>
         </div>
         <div className="animate-fade-in-up [animation-delay:100ms]">
-          <BoardVisual />
+          <HeroPreview />
         </div>
       </div>
     </section>

@@ -1,28 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AI_ENABLED } from "@/lib/config";
 import type { GameState } from "@/lib/types";
 
+export type AnalysisStatus = "analyzing" | "ready" | "unavailable" | "failed";
+
 /**
  * LLM commentary for the latest move. Only active when
- * NEXT_PUBLIC_AI_ENABLED=true AND the server has AI_API_KEY set.
+ * NEXT_PUBLIC_AI_ENABLED=true AND the server has AI_API_KEY set; otherwise the
+ * analysis panel falls back to the rule-based engine entries stored on the
+ * game. Never blocks the game — failure surfaces as "failed" + retry.
  */
 export function useAiCommentary(game: GameState | null) {
   const [insight, setInsight] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<AnalysisStatus | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   const lastMove = game?.moves.length ? game.moves[game.moves.length - 1] : null;
   const moveNumber = lastMove?.number ?? 0;
 
+  const retry = useCallback(() => setAttempt((a) => a + 1), []);
+
   useEffect(() => {
     setInsight(null);
-    setError(null);
-    if (!game || !lastMove || !AI_ENABLED) return;
+    if (!game || !lastMove || !AI_ENABLED) {
+      setStatus(null);
+      return;
+    }
 
     let cancelled = false;
-    setLoading(true);
+    setStatus("analyzing");
     fetch("/api/ai", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -36,23 +44,25 @@ export function useAiCommentary(game: GameState | null) {
       .then(async (res) => {
         if (cancelled) return;
         if (!res.ok) {
-          setError("AI commentary unavailable");
+          setStatus("failed");
           return;
         }
         const data = (await res.json()) as { text?: string };
-        setInsight(data.text ?? null);
+        if (data.text) {
+          setInsight(data.text);
+          setStatus("ready");
+        } else {
+          setStatus("unavailable");
+        }
       })
       .catch(() => {
-        if (!cancelled) setError("AI commentary unavailable");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setStatus("failed");
       });
 
     return () => {
       cancelled = true;
     };
-  }, [game?.id, moveNumber, game?.fen, lastMove?.san, lastMove?.side, game]);
+  }, [game?.id, moveNumber, game?.fen, lastMove?.san, lastMove?.side, game, attempt]);
 
-  return { insight, loading, error, enabled: AI_ENABLED };
+  return { insight, status, retry, enabled: AI_ENABLED };
 }

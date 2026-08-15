@@ -1,8 +1,16 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { GameState } from "@/lib/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** Merge games from multiple stores by id and sort newest first. */
+export function mergeGamesById(games: GameState[]): GameState[] {
+  const map = new Map<string, GameState>();
+  for (const g of games) map.set(g.id, g);
+  return [...map.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 }
 
 /** Cryptographically-random hex string (works in browser and Node). */

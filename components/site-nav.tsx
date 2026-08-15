@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Plus } from "lucide-react";
+import { Plus, User } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
-  { href: "/create", label: "Play" },
-  { href: "/join", label: "Join" },
-  { href: "/create?mode=ai", label: "Solo" },
+  { href: "/create", label: "Play", className: "" },
+  { href: "/join", label: "Join", className: "hidden sm:inline" },
+  { href: "/create?mode=ai", label: "Solo", className: "hidden sm:inline" },
+  { href: "/watch", label: "Watch", className: "hidden md:inline" },
+  { href: "/games", label: "Games", className: "hidden md:inline" },
+  { href: "/leaderboard", label: "Leaderboard", className: "hidden lg:inline" },
 ];
 
 export function SiteNav() {
@@ -27,7 +30,7 @@ export function SiteNav() {
         </Link>
 
         <nav className="flex items-center gap-1 sm:gap-2">
-          {LINKS.map(({ href, label }) => {
+          {LINKS.map(({ href, label, className }) => {
             const path = href.split("?")[0];
             const active = pathname.startsWith(path) && pathname !== "/";
             return (
@@ -37,6 +40,7 @@ export function SiteNav() {
                 className={cn(
                   "relative px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground",
                   active && "text-foreground",
+                  className,
                 )}
               >
                 {label}
@@ -47,22 +51,24 @@ export function SiteNav() {
             );
           })}
           <Link
-            href="/create?mode=ai"
-            aria-label="Play vs AI"
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "hidden sm:inline-flex")}
+            href="/profile"
+            aria-label="Profile"
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "icon" }),
+              "text-muted-foreground hover:text-foreground",
+            )}
           >
-            <Bot className="h-3.5 w-3.5" aria-hidden />
-            Play vs AI
+            <User aria-hidden />
           </Link>
           <Link
             href="/create"
             aria-label="Create game"
-            className={cn(buttonVariants({ size: "icon", className: "sm:hidden" }))}
+            className={cn(buttonVariants({ size: "icon" }), "sm:hidden")}
           >
             <Plus aria-hidden />
           </Link>
           <span
-            className="ml-2 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:flex"
+            className="ml-1 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80 xl:flex"
             title="Chess rules are enforced by an intelligent contract on the GenLayer network"
           >
             <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />

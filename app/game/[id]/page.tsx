@@ -1,8 +1,19 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, Bot, Flag, Loader2, Users } from "lucide-react";
+import {
+  AlertCircle,
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Flag,
+  Loader2,
+  SkipBack,
+  SkipForward,
+  Users,
+} from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,12 +27,15 @@ import { WaitingPanel } from "@/components/game/waiting-panel";
 import { useAiCommentary } from "@/hooks/use-ai-commentary";
 import { useAiOpponent } from "@/hooks/use-ai-opponent";
 import { useGame } from "@/hooks/use-game";
+import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
 import { AI_PLAYER_ID, isGameOver, shortId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export default function GamePage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params.id;
 
   const {
@@ -41,9 +55,50 @@ export default function GamePage() {
     generateSummary,
   } = useGame(id);
 
-  const { insight, loading: aiLoading, enabled: aiEnabled } = useAiCommentary(game);
+  const { insight, status: aiStatus, retry: retryAnalysis, enabled: aiEnabled } = useAiCommentary(game);
   const isAiGame = game?.opponent === AI_PLAYER_ID;
   useAiOpponent({ game, submitAiMove, disabled: busy !== null });
+
+  const gameOver = game ? isGameOver(game.status) : false;
+  const replayRequested = searchParams.get("replay") === "1";
+  const [ply, setPly] = useState<number | null>(null);
+  const replayMode = Boolean(replayRequested && gameOver && ply !== null);
+
+  // Enter replay at the final position when arriving with ?replay=1.
+  useEffect(() => {
+    if (game && replayRequested && gameOver && ply === null) {
+      setPly(game.moves.length);
+    }
+  }, [game, replayRequested, gameOver, ply]);
+
+  // Keyboard navigation while replaying (←/→/Home/End).
+  useEffect(() => {
+    if (!replayMode || !game) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") setPly((p) => Math.max(0, (p ?? 0) - 1));
+      else if (e.key === "ArrowRight") setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1));
+      else if (e.key === "Home") setPly(0);
+      else if (e.key === "End") setPly(game.moves.length);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [replayMode, game]);
+
+  const exitReplay = useCallback(() => {
+    setPly(null);
+    router.replace(`/game/${id}`);
+  }, [id, router]);
+
+  const boardFen = useMemo(() => {
+    if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
+    return game?.fen ?? null;
+  }, [replayMode, game, ply]);
+
+  const replayLastMove = useMemo(() => {
+    if (!replayMode || !game || !ply) return null;
+    const m = game.moves[ply - 1];
+    return m ? { from: m.from, to: m.to } : null;
+  }, [replayMode, game, ply]);
 
   if (loading) {
     return (
@@ -94,7 +149,6 @@ export default function GamePage() {
   }
 
   const waiting = game.status === "waiting";
-  const gameOver = isGameOver(game.status);
   const interactive = !waiting && !gameOver && mySide !== null && myTurn && busy !== "move";
   const orientation: "white" | "black" = mySide === "black" ? "black" : "white";
   const lastMove = game.moves.length
@@ -114,11 +168,17 @@ export default function GamePage() {
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
         <div>
-          <h1 className="font-display text-lg font-bold tracking-tight">Chess match</h1>
+          <h1 className="font-display text-lg font-bold tracking-tight">
+            {replayMode ? "Replay" : "Chess match"}
+          </h1>
           <p className="font-mono text-[11px] text-muted-foreground">{shortId(game.id)}</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <StatusBar game={game} turnSide={turnSide} inCheck={pos?.inCheck ?? false} />
+          {replayMode ? (
+            <Badge variant="secondary">replay</Badge>
+          ) : (
+            <StatusBar game={game} turnSide={turnSide} inCheck={pos?.inCheck ?? false} />
+          )}
           {spectator && <Badge variant="secondary">spectating</Badge>}
         </div>
       </div>
@@ -142,16 +202,16 @@ export default function GamePage() {
             playerId={game.opponent}
             isYou={mySide === "black"}
             isWinner={winnerSide === "black"}
-            isTurn={turnSide === "black" && !gameOver && !waiting}
+            isTurn={!replayMode && turnSide === "black" && !gameOver && !waiting}
             waiting={waiting && !game.opponent}
           />
           <div className="overflow-hidden rounded-md ring-1 ring-border/40">
             <ChessBoard
-              fen={game.fen}
+              fen={boardFen ?? game.fen}
               orientation={orientation}
-              interactive={interactive}
+              interactive={!replayMode && interactive}
               inCheck={pos?.inCheck ?? false}
-              lastMove={lastMove}
+              lastMove={replayMode ? replayLastMove : lastMove}
               onMove={(from, to, promotion) => {
                 void submitMove(from, to, promotion);
               }}
@@ -163,58 +223,86 @@ export default function GamePage() {
             playerId={game.creator}
             isYou={mySide === "white"}
             isWinner={winnerSide === "white"}
-            isTurn={turnSide === "white" && !gameOver && !waiting}
+            isTurn={!replayMode && turnSide === "white" && !gameOver && !waiting}
             waiting={waiting && !game.opponent}
           />
 
+          {/* Replay controls */}
+          {replayMode && game && (
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-card/40 px-3 py-2">
+              <div className="flex items-center gap-1">
+                <Button size="icon" variant="ghost" onClick={() => setPly(0)} disabled={ply === 0} aria-label="First move">
+                  <SkipBack aria-hidden />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.max(0, (p ?? 0) - 1))} disabled={ply === 0} aria-label="Previous move">
+                  <ChevronLeft aria-hidden />
+                </Button>
+                <span className="w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
+                  {ply ?? 0} / {game.moves.length}
+                </span>
+                <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1))} disabled={ply === game.moves.length} aria-label="Next move">
+                  <ChevronRight aria-hidden />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => setPly(game.moves.length)} disabled={ply === game.moves.length} aria-label="Last move">
+                  <SkipForward aria-hidden />
+                </Button>
+              </div>
+              <Button size="sm" variant="outline" onClick={exitReplay}>
+                Exit replay
+              </Button>
+            </div>
+          )}
+
           {/* Actions */}
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            {game.status === "active" && mySide && (
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => void resign()}
-              >
-                {busy === "resign" ? (
-                  <Loader2 className="animate-spin" aria-hidden />
-                ) : (
-                  <Flag aria-hidden />
-                )}
-                Resign
-              </Button>
-            )}
-            {waiting && mySide === null && (
-              <Button size="lg" disabled={busy !== null} onClick={() => void join()} className="w-full">
-                {busy === "join" ? (
-                  <Loader2 className="animate-spin" aria-hidden />
-                ) : (
-                  <Users aria-hidden />
-                )}
-                Join as Black
-              </Button>
-            )}
-            <p
-              className={cn(
-                "text-xs text-muted-foreground",
-                game.status === "active" && !interactive && mySide && !busy && "animate-pulse-soft",
+          {!replayMode && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {game.status === "active" && mySide && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={() => void resign()}
+                >
+                  {busy === "resign" ? (
+                    <Loader2 className="animate-spin" aria-hidden />
+                  ) : (
+                    <Flag aria-hidden />
+                  )}
+                  Resign
+                </Button>
               )}
-            >
-              {waiting && mySide === null
-                ? "You'll play Black once you join."
-                : game.status === "active" && mySide === null
-                  ? "Spectating — the game updates live."
-                  : game.status === "active" && aiThinking
-                    ? "The engine is thinking…"
-                    : game.status === "active" && !myTurn
-                      ? "Waiting for your opponent to move…"
-                      : game.status === "active" && myTurn
-                        ? "Your turn — click a piece, then a destination."
-                        : gameOver
-                          ? "The game has ended."
-                          : ""}
-            </p>
-          </div>
+              {waiting && mySide === null && (
+                <Button size="lg" disabled={busy !== null} onClick={() => void join()} className="w-full">
+                  {busy === "join" ? (
+                    <Loader2 className="animate-spin" aria-hidden />
+                  ) : (
+                    <Users aria-hidden />
+                  )}
+                  Join as Black
+                </Button>
+              )}
+              <p
+                className={cn(
+                  "text-xs text-muted-foreground",
+                  game.status === "active" && !interactive && mySide && !busy && "animate-pulse-soft",
+                )}
+              >
+                {waiting && mySide === null
+                  ? "You'll play Black once you join."
+                  : game.status === "active" && mySide === null
+                    ? "Spectating — the game updates live."
+                    : game.status === "active" && aiThinking
+                      ? "The engine is thinking…"
+                      : game.status === "active" && !myTurn
+                        ? "Waiting for your opponent to move…"
+                        : game.status === "active" && myTurn
+                          ? "Your turn — click a piece, then a destination."
+                          : gameOver
+                            ? "The game has ended."
+                            : ""}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Side panel */}
@@ -229,8 +317,13 @@ export default function GamePage() {
             </div>
           )}
 
-          {gameOver && (
-            <GameOverPanel game={game} busy={busy === "summary"} onGenerateSummary={generateSummary} />
+          {gameOver && !replayMode && (
+            <GameOverPanel
+              game={game}
+              busy={busy === "summary"}
+              onGenerateSummary={generateSummary}
+              onReplay={() => setPly(game.moves.length)}
+            />
           )}
 
           <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
@@ -239,17 +332,68 @@ export default function GamePage() {
                 Game
               </span>
               <span className="font-mono text-xs tabular-nums text-foreground/80">
-                Move {moveNumber}
+                {replayMode ? `Move ${Math.min(ply ?? 0, game.moves.length)}` : `Move ${moveNumber}`}
               </span>
             </div>
-            <MoveHistory moves={game.moves} currentPly={game.moves.length - 1} />
+            <MoveHistory moves={game.moves} currentPly={replayMode ? (ply ?? 0) - 1 : game.moves.length - 1} />
             <CommentaryPanel
               entries={game.commentary}
               aiInsight={insight}
-              aiLoading={aiLoading}
+              aiStatus={aiStatus}
               aiEnabled={aiEnabled}
               aiHint={aiHint}
+              onRetry={retryAnalysis}
             />
+
+            {/* Game info */}
+            <div className="border-t border-border/60">
+              <div className="px-4 py-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Game info
+                </span>
+              </div>
+              <dl className="space-y-1.5 px-4 pb-3 text-xs">
+                {game.timeControl && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-muted-foreground">Time control</dt>
+                    <dd className="font-mono tabular-nums text-foreground/85">{game.timeControl}</dd>
+                  </div>
+                )}
+                {game.visibility && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-muted-foreground">Visibility</dt>
+                    <dd className="capitalize text-foreground/85">{game.visibility}</dd>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <dt className="text-muted-foreground">Game id</dt>
+                  <dd className="font-mono text-foreground/85">{shortId(game.id)}</dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt className="text-muted-foreground">Backend</dt>
+                  <dd className="capitalize text-foreground/85">
+                    {game.backend === "genlayer"
+                      ? "GenLayer"
+                      : game.backend === "hosted"
+                        ? "Online store"
+                        : "Local"}
+                  </dd>
+                </div>
+                {game.endedAt && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-muted-foreground">Ended</dt>
+                    <dd className="tabular-nums text-foreground/85">
+                      {new Date(game.endedAt).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </div>
           </div>
         </div>
       </div>

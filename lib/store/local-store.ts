@@ -8,6 +8,7 @@ import {
   AI_PLAYER_ID,
   isGameOver,
   type AiDifficulty,
+  type CreateGameOptions,
   type GameState,
   type GameStore,
 } from "@/lib/types";
@@ -95,15 +96,28 @@ export class LocalGameStore implements GameStore {
     return readGames()[id] ?? null;
   }
 
-  private save(game: GameState) {
+  /** Persist a state and return the stored copy (timestamps bumped). */
+  private save(game: GameState): GameState {
+    const now = Date.now();
+    const over = isGameOver(game.status);
+    const next: GameState = {
+      ...game,
+      updatedAt: now,
+      startedAt: game.startedAt ?? (game.opponent ? now : undefined),
+      endedAt: game.endedAt ?? (over ? now : undefined),
+      // Match reports are generated automatically the moment a game ends.
+      summary: game.summary || (over ? buildRuleSummary(game) : game.summary),
+    };
     const games = readGames();
-    games[game.id] = game;
+    games[next.id] = next;
     writeGames(games);
-    this.channel?.postMessage({ id: game.id, state: game });
-    this.emit(game.id);
+    this.channel?.postMessage({ id: next.id, state: next });
+    this.emit(next.id);
+    return next;
   }
 
-  async createGame(): Promise<GameState> {
+  async createGame(options?: CreateGameOptions): Promise<GameState> {
+    const now = Date.now();
     const id = `${LOCAL_GAME_PREFIX}${randomHex(6)}`;
     const game: GameState = {
       id,
@@ -116,12 +130,16 @@ export class LocalGameStore implements GameStore {
       commentary: [],
       summary: "",
       backend: "local",
+      timeControl: options?.timeControl,
+      visibility: options?.visibility === "public" ? "public" : "private",
+      createdAt: now,
+      updatedAt: now,
     };
-    this.save(game);
-    return game;
+    return this.save(game);
   }
 
   async createAiGame(difficulty: AiDifficulty = "casual"): Promise<GameState> {
+    const now = Date.now();
     const id = `${LOCAL_GAME_PREFIX}${randomHex(6)}`;
     const game: GameState = {
       id,
@@ -135,9 +153,11 @@ export class LocalGameStore implements GameStore {
       summary: "",
       backend: "local",
       aiDifficulty: difficulty,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
     };
-    this.save(game);
-    return game;
+    return this.save(game);
   }
 
   async joinGame(id: string): Promise<GameState> {
@@ -146,8 +166,7 @@ export class LocalGameStore implements GameStore {
     const me = getPlayerId();
     const res = joinPlayerToGame(game, me);
     if (!res.ok) throw new Error(res.error);
-    this.save(res.game);
-    return res.game;
+    return this.save(res.game);
   }
 
   async getGame(id: string): Promise<GameState | null> {
@@ -165,8 +184,7 @@ export class LocalGameStore implements GameStore {
     const me = getPlayerId();
     const res = applyMoveToGame(game, me, from, to, promotion);
     if (!res.ok) throw new Error(res.error);
-    this.save(res.game);
-    return res.game;
+    return this.save(res.game);
   }
 
   async submitAiMove(id: string): Promise<GameState> {
@@ -195,8 +213,7 @@ export class LocalGameStore implements GameStore {
       if (!aiMove) return game;
       const res = applyMoveToGame(game, AI_PLAYER_ID, aiMove.from, aiMove.to, aiMove.promotion);
       if (!res.ok) return game;
-      this.save(res.game);
-      return res.game;
+      return this.save(res.game);
     } finally {
       this.aiMoveInFlight = false;
       this.aiMoveFen = "";
@@ -209,8 +226,7 @@ export class LocalGameStore implements GameStore {
     const me = getPlayerId();
     const res = resignPlayerFromGame(game, me);
     if (!res.ok) throw new Error(res.error);
-    this.save(res.game);
-    return res.game;
+    return this.save(res.game);
   }
 
   async generateSummary(id: string): Promise<GameState> {
@@ -239,9 +255,13 @@ export class LocalGameStore implements GameStore {
       // fall back to the rule-based summary
     }
 
-    const next: GameState = { ...game, summary };
-    this.save(next);
-    return next;
+    return this.save({ ...game, summary });
+  }
+
+  /** Every local game is "mine" — they all live in this browser. */
+  listMyGames(): GameState[] {
+    const all = Object.values(readGames());
+    return all.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
   subscribe(id: string, callback: Listener): () => void {
