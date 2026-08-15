@@ -51,6 +51,22 @@ export function GameRow({ game, me }: GameRowProps) {
     result = "In progress";
   }
 
+  // When we know the viewer's side, tint the result: green win / orange loss.
+  const winnerIsMe =
+    Boolean(me && game.winner) &&
+    ((game.winner === creator && me === creator) ||
+      (game.winner === opponent && me === opponent));
+  const loserIsMe = Boolean(me && game.winner) && !winnerIsMe && (me === creator || me === opponent);
+  const resultClass = over
+    ? game.winner
+      ? me && (winnerIsMe || loserIsMe)
+        ? winnerIsMe
+          ? "text-emerald-400"
+          : "text-orange-400"
+        : "text-primary"
+      : "text-muted-foreground"
+    : "text-muted-foreground";
+
   const colorLabel = isCreatorMe ? "W" : isOpponentMe ? "B" : null;
   const ts = game.endedAt ?? game.updatedAt ?? game.createdAt ?? 0;
   const date = ts
@@ -76,18 +92,7 @@ export function GameRow({ game, me }: GameRowProps) {
         <span className="hidden text-xs tabular-nums text-muted-foreground md:block">
           {date}
         </span>
-        <span
-          className={cn(
-            "text-xs font-medium",
-            over
-              ? game.winner
-                ? "text-primary"
-                : "text-muted-foreground"
-              : "text-muted-foreground",
-          )}
-        >
-          {result}
-        </span>
+        <span className={cn("text-xs font-medium", resultClass)}>{result}</span>
         {colorLabel && (
           <span className="font-mono text-[11px] uppercase text-muted-foreground">
             {colorLabel}
