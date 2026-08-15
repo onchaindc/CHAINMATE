@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, Gamepad2, Loader2, ShieldCheck, Users } from "lucide-react";
+import { AlertCircle, Bot, Check, Gamepad2, Loader2, ShieldCheck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -81,13 +81,19 @@ export default function CreateGamePage() {
             <button
               type="button"
               onClick={() => setMode("pvp")}
+              aria-pressed={mode === "pvp"}
               className={cn(
-                "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                "relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all",
                 mode === "pvp"
-                  ? "border-primary/60 bg-primary/10"
-                  : "border-border/70 bg-secondary/30 hover:border-primary/30",
+                  ? "border-primary/60 bg-primary/10 shadow-[0_0_20px_-8px] shadow-primary/40"
+                  : "border-border/70 bg-secondary/30 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg",
               )}
             >
+              {mode === "pvp" && (
+                <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <Check className="h-3 w-3" aria-hidden />
+                </span>
+              )}
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <Users className="h-4 w-4 text-primary" aria-hidden />
                 2 players
@@ -99,13 +105,19 @@ export default function CreateGamePage() {
             <button
               type="button"
               onClick={() => setMode("ai")}
+              aria-pressed={mode === "ai"}
               className={cn(
-                "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                "relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all",
                 mode === "ai"
-                  ? "border-primary/60 bg-primary/10"
-                  : "border-border/70 bg-secondary/30 hover:border-primary/30",
+                  ? "border-primary/60 bg-primary/10 shadow-[0_0_20px_-8px] shadow-primary/40"
+                  : "border-border/70 bg-secondary/30 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg",
               )}
             >
+              {mode === "ai" && (
+                <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <Check className="h-3 w-3" aria-hidden />
+                </span>
+              )}
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <Bot className="h-4 w-4 text-primary" aria-hidden />
                 Play vs AI
@@ -140,7 +152,11 @@ export default function CreateGamePage() {
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Difficulty
                 </p>
-                <div className="flex gap-2">
+                <div
+                  className="grid grid-cols-2 gap-1 rounded-lg border border-border/70 bg-secondary/40 p-1"
+                  role="radiogroup"
+                  aria-label="AI difficulty"
+                >
                   {(
                     [
                       { id: "casual", label: "Casual" },
@@ -150,12 +166,14 @@ export default function CreateGamePage() {
                     <button
                       key={d.id}
                       type="button"
+                      role="radio"
+                      aria-checked={difficulty === d.id}
                       onClick={() => setDifficulty(d.id)}
                       className={cn(
-                        "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
                         difficulty === d.id
-                          ? "border-primary/60 bg-primary/15 text-foreground"
-                          : "border-border/70 text-muted-foreground hover:border-primary/30",
+                          ? "bg-card text-foreground shadow-sm ring-1 ring-primary/40"
+                          : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
                       )}
                     >
                       {d.label}
@@ -171,9 +189,15 @@ export default function CreateGamePage() {
           )}
 
           {error && (
-            <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </p>
+            <div className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-destructive">
+                  Could not create the game
+                </p>
+                <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
+              </div>
+            </div>
           )}
 
           <Button onClick={create} disabled={busy} className="w-full" size="lg">

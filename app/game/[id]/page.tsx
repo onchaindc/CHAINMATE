@@ -124,9 +124,12 @@ export default function GamePage() {
 
       {/* Action error banner */}
       {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
-          {error}
+        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-destructive">Something went wrong</p>
+            <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
+          </div>
         </div>
       )}
 

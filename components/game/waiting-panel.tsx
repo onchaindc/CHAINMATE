@@ -23,24 +23,32 @@ export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolea
   }, [url]);
 
   return (
-    <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
-      <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15">
-          <Link2 className="h-4 w-4 text-accent" aria-hidden />
+    <div className="relative overflow-hidden rounded-xl border border-accent/30 bg-accent/5 p-4">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-accent/10 blur-2xl"
+      />
+      <div className="relative flex items-center gap-2">
+        <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15">
+          <span
+            aria-hidden
+            className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/20"
+          />
+          <Link2 className="relative h-4 w-4 text-accent" aria-hidden />
         </span>
-        <div>
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold">
             {local ? "Local game — this browser only" : "Game created — invite your opponent"}
           </h3>
           <p className="text-xs text-muted-foreground">
             {local
-              ? "This game lives on this device. Open the link in another tab or browser of this machine to play Black."
-              : "Share this link. They join as Black with one click."}
+              ? "Open the link in another tab or browser on this machine to play Black."
+              : "Send this link to a friend — they join as Black from any device, no account needed."}
           </p>
         </div>
       </div>
 
-      <div className="mt-3 flex gap-2">
+      <div className="relative mt-3 flex gap-2">
         <input
           readOnly
           value={url}
@@ -54,8 +62,14 @@ export function WaitingPanel({ gameId, local }: { gameId: string; local?: boolea
         </Button>
       </div>
 
-      <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" aria-hidden />
+      <p className="relative mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="relative flex h-2 w-2">
+          <span
+            aria-hidden
+            className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60"
+          />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+        </span>
         Waiting for your opponent to join…
       </p>
     </div>
