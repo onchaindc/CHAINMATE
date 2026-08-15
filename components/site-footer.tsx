@@ -10,12 +10,24 @@ export function SiteFooter() {
             ChainMate — chess, refereed by an intelligent contract on GenLayer.
           </span>
         </div>
-        <div className="flex items-center gap-5 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-5 text-sm text-muted-foreground">
           <Link href="/create" className="transition-colors hover:text-foreground">
             Play
           </Link>
           <Link href="/join" className="transition-colors hover:text-foreground">
             Join
+          </Link>
+          <Link href="/watch" className="transition-colors hover:text-foreground">
+            Watch
+          </Link>
+          <Link href="/games" className="transition-colors hover:text-foreground">
+            Games
+          </Link>
+          <Link href="/leaderboard" className="transition-colors hover:text-foreground">
+            Leaderboard
+          </Link>
+          <Link href="/profile" className="transition-colors hover:text-foreground">
+            Profile
           </Link>
           <a
             href="https://docs.genlayer.com"

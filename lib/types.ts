@@ -51,10 +51,49 @@ export interface GameState {
   backend: GameBackend;
   /** Only set on single-player games — how strong the AI opponent plays. */
   aiDifficulty?: AiDifficulty;
+  /** Selected time control, e.g. "10 + 0". PvP games only. */
+  timeControl?: string;
+  /** Whether the game shows up in the public Watch list. Defaults to private. */
+  visibility?: "public" | "private";
+  /** Unix ms timestamps, set by the stores that persist games. */
+  createdAt?: number;
+  updatedAt?: number;
+  startedAt?: number;
+  endedAt?: number;
+}
+
+/** Persistent per-player stats, derived from real completed rated games. */
+export interface PlayerStats {
+  playerId: string;
+  rating: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  games: number;
+  updatedAt: number;
+}
+
+/** Lightweight index entry used by Games / Watch / homepage lists. */
+export interface GameIndexEntry {
+  id: string;
+  updatedAt: number;
+  createdAt: number;
+  creator: string;
+  opponent: string;
+  status: GameStatus;
+  winner: string;
+  timeControl?: string;
+  visibility?: "public" | "private";
+  endedAt?: number;
+}
+
+export interface CreateGameOptions {
+  timeControl?: string;
+  visibility?: "public" | "private";
 }
 
 export interface GameStore {
-  createGame(): Promise<GameState>;
+  createGame(options?: CreateGameOptions): Promise<GameState>;
   /** Start a single-player game against the built-in on-device AI. */
   createAiGame(difficulty?: AiDifficulty): Promise<GameState>;
   joinGame(id: string): Promise<GameState>;

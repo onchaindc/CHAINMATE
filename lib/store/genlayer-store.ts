@@ -1,6 +1,6 @@
 "use client";
 
-import type { GameState, GameStore } from "@/lib/types";
+import type { CreateGameOptions, GameState, GameStore } from "@/lib/types";
 
 /**
  * On-chain game store. Every write is signed server-side (see
@@ -46,7 +46,7 @@ export class GenLayerGameStore implements GameStore {
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private lastState = new Map<string, string>();
 
-  async createGame(): Promise<GameState> {
+  async createGame(_options?: CreateGameOptions): Promise<GameState> {
     const data = await api("/api/games", { method: "POST" });
     if (!data.game) throw new Error("Failed to create game");
     writeLocal(SLOT_KEY, "1");

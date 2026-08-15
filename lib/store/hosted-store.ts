@@ -1,20 +1,33 @@
 "use client";
 
 import { HOSTED_PLAYER_KEY } from "@/lib/config";
-import type { AiDifficulty, GameState, GameStore } from "@/lib/types";
+import type {
+  AiDifficulty,
+  CreateGameOptions,
+  GameIndexEntry,
+  GameState,
+  GameStore,
+  PlayerStats,
+} from "@/lib/types";
 import { randomHex } from "@/lib/utils";
 
 /**
- * Shared multiplayer store. Game state lives in Vercel KV (server-side) and
- * this store talks to /api/hosted/games — so two players on different
- * devices can join the same game. Live updates come from polling; a move is
- * typically visible to the opponent within ~2s.
+ * Shared multiplayer store. Game state lives in the server store (Vercel KV /
+ * Upstash Redis when configured, otherwise the built-in file store) and this
+ * store talks to /api/hosted/games — so two players on different devices can
+ * join the same game. Live updates come from polling; a move is typically
+ * visible to the opponent within ~2s.
  */
 
 const POLL_MS = 2000;
 
 interface ApiResponse {
   game?: GameState;
+  games?: GameState[];
+  live?: GameIndexEntry[];
+  recent?: GameIndexEntry[];
+  players?: PlayerStats[];
+  stats?: PlayerStats;
   myId?: string;
   error?: string;
 }
@@ -49,10 +62,14 @@ export class HostedGameStore implements GameStore {
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private lastState = new Map<string, string>();
 
-  async createGame(): Promise<GameState> {
+  async createGame(options?: CreateGameOptions): Promise<GameState> {
     const data = await api("/api/hosted/games", {
       method: "POST",
-      body: JSON.stringify({ playerId: getMyPlayerId() }),
+      body: JSON.stringify({
+        playerId: getMyPlayerId(),
+        timeControl: options?.timeControl,
+        visibility: options?.visibility,
+      }),
     });
     if (!data.game) throw new Error("Failed to create game");
     return data.game;
@@ -154,5 +171,38 @@ export class HostedGameStore implements GameStore {
 
   getMyPlayerId(): string {
     return getMyPlayerId();
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Platform data (real games / stats from the server store)            */
+  /* ------------------------------------------------------------------ */
+
+  async listMine(): Promise<GameState[]> {
+    const data = await api(
+      `/api/hosted/games?scope=mine&playerId=${encodeURIComponent(getMyPlayerId())}`,
+    );
+    return data.games ?? [];
+  }
+
+  async listWatch(): Promise<{ live: GameIndexEntry[]; recent: GameIndexEntry[] }> {
+    const data = await api("/api/hosted/games?scope=watch");
+    return { live: data.live ?? [], recent: data.recent ?? [] };
+  }
+
+  async listRecent(): Promise<GameState[]> {
+    const data = await api("/api/hosted/games?scope=recent");
+    return data.games ?? [];
+  }
+
+  async leaderboard(): Promise<PlayerStats[]> {
+    const data = await api("/api/hosted/leaderboard");
+    return data.players ?? [];
+  }
+
+  async myProfile(): Promise<{ stats: PlayerStats; games: GameState[] }> {
+    const data = await api(
+      `/api/hosted/players/me?playerId=${encodeURIComponent(getMyPlayerId())}`,
+    );
+    return { stats: data.stats ?? { playerId: getMyPlayerId(), rating: 1200, wins: 0, losses: 0, draws: 0, games: 0, updatedAt: 0 }, games: data.games ?? [] };
   }
 }
