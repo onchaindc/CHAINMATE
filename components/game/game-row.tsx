@@ -14,9 +14,11 @@ interface GameRowProps {
   game: GameState | GameIndexEntry;
   /** This browser's identity for the relevant store (drives "You vs …"). */
   me?: string;
+  /** Rating change for this game (+16 / −12), when known from rating history. */
+  delta?: number | null;
 }
 
-export function GameRow({ game, me }: GameRowProps) {
+export function GameRow({ game, me, delta }: GameRowProps) {
   const over = isGameOver(game.status);
   const creator = game.creator;
   const opponent = game.opponent || "";
@@ -76,6 +78,19 @@ export function GameRow({ game, me }: GameRowProps) {
         <span className="hidden text-xs tabular-nums text-muted-foreground md:block">
           {date}
         </span>
+        {delta !== undefined && delta !== null && over && (
+          <span
+            className={cn(
+              "font-mono text-xs tabular-nums",
+              delta > 0 && "text-primary",
+              delta < 0 && "text-[#E07A5F]",
+              delta === 0 && "text-muted-foreground",
+            )}
+            title="Rating change"
+          >
+            {delta > 0 ? `+${delta}` : delta}
+          </span>
+        )}
         <span
           className={cn(
             "text-xs font-medium",

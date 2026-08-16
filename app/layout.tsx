@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteNav } from "@/components/site-nav";
+import { IdentityProvider } from "@/lib/identity-context";
 import "./globals.css";
 
 const inter = Inter({
@@ -33,9 +34,11 @@ export default function RootLayout({
         >
           <div className="absolute inset-0 bg-[radial-gradient(1100px_480px_at_50%_-8%,rgba(201,168,106,0.06),transparent_62%)]" />
         </div>
-        <SiteNav />
-        <main className="flex-1">{children}</main>
-        <SiteFooter />
+        <IdentityProvider>
+          <SiteNav />
+          <main className="flex-1">{children}</main>
+          <SiteFooter />
+        </IdentityProvider>
       </body>
     </html>
   );

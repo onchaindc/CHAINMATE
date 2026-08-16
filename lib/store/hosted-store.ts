@@ -1,6 +1,6 @@
 "use client";
 
-import { HOSTED_PLAYER_KEY } from "@/lib/config";
+import { getAuthIdentity, getGuestIdentity, getIdentityToken } from "@/lib/identity";
 import type {
   AiDifficulty,
   CreateGameOptions,
@@ -9,7 +9,6 @@ import type {
   GameStore,
   PlayerStats,
 } from "@/lib/types";
-import { randomHex } from "@/lib/utils";
 
 /**
  * Shared multiplayer store. Game state lives in the server store (Vercel KV /
@@ -33,22 +32,21 @@ interface ApiResponse {
 }
 
 function getMyPlayerId(): string {
-  // sessionStorage keeps a per-tab identity (like the local store), so two
-  // tabs of the same browser can join each other's game. The id survives a
-  // refresh in the same tab, so players keep their side across reloads.
-  const storage = typeof sessionStorage !== "undefined" ? sessionStorage : null;
-  const store = storage ?? (typeof localStorage !== "undefined" ? localStorage : null);
-  const existing = store?.getItem(HOSTED_PLAYER_KEY);
-  if (existing) return existing;
-  const id = `0x${randomHex(20)}`;
-  store?.setItem(HOSTED_PLAYER_KEY, id);
-  return id;
+  // Persistent per-device identity (lib/identity.ts): the same player on
+  // every refresh and tab. Signed-in players play under their account id, so
+  // games stay attached to the account across devices.
+  return getAuthIdentity()?.playerId ?? getGuestIdentity().playerId;
 }
 
 async function api(path: string, init?: RequestInit): Promise<ApiResponse> {
+  const token = getIdentityToken();
   const res = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
   const data = (await res.json().catch(() => ({}))) as ApiResponse;
   if (!res.ok || data.error) {
@@ -178,9 +176,16 @@ export class HostedGameStore implements GameStore {
   /* ------------------------------------------------------------------ */
 
   async listMine(): Promise<GameState[]> {
-    const data = await api(
-      `/api/hosted/games?scope=mine&playerId=${encodeURIComponent(getMyPlayerId())}`,
-    );
+    const auth = getAuthIdentity();
+    const params = new URLSearchParams({
+      scope: "mine",
+      playerId: getMyPlayerId(),
+    });
+    // Include the signed-in account's games (cross-device continuity).
+    if (auth && auth.playerId && auth.playerId !== getMyPlayerId()) {
+      params.set("accountPlayerId", auth.playerId);
+    }
+    const data = await api(`/api/hosted/games?${params.toString()}`);
     return data.games ?? [];
   }
 
@@ -203,6 +208,24 @@ export class HostedGameStore implements GameStore {
     const data = await api(
       `/api/hosted/players/me?playerId=${encodeURIComponent(getMyPlayerId())}`,
     );
-    return { stats: data.stats ?? { playerId: getMyPlayerId(), rating: 1200, wins: 0, losses: 0, draws: 0, games: 0, updatedAt: 0 }, games: data.games ?? [] };
+    return {
+      stats:
+        data.stats ??
+        {
+          playerId: getMyPlayerId(),
+          rating: 1200,
+          peakRating: 1200,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          games: 0,
+          currentStreak: 0,
+          bestStreak: 0,
+          ratingHistory: [],
+          achievements: [],
+          updatedAt: 0,
+        },
+      games: data.games ?? [],
+    };
   }
 }

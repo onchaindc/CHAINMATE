@@ -62,14 +62,46 @@ export interface GameState {
   endedAt?: number;
 }
 
-/** Persistent per-player stats, derived from real completed rated games. */
+/** A single awarded achievement. */
+export interface AchievementEntry {
+  code: string;
+  earnedAt: number;
+}
+
+/** One rated game's rating delta, kept for historical rating tracking. */
+export interface RatingChangeEntry {
+  gameId: string;
+  ratingBefore: number;
+  ratingAfter: number;
+  opponentRating: number;
+  change: number;
+}
+
+/**
+ * Persistent per-player stats, derived from real completed rated games.
+ * All fields are written server-side only — the client can never modify
+ * ratings, streaks or achievements.
+ */
 export interface PlayerStats {
   playerId: string;
+  /** Public display name. Guests get "Guest_XXXX", accounts pick their own. */
+  username?: string;
+  /** True while the player is an anonymous guest (provisional rating). */
+  isGuest?: boolean;
   rating: number;
+  /** Highest rating ever reached (tracked server-side). */
+  peakRating: number;
   wins: number;
   losses: number;
   draws: number;
   games: number;
+  /** Consecutive wins/losses — positive = winning streak. */
+  currentStreak: number;
+  bestStreak: number;
+  /** Recent rated games with their rating deltas (newest first). */
+  ratingHistory: RatingChangeEntry[];
+  /** Achievements awarded from real game data (server-side only). */
+  achievements: AchievementEntry[];
   updatedAt: number;
 }
 

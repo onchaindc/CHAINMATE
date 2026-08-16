@@ -46,13 +46,19 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const scope = req.nextUrl.searchParams.get("scope");
   const playerId = req.nextUrl.searchParams.get("playerId") ?? undefined;
+  const accountPlayerId =
+    req.nextUrl.searchParams.get("accountPlayerId") ?? undefined;
 
   try {
     if (scope === "mine") {
       if (!playerId) {
         return NextResponse.json({ error: "playerId is required" }, { status: 400 });
       }
-      const { games } = await listHostedGames({ playerId, scope: "mine" });
+      const { games } = await listHostedGames({
+        playerId,
+        accountPlayerId,
+        scope: "mine",
+      });
       return NextResponse.json({ games: games ?? [] });
     }
     if (scope === "watch") {

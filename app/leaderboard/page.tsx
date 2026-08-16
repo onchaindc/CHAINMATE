@@ -1,25 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Trophy } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
-import { shortId, type PlayerStats } from "@/lib/types";
+import type { PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export default function LeaderboardPage() {
+  const identity = useIdentity();
   const [players, setPlayers] = useState<PlayerStats[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const me = useMemo(() => (getStore("hosted") as HostedGameStore).getMyPlayerId(), []);
+  const me = identity.playerId;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const hosted = getStore("hosted") as HostedGameStore;
-        const list = await hosted.leaderboard();
+        const list = await (getStore("hosted") as HostedGameStore).leaderboard();
         if (!cancelled) setPlayers(list);
       } catch (err) {
         if (!cancelled) {
@@ -41,8 +42,8 @@ export default function LeaderboardPage() {
         </p>
         <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Leaderboard</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Real ELO ratings from completed online matches. Every player starts at
-          1200.
+          Real ELO ratings from completed online matches. Every player starts
+          at 1200; every rating here came from an actual game.
         </p>
       </div>
 
@@ -99,7 +100,14 @@ export default function LeaderboardPage() {
                       {i + 1}
                     </td>
                     <td className="px-4 py-2.5">
-                      <span className="font-mono text-xs">{shortId(p.playerId)}</span>
+                      <span className="text-sm font-medium text-foreground/90">
+                        {p.username ?? `Guest_${p.playerId.slice(0, 4).toUpperCase()}`}
+                      </span>
+                      {p.isGuest && (
+                        <span className="ml-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                          guest
+                        </span>
+                      )}
                       {isMe && (
                         <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                           you
