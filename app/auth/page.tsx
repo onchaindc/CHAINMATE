@@ -22,12 +22,17 @@ const PENDING_KEY = "chainmate:pending-auth:v1";
 
 /** The auth intent stored when a code is requested, so a magic link clicked
  * later (from the email) can finish the same flow — including the chosen
- * username for account creation. */
+ * username for account creation.
+ *
+ * Written to BOTH sessionStorage and localStorage: the email link opens in a
+ * new tab/webview, which does not share sessionStorage with the tab that
+ * requested the code — localStorage is the cross-tab channel. Cleared on use. */
 function readPendingAuth(): { mode: Mode; username: string; returnTo: string } | null {
-  if (typeof sessionStorage === "undefined") return null;
+  if (typeof window === "undefined") return null;
+  const raw =
+    window.sessionStorage.getItem(PENDING_KEY) ?? window.localStorage.getItem(PENDING_KEY);
+  if (!raw) return null;
   try {
-    const raw = sessionStorage.getItem(PENDING_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as { mode?: string; username?: string; returnTo?: string };
     if (!parsed.mode || (parsed.mode !== "create" && parsed.mode !== "signin")) return null;
     return {
@@ -41,18 +46,29 @@ function readPendingAuth(): { mode: Mode; username: string; returnTo: string } |
 }
 
 function writePendingAuth(mode: Mode, username: string, returnTo: string) {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof window === "undefined") return;
+  const value = JSON.stringify({ mode, username, returnTo });
   try {
-    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ mode, username, returnTo }));
+    window.sessionStorage.setItem(PENDING_KEY, value);
+  } catch {
+    // ignore
+  }
+  try {
+    window.localStorage.setItem(PENDING_KEY, value);
   } catch {
     // ignore
   }
 }
 
 function clearPendingAuth() {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof window === "undefined") return;
   try {
-    sessionStorage.removeItem(PENDING_KEY);
+    window.sessionStorage.removeItem(PENDING_KEY);
+  } catch {
+    // ignore
+  }
+  try {
+    window.localStorage.removeItem(PENDING_KEY);
   } catch {
     // ignore
   }
@@ -84,6 +100,20 @@ function AuthContent() {
   // link): the app must verify it here, or the click does nothing.
   const tokenHash = params.get("token_hash");
   const tokenType = params.get("type") ?? "email";
+
+  // Supabase sometimes delivers the token as a `#token_hash=` URL fragment
+  // instead of a query param (useSearchParams only sees the query). Normalise
+  // it into the same effective value used by the magic-link handler.
+  const hashTokenHash =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token_hash")
+      : null;
+  const hashTokenType =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.hash.replace(/^#/, "")).get("type")
+      : null;
+  const effectiveTokenHash = tokenHash ?? hashTokenHash;
+  const effectiveTokenType = tokenType ?? hashTokenType ?? "email";
 
   const [mode, setMode] = useState<Mode>(upgrade ? "create" : "guest");
   const [step, setStep] = useState<Step>("form");
@@ -159,7 +189,7 @@ function AuthContent() {
    * identity when the link was requested from Create account). */
   const magicLinkHandled = useRef(false);
   useEffect(() => {
-    if (!tokenHash || magicLinkHandled.current) return;
+    if (!effectiveTokenHash || magicLinkHandled.current) return;
     const sb = getSupabaseBrowser();
     if (!sb) return;
     magicLinkHandled.current = true;
@@ -168,8 +198,8 @@ function AuthContent() {
     (async () => {
       try {
         const { data, error: verifyError } = await sb.auth.verifyOtp({
-          token_hash: tokenHash,
-          type: tokenType,
+          token_hash: effectiveTokenHash,
+          type: effectiveTokenType,
         });
         if (verifyError) throw verifyError;
         const session = data.session;
