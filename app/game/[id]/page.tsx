@@ -235,20 +235,6 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Post-game result: the page transitions into a report when the game ends */}
-      {gameOver && (
-        <div className="mb-6 animate-fade-in-up">
-          <GameResult
-            game={game}
-            stats={profiles}
-            myPlayerId={myId}
-            busy={busy === "summary"}
-            onGenerateSummary={generateSummary}
-            onReplay={startReplay}
-          />
-        </div>
-      )}
-
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* Board column */}
         <div className="mx-auto w-full max-w-[680px] space-y-3 lg:mx-0" ref={boardRef}>
@@ -361,8 +347,21 @@ export default function GamePage() {
           )}
         </div>
 
-        {/* Side panel */}
-        <div className="space-y-4 lg:min-w-0">
+        {/* Side panel — scrolls internally on desktop so the board column
+            never moves and the match report never pushes the board down. */}
+        <div className="space-y-4 lg:max-h-[calc(100vh-8.5rem)] lg:min-w-0 lg:overflow-y-auto lg:pr-1">
+          {gameOver && (
+            <div className="animate-fade-in-up">
+              <GameResult
+                game={game}
+                stats={profiles}
+                myPlayerId={myId}
+                busy={busy === "summary"}
+                onGenerateSummary={generateSummary}
+                onReplay={startReplay}
+              />
+            </div>
+          )}
           {waiting && mySide === "white" && (
             <WaitingPanel gameId={game.id} local={isLocalGameId(game.id)} />
           )}
