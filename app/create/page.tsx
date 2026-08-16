@@ -35,7 +35,10 @@ export default function CreateGamePage() {
   const [mode, setMode] = useState<GameMode>(initialMode);
   const [difficulty, setDifficulty] = useState<AiDifficulty>("casual");
   const [timeControl, setTimeControl] = useState<string>("10 + 0");
-  const [visibility, setVisibility] = useState<"public" | "private">("private");
+  // Live games are broadcast to Watch automatically — "public" is the
+  // default so matches are discoverable with zero setup. "Private" is an
+  // explicit opt-out for invite-only games.
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -154,8 +157,8 @@ export default function CreateGamePage() {
               >
                 {(
                   [
+                    { id: "public", label: "Public", hint: "live on Watch" },
                     { id: "private", label: "Private", hint: "invite only" },
-                    { id: "public", label: "Public", hint: "listed on Watch" },
                   ] as const
                 ).map((v) => (
                   <button
@@ -228,7 +231,7 @@ export default function CreateGamePage() {
               <p className="text-xs text-muted-foreground">
                 {mode === "ai"
                   ? "The on-device engine plays Black — instant, no setup."
-                  : "White moves first. Games are rated by default."}
+                  : "White moves first. Games are rated and broadcast live on Watch by default."}
               </p>
             </div>
             <ShieldCheck className="h-4 w-4 shrink-0 text-primary/70" aria-hidden />

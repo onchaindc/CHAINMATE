@@ -123,18 +123,30 @@ account layer is what unlocks username + cross-device identity.
 | `/`              | Landing page                                         |
 | `/create`        | Create a game (you play White)                       |
 | `/join`          | Join a game by id or share link (you play Black)     |
-| `/game/[id]`     | Live board, move history, commentary, summary        |
+| `/game/[id]`     | Live board, clocks, move history, commentary — the    |
+|                  | page becomes a replay with a result modal when it ends |
 | `/games`         | Your real games (with rating deltas)                 |
-| `/watch`         | Public live games + recent finished matches          |
+| `/watch`         | Live broadcast feed (every active game) + recent     |
 | `/leaderboard`   | Real ELO leaderboard                                 |
 | `/profile`       | Your rating, streaks, achievements, recent games     |
 | `/auth`          | Play as guest / create account / sign in             |
 
 ## Game page layout
 
-- **Left:** White player card → chess board → Black player card, resign button
-- **Right:** status indicators (turn / check / checkmate / winner), move
-  history, AI commentary panel, post-game analysis
+- **Left:** Black player (name / rating / clock) → large chess board → White
+  player, resign button, replay controls when the game ends
+- **Right:** match console — move history, analysis, game info (tabbed on
+  mobile)
+- **On game end:** a result modal (You won / You lost / Draw + termination
+  reason, real rating changes, earned achievements, summary) opens over the
+  same URL, and the board becomes a replay
+
+## Watch & live broadcast
+
+Every hosted game is **public by default** and is automatically registered in
+Watch's live feed the moment it starts (move count updates in real time) and
+removed the moment it ends — no manual "publish" step. Games created as
+**Private** stay out of the broadcast but still work through their share link.
 
 ---
 

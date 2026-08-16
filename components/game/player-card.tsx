@@ -19,6 +19,8 @@ interface PlayerCardProps {
   /** Formatted clock ("08:42") when the game has a time control. */
   clock?: string | null;
   clockLow?: boolean;
+  /** Whether the side to move is in check (shown on their card). */
+  inCheck?: boolean;
 }
 
 export function PlayerCard({
@@ -32,24 +34,24 @@ export function PlayerCard({
   rating,
   clock,
   clockLow,
+  inCheck,
 }: PlayerCardProps) {
   const isAi = playerId === AI_PLAYER_ID;
   const displayName = name ?? (isAi ? "ChainMate AI" : shortId(playerId));
+  const active = isTurn && !waiting;
 
   return (
     <div
       className={cn(
         "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 transition-colors",
-        isTurn && !waiting
-          ? "border-primary/40 bg-primary/[0.06]"
-          : "border-border/60 bg-card/40",
+        active ? "border-primary/40 bg-primary/[0.06]" : "border-border/60 bg-card/40",
         isWinner && "border-primary/50 bg-accent/5",
       )}
     >
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-3">
         <span
           className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm",
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-base",
             side === "white"
               ? "border-zinc-400 bg-zinc-100 text-zinc-800"
               : "border-zinc-600 bg-zinc-800 text-zinc-100",
@@ -64,7 +66,7 @@ export function PlayerCard({
             {isAi && (
               <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px]">
                 <Bot className="h-3 w-3" aria-hidden />
-                AI
+                ENGINE
               </Badge>
             )}
             {isYou && (
@@ -79,10 +81,10 @@ export function PlayerCard({
               </Badge>
             )}
           </p>
-          <p className="flex items-center gap-2 truncate font-mono text-[11px] text-muted-foreground">
-            {rating !== null && rating !== undefined ? (
-              <span className="tabular-nums text-primary">{rating}</span>
-            ) : null}
+          <p className="flex items-center gap-2 truncate text-[11px] text-muted-foreground">
+            {rating !== null && rating !== undefined && (
+              <span className="font-mono tabular-nums text-primary">{rating}</span>
+            )}
             <span className="truncate">
               {isAi
                 ? "on-device engine"
@@ -92,33 +94,32 @@ export function PlayerCard({
                     ? "Waiting…"
                     : "—"}
             </span>
+            {active && (
+              <span className="flex shrink-0 items-center gap-1.5 font-medium text-primary">
+                <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
+                to move
+                {inCheck && <span className="text-[#E07A5F]">· check</span>}
+              </span>
+            )}
           </p>
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-col items-end gap-0.5">
-        {clock !== null && clock !== undefined && (
-          <span
-            className={cn(
-              "font-mono text-lg font-semibold leading-none tabular-nums",
-              clockLow ? "text-[#E07A5F]" : "text-foreground/90",
-            )}
-          >
-            {clock}
-          </span>
-        )}
-        {isTurn && !waiting ? (
-          <span className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
-            <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
-            to move
-          </span>
-        ) : waiting ? (
-          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span className="h-1 w-1 animate-pulse-soft rounded-full bg-primary/60" aria-hidden />
-            waiting
-          </span>
-        ) : null}
-      </div>
+      {clock !== null && clock !== undefined && (
+        <span
+          className={cn(
+            "shrink-0 rounded-md border px-3 py-1.5 font-mono text-xl font-semibold leading-none tabular-nums",
+            clockLow
+              ? "border-[#E07A5F]/40 bg-[#E07A5F]/5 text-[#E07A5F]"
+              : active
+                ? "border-primary/40 bg-primary/5 text-foreground"
+                : "border-border/70 bg-secondary/30 text-foreground/85",
+          )}
+          aria-label={`${side === "white" ? "White" : "Black"} clock`}
+        >
+          {clock}
+        </span>
+      )}
     </div>
   );
 }
