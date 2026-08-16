@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChessBoard } from "@/components/game/chess-board";
 import { CommentaryPanel } from "@/components/game/commentary-panel";
-import { GameResult } from "@/components/game/game-result";
+import { EndGameModal } from "@/components/game/end-game-modal";
 import { MoveHistory } from "@/components/game/move-history";
 import { PlayerCard } from "@/components/game/player-card";
 import { StatusBar } from "@/components/game/status-bar";
@@ -34,9 +34,16 @@ import { isHostedGameId, isLocalGameId } from "@/lib/config";
 import { AI_PLAYER_ID, isGameOver, shortId, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+type MobileTab = "moves" | "analysis" | "info";
+
+const MOBILE_TABS: { id: MobileTab; label: string }[] = [
+  { id: "moves", label: "Moves" },
+  { id: "analysis", label: "Analysis" },
+  { id: "info", label: "Match" },
+];
+
 export default function GamePage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const id = params.id;
   const identity = useIdentity();
 
@@ -96,6 +103,22 @@ export default function GamePage() {
     boardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  /* ------------------------------------------------------------------ */
+  /* Post-game modal: appears automatically when the game ends.          */
+  /* ------------------------------------------------------------------ */
+  const [resultOpen, setResultOpen] = useState(false);
+  useEffect(() => {
+    if (gameOver) setResultOpen(true);
+  }, [gameOver, id]);
+
+  /* ------------------------------------------------------------------ */
+  /* Mobile: the match console shows one section at a time.              */
+  /* ------------------------------------------------------------------ */
+  const [mobileTab, setMobileTab] = useState<MobileTab>("moves");
+  useEffect(() => {
+    setMobileTab("moves");
+  }, [id]);
+
   const boardFen = useMemo(() => {
     if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
     return game?.fen ?? null;
@@ -144,12 +167,11 @@ export default function GamePage() {
       <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-3">
-            <Skeleton className="h-11 w-full" />
+            <Skeleton className="h-12 w-full" />
             <Skeleton className="aspect-square w-full" />
-            <Skeleton className="h-11 w-full" />
+            <Skeleton className="h-12 w-full" />
           </div>
           <div className="space-y-3">
-            <Skeleton className="h-24 w-full" />
             <Skeleton className="h-64 w-full" />
           </div>
         </div>
@@ -207,6 +229,74 @@ export default function GamePage() {
   };
   const playerRating = (playerId: string) => profiles[playerId]?.rating ?? null;
 
+  const inCheck = pos?.inCheck ?? false;
+
+  const currentPly = replayMode ? (ply ?? 0) - 1 : game.moves.length - 1;
+  const movesSection = (
+    <MoveHistory moves={game.moves} currentPly={currentPly} />
+  );
+  const analysisSection = (
+    <CommentaryPanel
+      entries={game.commentary}
+      aiInsight={insight}
+      aiStatus={aiStatus}
+      aiEnabled={aiEnabled}
+      aiHint={aiHint}
+      onRetry={retryAnalysis}
+    />
+  );
+
+  const gameInfo = (
+    <div className="border-t border-border/60">
+      <div className="px-4 py-2.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Game info
+        </span>
+      </div>
+      <dl className="space-y-1.5 px-4 pb-3 text-xs">
+        {game.timeControl && (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Time control</dt>
+            <dd className="font-mono tabular-nums text-foreground/85">{game.timeControl}</dd>
+          </div>
+        )}
+        {game.visibility && (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Visibility</dt>
+            <dd className="capitalize text-foreground/85">{game.visibility}</dd>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">Game id</dt>
+          <dd className="font-mono text-foreground/85">{shortId(game.id)}</dd>
+        </div>
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">Backend</dt>
+          <dd className="capitalize text-foreground/85">
+            {game.backend === "genlayer"
+              ? "GenLayer"
+              : game.backend === "hosted"
+                ? "Online store"
+                : "Local"}
+          </dd>
+        </div>
+        {game.endedAt && (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Ended</dt>
+            <dd className="tabular-nums text-foreground/85">
+              {new Date(game.endedAt).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       {/* Header */}
@@ -219,7 +309,7 @@ export default function GamePage() {
           <p className="font-mono text-[11px] text-muted-foreground">{shortId(game.id)}</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={pos?.inCheck ?? false} />}
+          {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
           {spectator && <Badge variant="secondary">spectating</Badge>}
         </div>
       </div>
@@ -236,8 +326,8 @@ export default function GamePage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        {/* Board column */}
-        <div className="mx-auto w-full max-w-[680px] space-y-3 lg:mx-0" ref={boardRef}>
+        {/* Board column — the visual anchor */}
+        <div className="mx-auto w-full max-w-[620px] space-y-3" ref={boardRef}>
           <PlayerCard
             side="black"
             playerId={game.opponent}
@@ -248,6 +338,7 @@ export default function GamePage() {
             isYou={mySide === "black"}
             isWinner={winnerSide === "black"}
             isTurn={!replayMode && turnSide === "black" && !gameOver && !waiting}
+            inCheck={inCheck && turnSide === "black"}
             waiting={waiting && !game.opponent}
           />
           <div className="overflow-hidden rounded-md ring-1 ring-border/40">
@@ -255,7 +346,7 @@ export default function GamePage() {
               fen={boardFen ?? game.fen}
               orientation={orientation}
               interactive={!replayMode && interactive}
-              inCheck={pos?.inCheck ?? false}
+              inCheck={inCheck}
               lastMove={replayMode ? replayLastMove : lastMove}
               onMove={(from, to, promotion) => {
                 void submitMove(from, to, promotion);
@@ -273,6 +364,7 @@ export default function GamePage() {
             isYou={mySide === "white"}
             isWinner={winnerSide === "white"}
             isTurn={!replayMode && turnSide === "white" && !gameOver && !waiting}
+            inCheck={inCheck && turnSide === "white"}
             waiting={waiting && !game.opponent}
           />
 
@@ -347,21 +439,8 @@ export default function GamePage() {
           )}
         </div>
 
-        {/* Side panel — scrolls internally on desktop so the board column
-            never moves and the match report never pushes the board down. */}
+        {/* Match console */}
         <div className="space-y-4 lg:max-h-[calc(100vh-8.5rem)] lg:min-w-0 lg:overflow-y-auto lg:pr-1">
-          {gameOver && (
-            <div className="animate-fade-in-up">
-              <GameResult
-                game={game}
-                stats={profiles}
-                myPlayerId={myId}
-                busy={busy === "summary"}
-                onGenerateSummary={generateSummary}
-                onReplay={startReplay}
-              />
-            </div>
-          )}
           {waiting && mySide === "white" && (
             <WaitingPanel gameId={game.id} local={isLocalGameId(game.id)} />
           )}
@@ -373,76 +452,67 @@ export default function GamePage() {
           )}
 
           <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
-            <div className="flex items-center justify-between px-4 py-2.5">
+            <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Game
+                Match
               </span>
               <span className="font-mono text-xs tabular-nums text-foreground/80">
                 {replayMode ? `Move ${Math.min(ply ?? 0, game.moves.length)}` : `Move ${moveNumber}`}
               </span>
             </div>
-            <MoveHistory moves={game.moves} currentPly={replayMode ? (ply ?? 0) - 1 : game.moves.length - 1} />
-            <CommentaryPanel
-              entries={game.commentary}
-              aiInsight={insight}
-              aiStatus={aiStatus}
-              aiEnabled={aiEnabled}
-              aiHint={aiHint}
-              onRetry={retryAnalysis}
-            />
 
-            {/* Game info */}
-            <div className="border-t border-border/60">
-              <div className="px-4 py-2.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Game info
-                </span>
-              </div>
-              <dl className="space-y-1.5 px-4 pb-3 text-xs">
-                {game.timeControl && (
-                  <div className="flex items-center justify-between">
-                    <dt className="text-muted-foreground">Time control</dt>
-                    <dd className="font-mono tabular-nums text-foreground/85">{game.timeControl}</dd>
-                  </div>
-                )}
-                {game.visibility && (
-                  <div className="flex items-center justify-between">
-                    <dt className="text-muted-foreground">Visibility</dt>
-                    <dd className="capitalize text-foreground/85">{game.visibility}</dd>
-                  </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <dt className="text-muted-foreground">Game id</dt>
-                  <dd className="font-mono text-foreground/85">{shortId(game.id)}</dd>
-                </div>
-                <div className="flex items-center justify-between">
-                  <dt className="text-muted-foreground">Backend</dt>
-                  <dd className="capitalize text-foreground/85">
-                    {game.backend === "genlayer"
-                      ? "GenLayer"
-                      : game.backend === "hosted"
-                        ? "Online store"
-                        : "Local"}
-                  </dd>
-                </div>
-                {game.endedAt && (
-                  <div className="flex items-center justify-between">
-                    <dt className="text-muted-foreground">Ended</dt>
-                    <dd className="tabular-nums text-foreground/85">
-                      {new Date(game.endedAt).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </dd>
-                  </div>
-                )}
-              </dl>
+            {/* Mobile: one section at a time */}
+            <div className="flex gap-1 border-b border-border/60 px-2 py-1.5 lg:hidden">
+              {MOBILE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setMobileTab(tab.id)}
+                  className={cn(
+                    "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    mobileTab === tab.id
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Desktop: everything stacked, internally scrollable */}
+            <div className="hidden lg:block">
+              {movesSection}
+              {analysisSection}
+              {gameInfo}
+            </div>
+
+            {/* Mobile: active tab only */}
+            <div className="lg:hidden">
+              {mobileTab === "moves" && movesSection}
+              {mobileTab === "analysis" && analysisSection}
+              {mobileTab === "info" && gameInfo}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Post-game result modal — appears the moment the game ends */}
+      {gameOver && resultOpen && (
+        <EndGameModal
+          game={game}
+          stats={profiles}
+          myPlayerId={myId}
+          mySide={mySide}
+          busy={busy === "summary"}
+          onGenerateSummary={generateSummary}
+          onReplay={() => {
+            setResultOpen(false);
+            startReplay();
+          }}
+          onClose={() => setResultOpen(false)}
+        />
+      )}
     </div>
   );
 }

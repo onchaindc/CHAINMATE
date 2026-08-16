@@ -107,6 +107,32 @@ export interface PlayerStats {
   updatedAt: number;
 }
 
+/** One player shown in the live Watch feed (real server data). */
+export interface LivePlayerInfo {
+  id: string;
+  /** Public username when the player has one (else the client shows a short id). */
+  name?: string;
+  /** Current ELO rating (always present for real players). */
+  rating?: number;
+  isAi?: boolean;
+}
+
+/**
+ * A game currently in LIVE state, as served by the Watch API. Every active
+ * game is automatically registered in the live feed when it starts and is
+ * removed the moment it ends — no manual "publish" step.
+ */
+export interface LiveGameEntry {
+  id: string;
+  creator: LivePlayerInfo;
+  opponent: LivePlayerInfo;
+  timeControl?: string;
+  /** Real ply count — updates with every move. */
+  moveCount: number;
+  startedAt?: number;
+  updatedAt: number;
+}
+
 /** Lightweight index entry used by Games / Watch / homepage lists. */
 export interface GameIndexEntry {
   id: string;

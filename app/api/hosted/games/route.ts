@@ -62,8 +62,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ games: games ?? [] });
     }
     if (scope === "watch") {
-      const { live, recent } = await listHostedGames({ scope: "watch" });
-      return NextResponse.json({ live: live ?? [], recent: recent ?? [] });
+      const { live, open, recent } = await listHostedGames({ scope: "watch" });
+      return NextResponse.json({
+        live: live ?? [],
+        open: open ?? [],
+        recent: recent ?? [],
+      });
     }
     if (scope === "recent") {
       const { games } = await listHostedGames({ scope: "recent" });

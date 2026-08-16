@@ -9,10 +9,13 @@ import {
   upsertProfiles,
 } from "@/lib/supabase/db";
 import {
+  AI_PLAYER_ID,
   isGameOver,
   type CreateGameOptions,
   type GameIndexEntry,
   type GameState,
+  type LiveGameEntry,
+  type LivePlayerInfo,
   type PlayerStats,
 } from "@/lib/types";
 import { START_FEN } from "@/lib/types";
@@ -34,9 +37,11 @@ import { randomHex } from "@/lib/utils";
 const keyFor = (id: string) => `chainmate:game:${id}`;
 const INDEX_KEY = "chainmate:index:games:v1";
 const LEADERBOARD_KEY = "chainmate:index:leaderboard:v1";
+const LIVE_KEY = "chainmate:index:live:v1";
 const STATS_PREFIX = "chainmate:player:";
 const INDEX_MAX = 400;
 const LEADERBOARD_MAX = 100;
+const LIVE_MAX = 24;
 const START_RATING = 1200;
 const K = 32;
 
@@ -76,6 +81,102 @@ async function upsertIndex(entry: GameIndexEntry): Promise<void> {
   else entries.unshift(entry);
   entries.sort((a, b) => b.updatedAt - a.updatedAt);
   await getGameStorage().set(INDEX_KEY, JSON.stringify(entries.slice(0, INDEX_MAX)));
+}
+
+/* ------------------------------------------------------------------ */
+/* Live-game registry                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The canonical broadcast feed for Watch. Every game that enters LIVE state
+ * is registered here automatically (on the same write that starts it) and is
+ * removed the moment it ends — so watchers always see real, current matches.
+ * The feed is derived from real game state; nothing is hardcoded.
+ */
+interface LiveRegistryEntry {
+  id: string;
+  creator: string;
+  opponent: string;
+  visibility: "public" | "private";
+  timeControl?: string;
+  moveCount: number;
+  startedAt?: number;
+  updatedAt: number;
+}
+
+async function readLiveRegistry(): Promise<LiveRegistryEntry[]> {
+  const raw = await getGameStorage().get(LIVE_KEY);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as LiveRegistryEntry[];
+  } catch {
+    return [];
+  }
+}
+
+async function writeLiveRegistry(entries: LiveRegistryEntry[]): Promise<void> {
+  await getGameStorage().set(LIVE_KEY, JSON.stringify(entries.slice(0, LIVE_MAX)));
+}
+
+async function upsertLive(game: GameState): Promise<void> {
+  const entries = await readLiveRegistry();
+  const entry: LiveRegistryEntry = {
+    id: game.id,
+    creator: game.creator,
+    opponent: game.opponent,
+    visibility: game.visibility === "private" ? "private" : "public",
+    timeControl: game.timeControl,
+    moveCount: game.moves.length,
+    startedAt: game.startedAt,
+    updatedAt: game.updatedAt ?? Date.now(),
+  };
+  const idx = entries.findIndex((e) => e.id === game.id);
+  if (idx >= 0) entries[idx] = entry;
+  else entries.unshift(entry);
+  entries.sort((a, b) => b.updatedAt - a.updatedAt);
+  await writeLiveRegistry(entries);
+}
+
+async function removeLive(id: string): Promise<void> {
+  const entries = await readLiveRegistry();
+  if (!entries.some((e) => e.id === id)) return;
+  await writeLiveRegistry(entries.filter((e) => e.id !== id));
+}
+
+/** Real display info for one player in the live feed (username + rating). */
+async function livePlayerInfo(playerId: string): Promise<LivePlayerInfo> {
+  if (playerId === AI_PLAYER_ID) {
+    return { id: playerId, name: "ChainMate AI", isAi: true };
+  }
+  if (!playerId) {
+    return { id: playerId, name: "Waiting…" };
+  }
+  const stats = await getPlayerStats(playerId);
+  return {
+    id: playerId,
+    name: stats.username,
+    rating: stats.rating,
+  };
+}
+
+async function enrichLive(entries: LiveRegistryEntry[]): Promise<LiveGameEntry[]> {
+  const out: LiveGameEntry[] = [];
+  for (const e of entries) {
+    const [creator, opponent] = await Promise.all([
+      livePlayerInfo(e.creator),
+      livePlayerInfo(e.opponent),
+    ]);
+    out.push({
+      id: e.id,
+      creator,
+      opponent,
+      timeControl: e.timeControl,
+      moveCount: e.moveCount,
+      startedAt: e.startedAt,
+      updatedAt: e.updatedAt,
+    });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,6 +360,13 @@ export async function updatePlayerIdentity(
 async function writeGame(game: GameState): Promise<void> {
   await getGameStorage().set(keyFor(game.id), JSON.stringify(game));
   await upsertIndex(entryFromGame(game));
+  // Keep the live broadcast feed in sync with real game lifecycle: register
+  // on LIVE, update with every move, remove the moment the game ends.
+  if (game.status === "active") {
+    await upsertLive(game);
+  } else {
+    await removeLive(game.id);
+  }
 }
 
 /** Record when a move was played — powers the real chess clocks. */
@@ -286,7 +394,11 @@ export async function createHostedGame(
     summary: "",
     backend: "hosted",
     timeControl: options.timeControl,
-    visibility: options.visibility === "public" ? "public" : "private",
+    // Default: public. Live games are broadcast to Watch automatically —
+    // "private" is an explicit opt-out for players who want an invite-only
+    // match. The setting never gates what the server records; it only
+    // controls discoverability in the Watch feed.
+    visibility: options.visibility === "private" ? "private" : "public",
     createdAt: now,
     updatedAt: now,
   };
@@ -396,7 +508,12 @@ export async function listHostedGames(opts: {
   /** Signed-in account's player id (from the Supabase profile). */
   accountPlayerId?: string;
   scope?: "mine" | "watch" | "recent";
-}): Promise<{ games?: GameState[]; live?: GameIndexEntry[]; recent?: GameIndexEntry[] }> {
+}): Promise<{
+    games?: GameState[];
+    live?: LiveGameEntry[];
+    open?: GameIndexEntry[];
+    recent?: GameIndexEntry[];
+  }> {
   const entries = await readIndex();
 
   if (opts.scope === "mine" && opts.playerId) {
@@ -410,9 +527,23 @@ export async function listHostedGames(opts: {
   }
 
   if (opts.scope === "watch") {
-    const live = entries.filter((e) => e.visibility === "public" && e.status === "waiting");
+    // LIVE feed: every active game, straight from the live registry
+    // (auto-published on start, removed on end). Explicitly private matches
+    // stay out of the broadcast.
+    const registry = await readLiveRegistry();
+    const live = await enrichLive(
+      registry.filter((e) => e.visibility !== "private"),
+    );
+    // Open games: public matches still waiting for an opponent (joinable).
+    const open = entries.filter(
+      (e) => e.visibility === "public" && e.status === "waiting",
+    );
     const done = entries.filter((e) => isGameOver(e.status));
-    return { live: live.slice(0, 12), recent: done.slice(0, 12) };
+    return {
+      live: live.slice(0, LIVE_MAX),
+      open: open.slice(0, 8),
+      recent: done.slice(0, 12),
+    };
   }
 
   if (opts.scope === "recent") {

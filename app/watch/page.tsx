@@ -1,67 +1,80 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, Radio, Trophy } from "lucide-react";
+import { AlertCircle, Radio, Trophy, Users } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
+import { LiveGameCard } from "@/components/game/live-game-card";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
-import { isGameOver, type GameIndexEntry } from "@/lib/types";
+import { isGameOver, type GameIndexEntry, type LiveGameEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface WatchData {
-  live: GameIndexEntry[];
-  recent: GameIndexEntry[];
-  loading: boolean;
-  error: string | null;
-}
+/**
+ * Watch — the live broadcast feed.
+ *
+ * Every game that enters LIVE state is registered automatically by the server
+ * store (lib/server/hosted.ts) and removed the moment it ends, so this page is
+ * always showing real, current matches. It polls the real feed every few
+ * seconds; there is no manual "publish" step and no fabricated data.
+ */
+const POLL_MS = 5000;
 
 export default function WatchPage() {
-  const [data, setData] = useState<WatchData>({ live: [], recent: [], loading: true, error: null });
+  const [live, setLive] = useState<LiveGameEntry[]>([]);
+  const [open, setOpen] = useState<GameIndexEntry[]>([]);
+  const [recent, setRecent] = useState<GameIndexEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const hosted = getStore("hosted") as HostedGameStore;
+    const local = getStore("local") as LocalGameStore;
+    const [remote, localGames] = await Promise.all([
+      hosted.listWatch(),
+      Promise.resolve(local.listMyGames()),
+    ]);
+    const localRecent = localGames
+      .filter((g) => isGameOver(g.status))
+      .map<GameIndexEntry>((g) => ({
+        id: g.id,
+        updatedAt: g.updatedAt ?? 0,
+        createdAt: g.createdAt ?? 0,
+        creator: g.creator,
+        opponent: g.opponent,
+        status: g.status,
+        winner: g.winner,
+        timeControl: g.timeControl,
+        visibility: g.visibility,
+        endedAt: g.endedAt,
+      }));
+    setLive(remote.live);
+    setOpen(remote.open);
+    setRecent(mergeEntries([...remote.recent, ...localRecent]));
+    setError(null);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const tick = async () => {
       try {
-        const hosted = getStore("hosted") as HostedGameStore;
-        const local = getStore("local") as LocalGameStore;
-        const [remote, localGames] = await Promise.all([
-          hosted.listWatch(),
-          Promise.resolve(local.listMyGames()),
-        ]);
-        if (cancelled) return;
-        const localRecent = localGames
-          .filter((g) => isGameOver(g.status))
-          .map<GameIndexEntry>((g) => ({
-            id: g.id,
-            updatedAt: g.updatedAt ?? 0,
-            createdAt: g.createdAt ?? 0,
-            creator: g.creator,
-            opponent: g.opponent,
-            status: g.status,
-            winner: g.winner,
-            timeControl: g.timeControl,
-            visibility: g.visibility,
-            endedAt: g.endedAt,
-          }));
-        const recent = mergeEntries([...remote.recent, ...localRecent]);
-        setData({ live: remote.live, recent, loading: false, error: null });
+        await load();
       } catch (err) {
         if (cancelled) return;
-        setData({
-          live: [],
-          recent: [],
-          loading: false,
-          error: err instanceof Error ? err.message : "Failed to load matches",
-        });
+        setError(err instanceof Error ? err.message : "Failed to load matches");
+        setLoading(false);
       }
-    })();
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, []);
+  }, [load]);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
@@ -71,40 +84,79 @@ export default function WatchPage() {
         </p>
         <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Watch chess</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Join a public game that&rsquo;s waiting for an opponent, or replay a
-          finished match move by move.
+          Every active match is broadcast here automatically — follow live
+          games, join open ones, or replay a finished game move by move.
         </p>
       </div>
 
-      {data.error && (
+      {error && (
         <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <p className="text-sm text-destructive">{data.error}</p>
+          <p className="text-sm text-destructive">{error}</p>
         </div>
       )}
 
-      {/* Live public games */}
+      {/* Live now — real active games from the live registry */}
       <section className="mt-8 animate-fade-in-up [animation-delay:80ms]">
         <div className="flex items-center gap-2">
           <Radio className="h-4 w-4 text-primary" aria-hidden />
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Live · open games
+            Live now
+          </h2>
+          {!loading && live.length > 0 && (
+            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+              <span className="relative flex h-1.5 w-1.5">
+                <span
+                  aria-hidden
+                  className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60"
+                />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+              </span>
+              {live.length} active
+            </span>
+          )}
+        </div>
+        <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
+          {loading ? (
+            <div className="space-y-1 px-2 py-3">
+              {[0, 1].map((i) => (
+                <div key={i} className="h-16 animate-pulse rounded-md bg-secondary/60" />
+              ))}
+            </div>
+          ) : live.length === 0 ? (
+            <p className="px-4 py-8 text-center text-xs text-muted-foreground">
+              No live games right now — every active match appears here automatically.
+            </p>
+          ) : (
+            <div className="divide-y divide-border/50">
+              {live.map((entry) => (
+                <LiveGameCard key={entry.id} entry={entry} />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Open games — public matches waiting for an opponent */}
+      <section className="mt-8 animate-fade-in-up [animation-delay:140ms]">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-primary" aria-hidden />
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Open games
           </h2>
         </div>
         <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
-          {data.loading ? (
+          {loading ? (
             <div className="space-y-1 px-2 py-3">
-              {[0, 1].map((i) => (
-                <div key={i} className="h-11 animate-pulse rounded-md bg-secondary/60" />
-              ))}
+              <div className="h-11 animate-pulse rounded-md bg-secondary/60" />
             </div>
-          ) : data.live.length === 0 ? (
+          ) : open.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-muted-foreground">
               No public games waiting for an opponent right now.
             </p>
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
-              {data.live.map((entry) => (
+              {open.map((entry) => (
                 <GameRow key={entry.id} game={entry} />
               ))}
             </div>
@@ -113,7 +165,7 @@ export default function WatchPage() {
       </section>
 
       {/* Recent completed matches */}
-      <section className="mt-8 animate-fade-in-up [animation-delay:140ms]">
+      <section className="mt-8 animate-fade-in-up [animation-delay:200ms]">
         <div className="flex items-center gap-2">
           <Trophy className="h-4 w-4 text-primary" aria-hidden />
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -121,13 +173,13 @@ export default function WatchPage() {
           </h2>
         </div>
         <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
-          {data.loading ? (
+          {loading ? (
             <div className="space-y-1 px-2 py-3">
               {[0, 1].map((i) => (
                 <div key={i} className="h-11 animate-pulse rounded-md bg-secondary/60" />
               ))}
             </div>
-          ) : data.recent.length === 0 ? (
+          ) : recent.length === 0 ? (
             <div className="px-4 py-8 text-center">
               <p className="text-xs text-muted-foreground">No finished matches yet.</p>
               <Link
@@ -139,7 +191,7 @@ export default function WatchPage() {
             </div>
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
-              {data.recent.map((entry) => (
+              {recent.map((entry) => (
                 <GameRow key={entry.id} game={entry} />
               ))}
             </div>

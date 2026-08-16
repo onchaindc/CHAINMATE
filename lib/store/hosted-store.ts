@@ -7,6 +7,7 @@ import type {
   GameIndexEntry,
   GameState,
   GameStore,
+  LiveGameEntry,
   PlayerStats,
 } from "@/lib/types";
 
@@ -23,7 +24,8 @@ const POLL_MS = 2000;
 interface ApiResponse {
   game?: GameState;
   games?: GameState[];
-  live?: GameIndexEntry[];
+  live?: LiveGameEntry[];
+  open?: GameIndexEntry[];
   recent?: GameIndexEntry[];
   players?: PlayerStats[];
   stats?: PlayerStats;
@@ -189,9 +191,17 @@ export class HostedGameStore implements GameStore {
     return data.games ?? [];
   }
 
-  async listWatch(): Promise<{ live: GameIndexEntry[]; recent: GameIndexEntry[] }> {
+  async listWatch(): Promise<{
+    live: LiveGameEntry[];
+    open: GameIndexEntry[];
+    recent: GameIndexEntry[];
+  }> {
     const data = await api("/api/hosted/games?scope=watch");
-    return { live: data.live ?? [], recent: data.recent ?? [] };
+    return {
+      live: data.live ?? [],
+      open: data.open ?? [],
+      recent: data.recent ?? [],
+    };
   }
 
   async listRecent(): Promise<GameState[]> {
