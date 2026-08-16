@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Flag,
   Loader2,
+  RefreshCw,
   SkipBack,
   SkipForward,
   Users,
@@ -119,6 +120,13 @@ export default function GamePage() {
     setMobileTab("moves");
   }, [id]);
 
+  /* Board control: flip the board (useful for spectators and for reviewing
+     the game from the opponent's point of view). Local view state only. */
+  const [flipped, setFlipped] = useState(false);
+  useEffect(() => {
+    setFlipped(false);
+  }, [id]);
+
   const boardFen = useMemo(() => {
     if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
     return game?.fen ?? null;
@@ -165,7 +173,7 @@ export default function GamePage() {
   if (loading) {
     return (
       <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
           <div className="space-y-3">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="aspect-square w-full" />
@@ -211,7 +219,12 @@ export default function GamePage() {
 
   const waiting = game.status === "waiting";
   const interactive = !waiting && !gameOver && mySide !== null && myTurn && busy !== "move";
-  const orientation: "white" | "black" = mySide === "black" ? "black" : "white";
+  const baseOrientation: "white" | "black" = mySide === "black" ? "black" : "white";
+  const orientation: "white" | "black" = flipped
+    ? baseOrientation === "white"
+      ? "black"
+      : "white"
+    : baseOrientation;
   const lastMove = game.moves.length
     ? { from: game.moves[game.moves.length - 1].from, to: game.moves[game.moves.length - 1].to }
     : null;
@@ -325,9 +338,9 @@ export default function GamePage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         {/* Board column — the visual anchor */}
-        <div className="mx-auto w-full max-w-[620px] space-y-3" ref={boardRef}>
+        <div className="mx-auto w-full max-w-[640px] space-y-3" ref={boardRef}>
           <PlayerCard
             side="black"
             playerId={game.opponent}
@@ -368,55 +381,75 @@ export default function GamePage() {
             waiting={waiting && !game.opponent}
           />
 
-          {/* Replay controls — appear automatically once the game ends */}
+          {/* Board controls / replay controls — flip the board anytime */}
           {replayMode && game && (
-            <div className="flex items-center justify-center gap-1 rounded-lg border border-border/60 bg-card/40 px-3 py-2">
-              <Button size="icon" variant="ghost" onClick={() => setPly(0)} disabled={ply === 0} aria-label="First move">
-                <SkipBack aria-hidden />
+            <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/40 px-2 py-2">
+              <Button size="icon" variant="ghost" onClick={() => setFlipped((f) => !f)} aria-label="Flip board" title="Flip board">
+                <RefreshCw aria-hidden />
               </Button>
-              <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.max(0, (p ?? 0) - 1))} disabled={ply === 0} aria-label="Previous move">
-                <ChevronLeft aria-hidden />
-              </Button>
-              <span className="w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
-                {ply ?? 0} / {game.moves.length}
-              </span>
-              <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1))} disabled={ply === game.moves.length} aria-label="Next move">
-                <ChevronRight aria-hidden />
-              </Button>
-              <Button size="icon" variant="ghost" onClick={() => setPly(game.moves.length)} disabled={ply === game.moves.length} aria-label="Last move">
-                <SkipForward aria-hidden />
-              </Button>
+              <div className="mx-auto flex items-center gap-1">
+                <Button size="icon" variant="ghost" onClick={() => setPly(0)} disabled={ply === 0} aria-label="First move">
+                  <SkipBack aria-hidden />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.max(0, (p ?? 0) - 1))} disabled={ply === 0} aria-label="Previous move">
+                  <ChevronLeft aria-hidden />
+                </Button>
+                <span className="w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
+                  {ply ?? 0} / {game.moves.length}
+                </span>
+                <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1))} disabled={ply === game.moves.length} aria-label="Next move">
+                  <ChevronRight aria-hidden />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => setPly(game.moves.length)} disabled={ply === game.moves.length} aria-label="Last move">
+                  <SkipForward aria-hidden />
+                </Button>
+              </div>
+              <span className="w-9 shrink-0" aria-hidden />
             </div>
           )}
 
           {/* Live actions */}
           {!replayMode && (
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              {game.status === "active" && mySide && (
+            <div className="space-y-1.5 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <Button
-                  variant="destructive"
+                  variant="ghost"
                   size="sm"
-                  disabled={busy !== null}
-                  onClick={() => void resign()}
+                  onClick={() => setFlipped((f) => !f)}
+                  className="gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                  aria-label="Flip board"
                 >
-                  {busy === "resign" ? (
-                    <Loader2 className="animate-spin" aria-hidden />
-                  ) : (
-                    <Flag aria-hidden />
-                  )}
-                  Resign
+                  <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                  Flip board
                 </Button>
-              )}
-              {waiting && mySide === null && (
-                <Button size="lg" disabled={busy !== null} onClick={() => void join()} className="w-full">
-                  {busy === "join" ? (
-                    <Loader2 className="animate-spin" aria-hidden />
-                  ) : (
-                    <Users aria-hidden />
+                <div className="flex flex-wrap items-center gap-2">
+                  {game.status === "active" && mySide && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={busy !== null}
+                      onClick={() => void resign()}
+                    >
+                      {busy === "resign" ? (
+                        <Loader2 className="animate-spin" aria-hidden />
+                      ) : (
+                        <Flag aria-hidden />
+                      )}
+                      Resign
+                    </Button>
                   )}
-                  Join as Black
-                </Button>
-              )}
+                  {waiting && mySide === null && (
+                    <Button size="sm" disabled={busy !== null} onClick={() => void join()}>
+                      {busy === "join" ? (
+                        <Loader2 className="animate-spin" aria-hidden />
+                      ) : (
+                        <Users aria-hidden />
+                      )}
+                      Join as Black
+                    </Button>
+                  )}
+                </div>
+              </div>
               <p
                 className={cn(
                   "text-xs text-muted-foreground",
@@ -453,8 +486,14 @@ export default function GamePage() {
 
           <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
             <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Match
+              <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {!gameOver && game.status === "active" && (
+                  <span className="relative flex h-1.5 w-1.5" aria-hidden>
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+                  </span>
+                )}
+                {gameOver ? "Match report" : "Match"}
               </span>
               <span className="font-mono text-xs tabular-nums text-foreground/80">
                 {replayMode ? `Move ${Math.min(ply ?? 0, game.moves.length)}` : `Move ${moveNumber}`}
