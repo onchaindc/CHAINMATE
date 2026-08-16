@@ -70,10 +70,12 @@ function AuthContent() {
     checkTimer.current = setTimeout(async () => {
       try {
         const res = await fetch(`/api/identity/username?value=${encodeURIComponent(username.trim())}`);
+        if (!res.ok) {
+          setUsernameState("idle"); // service unreachable — skip the hint
+          return;
+        }
         const data = (await res.json()) as { available?: boolean; reason?: string };
-        setUsernameState(
-          data.available ? "ok" : "taken",
-        );
+        setUsernameState(data.available ? "ok" : "taken");
       } catch {
         setUsernameState("idle");
       }

@@ -15,9 +15,19 @@ export async function GET(req: NextRequest) {
   if (!supabaseConfigured()) {
     return NextResponse.json({ configured: false });
   }
-  const taken = await usernameTaken(value);
-  return NextResponse.json({
-    available: !taken,
-    reason: taken ? "That username is already taken." : null,
-  });
+  try {
+    const taken = await usernameTaken(value);
+    return NextResponse.json({
+      available: !taken,
+      reason: taken ? "That username is already taken." : null,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error && err.message.includes("fetch failed")
+        ? "Can't reach the accounts service right now."
+        : err instanceof Error
+          ? err.message
+          : "Could not check that username.";
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
 }
