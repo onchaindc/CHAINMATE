@@ -50,7 +50,7 @@ export function GameRow({ game, me, delta }: GameRowProps) {
   } else if (game.status === "waiting") {
     result = "Waiting";
   } else {
-    result = "In progress";
+    result = "Live";
   }
 
   const colorLabel = isCreatorMe ? "W" : isOpponentMe ? "B" : null;
@@ -93,14 +93,19 @@ export function GameRow({ game, me, delta }: GameRowProps) {
         )}
         <span
           className={cn(
-            "text-xs font-medium",
+            "flex items-center gap-1.5 text-xs font-medium",
             over
               ? game.winner
                 ? "text-primary"
                 : "text-muted-foreground"
-              : "text-muted-foreground",
+              : game.status === "active"
+                ? "text-primary"
+                : "text-muted-foreground",
           )}
         >
+          {game.status === "active" && (
+            <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-primary" aria-hidden />
+          )}
           {result}
         </span>
         {colorLabel && (

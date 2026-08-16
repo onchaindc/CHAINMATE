@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseConfigured } from "@/lib/supabase/config";
-import { profileForUserId } from "@/lib/supabase/db";
+import { profileForUserId, supabaseSchemaReady } from "@/lib/supabase/db";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
   const header = req.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (!token) {
-    return NextResponse.json({ configured: true, authenticated: false });
+    const schemaReady = await supabaseSchemaReady().catch(() => false);
+    return NextResponse.json({ configured: true, authenticated: false, schemaReady });
   }
 
   const admin = getSupabaseAdmin();

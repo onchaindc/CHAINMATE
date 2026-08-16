@@ -21,6 +21,10 @@ export default function GamesPage() {
 
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
 
+  const activeGames =
+    games?.filter((g) => g.status === "waiting" || g.status === "active") ?? null;
+  const completedGames = games?.filter((g) => !(g.status === "waiting" || g.status === "active")) ?? null;
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -69,7 +73,45 @@ export default function GamesPage() {
         </div>
       )}
 
-      <div className="mt-8 animate-fade-in-up [animation-delay:80ms] overflow-hidden rounded-lg border border-border/70 bg-card/50">
+      {/* Active session: games the player joined but hasn't finished or resigned */}
+      {activeGames !== null && activeGames.length > 0 && (
+        <div className="mt-8 animate-fade-in-up [animation-delay:80ms]">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-primary">
+              <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-primary" aria-hidden />
+              Active session
+            </h2>
+            <p className="text-[11px] text-muted-foreground">
+              Finish or resign a game to end your session.
+            </p>
+          </div>
+          <div className="mt-3 overflow-hidden rounded-lg border border-primary/25 bg-card/50">
+            <div className="divide-y divide-border/50 px-2 py-2">
+              {activeGames.map((game) => (
+                <GameRow
+                  key={game.id}
+                  game={game}
+                  me={game.backend === "local" ? localMe : identity.playerId}
+                  delta={game.backend === "local" ? null : deltas.get(game.id)}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeGames !== null && activeGames.length > 0 && (
+        <h2 className="mt-8 animate-fade-in-up text-[11px] font-semibold uppercase tracking-wider text-muted-foreground [animation-delay:80ms]">
+          Completed
+        </h2>
+      )}
+
+      <div
+        className={cn(
+          "animate-fade-in-up overflow-hidden rounded-lg border border-border/70 bg-card/50 [animation-delay:80ms]",
+          activeGames !== null && activeGames.length > 0 && "mt-3",
+        )}
+      >
         {error && (
           <div className="flex items-start gap-2.5 border-b border-border/60 px-4 py-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
@@ -94,9 +136,16 @@ export default function GamesPage() {
               Create a game
             </Link>
           </div>
+        ) : (completedGames ?? []).length === 0 ? (
+          <div className="flex flex-col items-center px-6 py-12 text-center">
+            <p className="text-sm font-medium text-foreground/85">No completed games yet</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Your finished matches will appear here.
+            </p>
+          </div>
         ) : (
           <div className="divide-y divide-border/50 px-2 py-2">
-            {games.map((game) => (
+            {(completedGames ?? []).map((game) => (
               <GameRow
                 key={game.id}
                 game={game}
