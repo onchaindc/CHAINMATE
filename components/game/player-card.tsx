@@ -108,11 +108,11 @@ export function PlayerCard({
       {clock !== null && clock !== undefined && (
         <span
           className={cn(
-            "shrink-0 rounded-md border px-3 py-1.5 font-mono text-xl font-semibold leading-none tabular-nums",
+            "min-w-[4.75rem] shrink-0 rounded-md border px-3 py-1.5 text-center font-mono text-xl font-semibold leading-none tabular-nums transition-colors duration-300 sm:text-2xl",
             clockLow
-              ? "border-[#E07A5F]/40 bg-[#E07A5F]/5 text-[#E07A5F]"
+              ? "border-[#E07A5F]/45 bg-[#E07A5F]/10 text-[#E07A5F]"
               : active
-                ? "border-primary/40 bg-primary/5 text-foreground"
+                ? "border-primary/45 bg-primary/[0.08] text-foreground"
                 : "border-border/70 bg-secondary/30 text-foreground/85",
           )}
           aria-label={`${side === "white" ? "White" : "Black"} clock`}
