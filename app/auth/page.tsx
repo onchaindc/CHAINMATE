@@ -52,6 +52,38 @@ function AuthContent() {
   >("idle");
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Set when this environment can't reach Supabase (e.g. a restricted preview). */
+  const [connectivityWarning, setConnectivityWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/identity/status");
+        const data = (await res.json()) as { schemaError?: string | null };
+        if (!cancelled && data.schemaError?.includes("fetch")) {
+          setConnectivityWarning(
+            "This preview environment can't reach the accounts service. Guest play works fine here — create your account on the deployed site or when running locally.",
+          );
+        }
+      } catch {
+        // offline — leave the warning off
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Human-readable errors, including honest explanations for network failures. */
+  const friendlyAuthError = (err: unknown): string => {
+    const message = err instanceof Error && err.message ? err.message : "";
+    if (/failed to fetch|fetch failed|network|ENOTFOUND/i.test(message)) {
+      return "Couldn't reach the accounts service — this preview can't connect to Supabase. Deploy the app or run it locally to create an account.";
+    }
+    return (message || "Something went wrong. Please try again.").replace(/^AuthApiError:\s*/i, "");
+  };
+
   const configured = supabaseClientConfigured();
   const guest = useMemo(() => getGuestIdentity(), []);
 
@@ -123,11 +155,7 @@ function AuthContent() {
       if (sendError) throw sendError;
       setStep("code");
     } catch (err) {
-      const message =
-        err instanceof Error && err.message
-          ? err.message
-          : "We couldn't send a code to that email. Please try again.";
-      setError(message.replace(/^AuthApiError:\s*/i, ""));
+      setError(friendlyAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -189,11 +217,7 @@ function AuthContent() {
         router.push(returnTo.startsWith("/") ? returnTo : "/profile");
       }, 350);
     } catch (err) {
-      const message =
-        err instanceof Error && err.message
-          ? err.message
-          : "That code didn't work. Check the email and try again.";
-      setError(message);
+      setError(friendlyAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -262,6 +286,11 @@ function AuthContent() {
       </div>
 
       <div className="mt-4 animate-fade-in-up rounded-lg border border-border/70 bg-card/50 p-6 [animation-delay:120ms]">
+        {connectivityWarning && mode !== "guest" && (
+          <div className="mb-4 rounded-md border border-border/60 bg-secondary/20 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+            {connectivityWarning}
+          </div>
+        )}
         {!configured && mode !== "guest" ? (
           <div className="flex flex-col items-center py-8 text-center">
             <p className="text-sm font-medium text-foreground/85">
