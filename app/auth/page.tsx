@@ -171,8 +171,8 @@ function AuthContent() {
     if (/rate limit|rate_limit|over_email_send_rate_limit|too many/i.test(message)) {
       return "Too many emails were sent in the last hour, so the accounts service paused sends for now (they reset hourly). Wait a bit and try again, or raise the limit in Supabase under Authentication → Rate Limits.";
     }
-    if (/expired/i.test(message)) {
-      return "That link or code expired. Request a new one and use it within the time limit.";
+    if (/expired|invalid/i.test(message)) {
+      return "That code is invalid or has expired. Double-check the code from the email and try again, or request a new one.";
     }
     return (message || "Something went wrong. Please try again.").replace(/^AuthApiError:\s*/i, "");
   }, []);
@@ -311,7 +311,7 @@ function AuthContent() {
         options: {
           shouldCreateUser: mode === "create",
           // Send the magic link back to the auth page, where the app verifies
-          // it and completes the flow (in addition to the 6-digit code).
+          // it and completes the flow (in addition to the one-time code).
           emailRedirectTo: `${window.location.origin}/auth`,
         },
       });
@@ -329,8 +329,12 @@ function AuthContent() {
   const verifyCode = async () => {
     setError(null);
     const cleanEmail = email.trim().toLowerCase();
-    if (code.trim().length < 6) {
-      setError("Enter the 6-digit code from the email.");
+    const digits = code.trim();
+    // The email OTP length is a Supabase project setting (6 or 8 digits).
+    // Accept 6–10 so a project-side length change never breaks sign-in;
+    // Supabase's verifyOtp is the authority on what's actually valid.
+    if (digits.length < 6 || digits.length > 10) {
+      setError("Enter the code from the email (6–10 digits).");
       return;
     }
     const sb = getSupabaseBrowser();
@@ -339,7 +343,7 @@ function AuthContent() {
     try {
       const { data, error: verifyError } = await sb.auth.verifyOtp({
         email: cleanEmail,
-        token: code.trim(),
+        token: digits,
         type: "email",
       });
       if (verifyError) throw verifyError;
@@ -509,7 +513,7 @@ function AuthContent() {
             <div>
               <h2 className="text-sm font-semibold text-foreground">Check your email</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                We sent a 6-digit code to <span className="text-foreground/90">{email.trim().toLowerCase()}</span>
+                We sent a verification code to <span className="text-foreground/90">{email.trim().toLowerCase()}</span>
                 {mode === "create" && (
                   <> to verify your username <span className="font-mono text-primary">{username.trim()}</span></>
                 )}
@@ -519,8 +523,8 @@ function AuthContent() {
             <Input
               inputMode="numeric"
               autoFocus
-              maxLength={6}
-              placeholder="000000"
+              maxLength={10}
+              placeholder="00000000"
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
               onKeyDown={(e) => e.key === "Enter" && !busy && void verifyCode()}
