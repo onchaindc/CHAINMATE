@@ -42,14 +42,31 @@ export async function POST(req: NextRequest) {
   }
 
   const admin = getSupabaseAdmin();
-  const { data: auth, error: authError } = await admin!.auth.getUser(token);
-  if (authError || !auth.user) {
+  let authUser;
+  try {
+    const result = await admin!.auth.getUser(token);
+    if (result.error || !result.data.user) {
+      const detail = result.error?.message ?? "";
+      const networkIssue =
+        detail.includes("fetch") || detail.includes("network") || detail.includes("ENOTFOUND");
+      return NextResponse.json(
+        networkIssue
+          ? {
+              error:
+                "Could not reach the accounts service right now. Please try again in a moment.",
+            }
+          : { error: "Your session has expired. Please sign in again." },
+        { status: networkIssue ? 503 : 401 },
+      );
+    }
+    authUser = result.data.user;
+  } catch {
     return NextResponse.json(
-      { error: "Your session has expired. Please sign in again." },
-      { status: 401 },
+      { error: "Could not reach the accounts service right now. Please try again in a moment." },
+      { status: 503 },
     );
   }
-  const userId = auth.user.id;
+  const userId = authUser.id;
 
   let body: LinkBody;
   try {

@@ -21,8 +21,16 @@ export async function GET(req: NextRequest) {
   const header = req.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (!token) {
-    const schemaReady = await supabaseSchemaReady().catch(() => false);
-    return NextResponse.json({ configured: true, authenticated: false, schemaReady });
+    const schema = await supabaseSchemaReady().catch(() => ({
+      ok: false as const,
+      error: "Could not reach Supabase",
+    }));
+    return NextResponse.json({
+      configured: true,
+      authenticated: false,
+      schemaReady: schema.ok,
+      schemaError: schema.error ?? null,
+    });
   }
 
   const admin = getSupabaseAdmin();

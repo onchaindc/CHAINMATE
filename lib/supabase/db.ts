@@ -27,15 +27,20 @@ export interface ProfileRow {
   updated_at: string;
 }
 
-/** True when the tables exist (checked lazily so setup errors are readable). */
-export async function supabaseSchemaReady(): Promise<boolean> {
+/**
+ * True when the tables exist (checked lazily so setup errors are readable).
+ * `error` carries the underlying message when something is off (missing
+ * table, network, permissions) — useful for surfacing setup issues.
+ */
+export async function supabaseSchemaReady(): Promise<{ ok: boolean; error?: string }> {
   const admin = getSupabaseAdmin();
-  if (!admin) return false;
+  if (!admin) return { ok: false, error: "Supabase is not configured" };
   const { error } = await admin
     .from("profiles")
     .select("player_id")
     .limit(1);
-  return !error;
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 export async function profileForUserId(userId: string): Promise<ProfileRow | null> {
@@ -56,7 +61,12 @@ export async function usernameTaken(username: string, excludeUserId?: string): P
   let q = admin.from("profiles").select("user_id").ilike("username", username);
   if (excludeUserId) q = q.neq("user_id", excludeUserId);
   const { data, error } = await q.limit(1);
-  return !error && data !== null && data.length > 0;
+  if (error) {
+    // Surface the real problem (missing table, network, permissions) instead
+    // of silently reporting "available".
+    throw new Error(error.message);
+  }
+  return data !== null && data.length > 0;
 }
 
 /** Mirror player stats into profiles (guests included — all real players). */
