@@ -18,6 +18,46 @@ type Step = "form" | "code" | "done";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const PENDING_KEY = "chainmate:pending-auth:v1";
+
+/** The auth intent stored when a code is requested, so a magic link clicked
+ * later (from the email) can finish the same flow — including the chosen
+ * username for account creation. */
+function readPendingAuth(): { mode: Mode; username: string; returnTo: string } | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { mode?: string; username?: string; returnTo?: string };
+    if (!parsed.mode || (parsed.mode !== "create" && parsed.mode !== "signin")) return null;
+    return {
+      mode: parsed.mode,
+      username: parsed.username ?? "",
+      returnTo: parsed.returnTo ?? "/profile",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingAuth(mode: Mode, username: string, returnTo: string) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify({ mode, username, returnTo }));
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingAuth() {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(PENDING_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export default function AuthPage() {
   return (
     <Suspense
@@ -40,6 +80,11 @@ function AuthContent() {
   const upgrade = params.get("upgrade") === "1";
   const returnTo = params.get("returnTo") ?? "/profile";
 
+  // Present when the user clicked the "Sign in" link from the email (magic
+  // link): the app must verify it here, or the click does nothing.
+  const tokenHash = params.get("token_hash");
+  const tokenType = params.get("type") ?? "email";
+
   const [mode, setMode] = useState<Mode>(upgrade ? "create" : "guest");
   const [step, setStep] = useState<Step>("form");
   const [username, setUsername] = useState("");
@@ -54,6 +99,18 @@ function AuthContent() {
 
   /** Set when this environment can't reach Supabase (e.g. a restricted preview). */
   const [connectivityWarning, setConnectivityWarning] = useState<string | null>(null);
+
+  /** Cooldown for the "Resend code" button — email sends are rate-limited. */
+  const [resendAfter, setResendAfter] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!resendAfter) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [resendAfter]);
+
+  const resendLeft = resendAfter ? Math.max(0, Math.ceil((resendAfter - now) / 1000)) : 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -76,13 +133,19 @@ function AuthContent() {
   }, []);
 
   /** Human-readable errors, including honest explanations for network failures. */
-  const friendlyAuthError = (err: unknown): string => {
+  const friendlyAuthError = useCallback((err: unknown): string => {
     const message = err instanceof Error && err.message ? err.message : "";
     if (/failed to fetch|fetch failed|network|ENOTFOUND/i.test(message)) {
       return "Couldn't reach the accounts service — this preview can't connect to Supabase. Deploy the app or run it locally to create an account.";
     }
+    if (/rate limit|rate_limit|over_email_send_rate_limit|too many/i.test(message)) {
+      return "Too many emails were sent in the last hour, so the accounts service paused sends for now (they reset hourly). Wait a bit and try again, or raise the limit in Supabase under Authentication → Rate Limits.";
+    }
+    if (/expired/i.test(message)) {
+      return "That link or code expired. Request a new one and use it within the time limit.";
+    }
     return (message || "Something went wrong. Please try again.").replace(/^AuthApiError:\s*/i, "");
-  };
+  }, []);
 
   const configured = supabaseClientConfigured();
   const guest = useMemo(() => getGuestIdentity(), []);
@@ -90,6 +153,70 @@ function AuthContent() {
   const startAsGuest = useCallback(() => {
     router.push(returnTo.startsWith("/") ? returnTo : "/create");
   }, [router, returnTo]);
+
+  /** Magic link handling: clicking "Sign in" in the email lands here with a
+   * token_hash. Verify it and finish the flow (including linking the guest
+   * identity when the link was requested from Create account). */
+  const magicLinkHandled = useRef(false);
+  useEffect(() => {
+    if (!tokenHash || magicLinkHandled.current) return;
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+    magicLinkHandled.current = true;
+    setBusy(true);
+    setError(null);
+    (async () => {
+      try {
+        const { data, error: verifyError } = await sb.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: tokenType,
+        });
+        if (verifyError) throw verifyError;
+        const session = data.session;
+        if (!session) throw new Error("We couldn't start your session. Try again.");
+
+        const pending = readPendingAuth();
+        if (pending?.mode === "create" && pending.username) {
+          // Guest → account: carry all real progress into the new profile.
+          const res = await fetch("/api/identity/link", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ username: pending.username, playerId: guest.playerId }),
+          });
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok) {
+            throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
+          }
+        } else {
+          setAuthIdentity({
+            userId: session.user.id,
+            playerId: guest.playerId,
+            username: "",
+            rating: 0,
+            accessToken: session.access_token,
+          });
+        }
+
+        clearPendingAuth();
+        // Drop the one-time token from the URL so a refresh doesn't re-verify it.
+        window.history.replaceState(null, "", "/auth");
+        setStep("done");
+        await identity.refresh();
+        const target =
+          pending?.returnTo && pending.returnTo.startsWith("/") ? pending.returnTo : returnTo;
+        setTimeout(() => {
+          router.replace(target.startsWith("/") ? target : "/profile");
+        }, 250);
+      } catch (err) {
+        setBusy(false);
+        setError(friendlyAuthError(err));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenHash, tokenType, guest.playerId]);
 
   // Live username availability check (only when accounts are configured).
   useEffect(() => {
@@ -144,16 +271,24 @@ function AuthContent() {
       setError("Accounts aren't configured on this deployment yet.");
       return;
     }
+    // Remember the intent so a magic link clicked later (from the email) can
+    // finish the same flow — including the chosen username for Create account.
+    writePendingAuth(mode, mode === "create" ? username.trim() : "", returnTo);
     setBusy(true);
     try {
       const { error: sendError } = await sb.auth.signInWithOtp({
         email: cleanEmail,
         options: {
           shouldCreateUser: mode === "create",
+          // Send the magic link back to the auth page, where the app verifies
+          // it and completes the flow (in addition to the 6-digit code).
+          emailRedirectTo: `${window.location.origin}/auth`,
         },
       });
       if (sendError) throw sendError;
       setStep("code");
+      setResendAfter(Date.now() + 30_000);
+      setNow(Date.now());
     } catch (err) {
       setError(friendlyAuthError(err));
     } finally {
@@ -211,6 +346,7 @@ function AuthContent() {
         });
       }
 
+      clearPendingAuth();
       setStep("done");
       await identity.refresh();
       setTimeout(() => {
@@ -366,14 +502,25 @@ function AuthContent() {
             </Button>
             <p className="text-center text-[11px] text-muted-foreground">
               Didn&rsquo;t get it?{" "}
-              <button
-                type="button"
-                onClick={() => void sendCode()}
-                disabled={busy}
-                className="text-primary underline-offset-2 hover:underline"
-              >
-                Resend code
-              </button>
+              {resendLeft > 0 ? (
+                <span className="text-muted-foreground/70">
+                  You can resend in {resendLeft}s
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void sendCode()}
+                  disabled={busy}
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  Resend code
+                </button>
+              )}
+            </p>
+            <p className="text-center text-[11px] leading-relaxed text-muted-foreground/80">
+              Tip: if the email shows a <span className="text-foreground/80">Sign in</span>{" "}
+              button instead of a code, click it — it opens this page and signs
+              you in automatically.
             </p>
           </div>
         ) : (

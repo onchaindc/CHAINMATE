@@ -10,10 +10,14 @@ interface MoveHistoryProps {
 }
 
 export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Scroll the moves list internally only — never the page. A scrollIntoView
+    // here would yank the whole window on mobile (the list sits below the
+    // board), which is exactly the jump users saw after every move.
+    const el = containerRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [moves.length]);
 
   const pairs: { number: number; white?: MoveRecord; black?: MoveRecord }[] = [];
@@ -41,7 +45,7 @@ export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
           No moves yet — White opens the game.
         </p>
       ) : (
-        <div className="max-h-56 overflow-y-auto px-2 pb-2">
+        <div ref={containerRef} className="max-h-56 overflow-y-auto px-2 pb-2">
           <table className="w-full text-[13px]">
             <tbody>
               {pairs.map((pair, idx) => {
@@ -83,7 +87,6 @@ export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
               })}
             </tbody>
           </table>
-          <div ref={endRef} />
         </div>
       )}
     </div>
