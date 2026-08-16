@@ -25,6 +25,8 @@ export interface MoveRecord {
   to: string;
   promotion: string;
   san: string;
+  /** Unix ms when the move was played — drives the real chess clocks. */
+  at?: number;
 }
 
 export interface CommentaryEntry {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -19,24 +19,26 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChessBoard } from "@/components/game/chess-board";
 import { CommentaryPanel } from "@/components/game/commentary-panel";
-import { GameOverPanel } from "@/components/game/game-over-panel";
+import { GameResult } from "@/components/game/game-result";
 import { MoveHistory } from "@/components/game/move-history";
 import { PlayerCard } from "@/components/game/player-card";
 import { StatusBar } from "@/components/game/status-bar";
 import { WaitingPanel } from "@/components/game/waiting-panel";
 import { useAiCommentary } from "@/hooks/use-ai-commentary";
 import { useAiOpponent } from "@/hooks/use-ai-opponent";
+import { useClocks } from "@/hooks/use-clocks";
 import { useGame } from "@/hooks/use-game";
+import { useIdentity } from "@/lib/identity-context";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
-import { AI_PLAYER_ID, isGameOver, shortId } from "@/lib/types";
+import { AI_PLAYER_ID, isGameOver, shortId, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export default function GamePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const id = params.id;
+  const identity = useIdentity();
 
   const {
     game,
@@ -44,6 +46,7 @@ export default function GamePage() {
     error,
     busy,
     pos,
+    myId,
     mySide,
     turnSide,
     myTurn,
@@ -60,16 +63,19 @@ export default function GamePage() {
   useAiOpponent({ game, submitAiMove, disabled: busy !== null });
 
   const gameOver = game ? isGameOver(game.status) : false;
-  const replayRequested = searchParams.get("replay") === "1";
-  const [ply, setPly] = useState<number | null>(null);
-  const replayMode = Boolean(replayRequested && gameOver && ply !== null);
 
-  // Enter replay at the final position when arriving with ?replay=1.
+  /* ------------------------------------------------------------------ */
+  /* State-aware replay: when the game ends, the board becomes a replay  */
+  /* on the same URL. ?replay=1 links land the same way.                 */
+  /* ------------------------------------------------------------------ */
+  const [ply, setPly] = useState<number | null>(null);
+  const replayMode = gameOver && ply !== null;
+
   useEffect(() => {
-    if (game && replayRequested && gameOver && ply === null) {
+    if (game && gameOver && ply === null) {
       setPly(game.moves.length);
     }
-  }, [game, replayRequested, gameOver, ply]);
+  }, [game, gameOver, ply]);
 
   // Keyboard navigation while replaying (←/→/Home/End).
   useEffect(() => {
@@ -84,10 +90,11 @@ export default function GamePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [replayMode, game]);
 
-  const exitReplay = useCallback(() => {
-    setPly(null);
-    router.replace(`/game/${id}`);
-  }, [id, router]);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const startReplay = useCallback(() => {
+    setPly(0);
+    boardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   const boardFen = useMemo(() => {
     if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
@@ -99,6 +106,38 @@ export default function GamePage() {
     const m = game.moves[ply - 1];
     return m ? { from: m.from, to: m.to } : null;
   }, [replayMode, game, ply]);
+
+  /* ------------------------------------------------------------------ */
+  /* Real player data: ratings for both sides + this game's deltas.      */
+  /* ------------------------------------------------------------------ */
+  const [profiles, setProfiles] = useState<Record<string, PlayerStats>>({});
+
+  useEffect(() => {
+    if (!game || !isHostedGameId(game.id)) return;
+    const ids = [game.creator, game.opponent].filter((p) => p && p !== AI_PLAYER_ID);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, PlayerStats> = {};
+      await Promise.all(
+        ids.map(async (playerId) => {
+          try {
+            const res = await fetch(`/api/hosted/players/me?playerId=${encodeURIComponent(playerId)}`);
+            const data = (await res.json()) as { stats?: PlayerStats };
+            if (data.stats) next[playerId] = data.stats;
+          } catch {
+            // profile data is optional — the game itself never depends on it
+          }
+        }),
+      );
+      if (!cancelled) setProfiles(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [game?.id, game?.creator, game?.opponent]);
+
+  const { white: whiteClock, black: blackClock, whiteLow, blackLow } = useClocks(game);
 
   if (loading) {
     return (
@@ -162,6 +201,12 @@ export default function GamePage() {
     ? null
     : "Set NEXT_PUBLIC_AI_ENABLED=true and an AI_API_KEY to unlock deeper LLM commentary.";
 
+  const playerName = (playerId: string) => {
+    if (playerId === myId) return identity.username || undefined;
+    return profiles[playerId]?.username;
+  };
+  const playerRating = (playerId: string) => profiles[playerId]?.rating ?? null;
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       {/* Header */}
@@ -169,16 +214,12 @@ export default function GamePage() {
         <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
         <div>
           <h1 className="font-display text-lg font-bold tracking-tight">
-            {replayMode ? "Replay" : "Chess match"}
+            {gameOver ? "Match report" : "Chess match"}
           </h1>
           <p className="font-mono text-[11px] text-muted-foreground">{shortId(game.id)}</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {replayMode ? (
-            <Badge variant="secondary">replay</Badge>
-          ) : (
-            <StatusBar game={game} turnSide={turnSide} inCheck={pos?.inCheck ?? false} />
-          )}
+          {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={pos?.inCheck ?? false} />}
           {spectator && <Badge variant="secondary">spectating</Badge>}
         </div>
       </div>
@@ -194,12 +235,30 @@ export default function GamePage() {
         </div>
       )}
 
+      {/* Post-game result: the page transitions into a report when the game ends */}
+      {gameOver && (
+        <div className="mb-6 animate-fade-in-up">
+          <GameResult
+            game={game}
+            stats={profiles}
+            myPlayerId={myId}
+            busy={busy === "summary"}
+            onGenerateSummary={generateSummary}
+            onReplay={startReplay}
+          />
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* Board column */}
-        <div className="mx-auto w-full max-w-[680px] space-y-3 lg:mx-0">
+        <div className="mx-auto w-full max-w-[680px] space-y-3 lg:mx-0" ref={boardRef}>
           <PlayerCard
             side="black"
             playerId={game.opponent}
+            name={playerName(game.opponent)}
+            rating={playerRating(game.opponent)}
+            clock={blackClock}
+            clockLow={blackLow}
             isYou={mySide === "black"}
             isWinner={winnerSide === "black"}
             isTurn={!replayMode && turnSide === "black" && !gameOver && !waiting}
@@ -221,39 +280,38 @@ export default function GamePage() {
           <PlayerCard
             side="white"
             playerId={game.creator}
+            name={playerName(game.creator)}
+            rating={playerRating(game.creator)}
+            clock={whiteClock}
+            clockLow={whiteLow}
             isYou={mySide === "white"}
             isWinner={winnerSide === "white"}
             isTurn={!replayMode && turnSide === "white" && !gameOver && !waiting}
             waiting={waiting && !game.opponent}
           />
 
-          {/* Replay controls */}
+          {/* Replay controls — appear automatically once the game ends */}
           {replayMode && game && (
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-card/40 px-3 py-2">
-              <div className="flex items-center gap-1">
-                <Button size="icon" variant="ghost" onClick={() => setPly(0)} disabled={ply === 0} aria-label="First move">
-                  <SkipBack aria-hidden />
-                </Button>
-                <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.max(0, (p ?? 0) - 1))} disabled={ply === 0} aria-label="Previous move">
-                  <ChevronLeft aria-hidden />
-                </Button>
-                <span className="w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
-                  {ply ?? 0} / {game.moves.length}
-                </span>
-                <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1))} disabled={ply === game.moves.length} aria-label="Next move">
-                  <ChevronRight aria-hidden />
-                </Button>
-                <Button size="icon" variant="ghost" onClick={() => setPly(game.moves.length)} disabled={ply === game.moves.length} aria-label="Last move">
-                  <SkipForward aria-hidden />
-                </Button>
-              </div>
-              <Button size="sm" variant="outline" onClick={exitReplay}>
-                Exit replay
+            <div className="flex items-center justify-center gap-1 rounded-lg border border-border/60 bg-card/40 px-3 py-2">
+              <Button size="icon" variant="ghost" onClick={() => setPly(0)} disabled={ply === 0} aria-label="First move">
+                <SkipBack aria-hidden />
+              </Button>
+              <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.max(0, (p ?? 0) - 1))} disabled={ply === 0} aria-label="Previous move">
+                <ChevronLeft aria-hidden />
+              </Button>
+              <span className="w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
+                {ply ?? 0} / {game.moves.length}
+              </span>
+              <Button size="icon" variant="ghost" onClick={() => setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1))} disabled={ply === game.moves.length} aria-label="Next move">
+                <ChevronRight aria-hidden />
+              </Button>
+              <Button size="icon" variant="ghost" onClick={() => setPly(game.moves.length)} disabled={ply === game.moves.length} aria-label="Last move">
+                <SkipForward aria-hidden />
               </Button>
             </div>
           )}
 
-          {/* Actions */}
+          {/* Live actions */}
           {!replayMode && (
             <div className="flex flex-wrap items-center gap-2 pt-1">
               {game.status === "active" && mySide && (
@@ -297,9 +355,7 @@ export default function GamePage() {
                         ? "Waiting for your opponent to move…"
                         : game.status === "active" && myTurn
                           ? "Your turn — click a piece, then a destination."
-                          : gameOver
-                            ? "The game has ended."
-                            : ""}
+                          : ""}
               </p>
             </div>
           )}
@@ -315,15 +371,6 @@ export default function GamePage() {
               The creator of this game hasn&rsquo;t been matched yet. Join as Black
               to start playing.
             </div>
-          )}
-
-          {gameOver && !replayMode && (
-            <GameOverPanel
-              game={game}
-              busy={busy === "summary"}
-              onGenerateSummary={generateSummary}
-              onReplay={() => setPly(game.moves.length)}
-            />
           )}
 
           <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">

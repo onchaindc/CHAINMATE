@@ -261,6 +261,13 @@ async function writeGame(game: GameState): Promise<void> {
   await upsertIndex(entryFromGame(game));
 }
 
+/** Record when a move was played — powers the real chess clocks. */
+function stampMoveTime(game: GameState): GameState {
+  const last = game.moves[game.moves.length - 1];
+  if (last && !last.at) last.at = Date.now();
+  return game;
+}
+
 export async function createHostedGame(
   playerId: string,
   options: CreateGameOptions = {},
@@ -323,7 +330,7 @@ export async function submitHostedMove(
   if (!game) throw new Error("Game not found");
   const res = applyMoveToGame(game, playerId, from, to, promotion);
   if (!res.ok) throw new Error(res.error);
-  let next: GameState = res.game;
+  let next: GameState = stampMoveTime(res.game);
   if (isGameOver(next.status) && !next.endedAt) {
     next = {
       ...next,
@@ -344,7 +351,7 @@ export async function resignHostedGame(id: string, playerId: string): Promise<Ga
   if (!game) throw new Error("Game not found");
   const res = resignPlayerFromGame(game, playerId);
   if (!res.ok) throw new Error(res.error);
-  let next: GameState = res.game;
+  let next: GameState = stampMoveTime(res.game);
   if (isGameOver(next.status) && !next.endedAt) {
     next = {
       ...next,

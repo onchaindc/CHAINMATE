@@ -54,6 +54,13 @@ function writeGames(games: Record<string, GameState>) {
   localStorage.setItem(GAMES_KEY, JSON.stringify(games));
 }
 
+/** Record when a move was played — powers the real chess clocks. */
+function stampMoveTime(game: GameState): GameState {
+  const last = game.moves[game.moves.length - 1];
+  if (last && !last.at) last.at = Date.now();
+  return game;
+}
+
 type Listener = (state: GameState) => void;
 
 export class LocalGameStore implements GameStore {
@@ -184,7 +191,7 @@ export class LocalGameStore implements GameStore {
     const me = getPlayerId();
     const res = applyMoveToGame(game, me, from, to, promotion);
     if (!res.ok) throw new Error(res.error);
-    return this.save(res.game);
+    return this.save(stampMoveTime(res.game));
   }
 
   async submitAiMove(id: string): Promise<GameState> {
@@ -213,7 +220,7 @@ export class LocalGameStore implements GameStore {
       if (!aiMove) return game;
       const res = applyMoveToGame(game, AI_PLAYER_ID, aiMove.from, aiMove.to, aiMove.promotion);
       if (!res.ok) return game;
-      return this.save(res.game);
+      return this.save(stampMoveTime(res.game));
     } finally {
       this.aiMoveInFlight = false;
       this.aiMoveFen = "";
