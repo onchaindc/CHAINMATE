@@ -1,6 +1,13 @@
 import { applyMoveToGame, joinPlayerToGame, resignPlayerFromGame } from "@/lib/game-logic";
 import { getGameStorage } from "@/lib/server/storage";
+import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
+import { supabaseConfigured } from "@/lib/supabase/config";
+import {
+  upsertAchievements,
+  upsertGameRecord,
+  upsertProfiles,
+} from "@/lib/supabase/db";
 import {
   isGameOver,
   type CreateGameOptions,
@@ -79,10 +86,15 @@ function defaultStats(playerId: string): PlayerStats {
   return {
     playerId,
     rating: START_RATING,
+    peakRating: START_RATING,
     wins: 0,
     losses: 0,
     draws: 0,
     games: 0,
+    currentStreak: 0,
+    bestStreak: 0,
+    ratingHistory: [],
+    achievements: [],
     updatedAt: Date.now(),
   };
 }
@@ -127,7 +139,10 @@ export async function getLeaderboard(): Promise<PlayerStats[]> {
 
 /**
  * Apply ELO ratings when a real game between two distinct human players
- * finishes. Runs exactly once per game (guarded by endedAt).
+ * finishes. Runs exactly once per game (guarded by endedAt). Also updates
+ * peak rating, win/loss streaks, per-game rating history and achievements —
+ * all server-authoritative. Finally mirrors the results to Supabase when it
+ * is configured (best-effort; Supabase problems never affect the game).
  */
 async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise<void> {
   if (prev.endedAt || isGameOver(prev.status)) return;
@@ -137,6 +152,8 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   if (!p1 || !p2 || p1 === "ai" || p2 === "ai" || p1 === p2) return;
 
   const [s1, s2] = await Promise.all([getPlayerStats(p1), getPlayerStats(p2)]);
+  const ratingBefore1 = s1.rating;
+  const ratingBefore2 = s2.rating;
   let score1: number;
   if (next.status === "draw" || next.status === "stalemate") score1 = 0.5;
   else if (next.winner === p1) score1 = 1;
@@ -146,19 +163,93 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   const e1 = 1 / (1 + Math.pow(10, (s2.rating - s1.rating) / 400));
   const e2 = 1 - e1;
 
-  s1.rating = Math.max(100, Math.round(s1.rating + K * (score1 - e1)));
-  s2.rating = Math.max(100, Math.round(s2.rating + K * (score2 - e2)));
-  s1.games += 1;
-  s2.games += 1;
-  s1.wins += score1 === 1 ? 1 : 0;
-  s1.losses += score1 === 0 ? 1 : 0;
-  s1.draws += score1 === 0.5 ? 1 : 0;
-  s2.wins += score2 === 1 ? 1 : 0;
-  s2.losses += score2 === 0 ? 1 : 0;
-  s2.draws += score2 === 0.5 ? 1 : 0;
-  s1.updatedAt = s2.updatedAt = Date.now();
+  const now = Date.now();
+  const rating1 = Math.max(100, Math.round(s1.rating + K * (score1 - e1)));
+  const rating2 = Math.max(100, Math.round(s2.rating + K * (score2 - e2)));
+
+  const applyStats = (
+    s: PlayerStats,
+    score: number,
+    before: number,
+    oppBefore: number,
+    rating: number,
+  ) => {
+    s.rating = rating;
+    s.peakRating = Math.max(s.peakRating, rating);
+    s.games += 1;
+    s.wins += score === 1 ? 1 : 0;
+    s.losses += score === 0 ? 1 : 0;
+    s.draws += score === 0.5 ? 1 : 0;
+    // Streaks: positive = wins in a row, negative = losses in a row.
+    if (score === 1) s.currentStreak = (s.currentStreak > 0 ? s.currentStreak : 0) + 1;
+    else if (score === 0) s.currentStreak = (s.currentStreak < 0 ? s.currentStreak : 0) - 1;
+    else s.currentStreak = 0;
+    s.bestStreak = Math.max(s.bestStreak, s.currentStreak);
+    s.ratingHistory = [
+      {
+        gameId: next.id,
+        ratingBefore: before,
+        ratingAfter: rating,
+        opponentRating: oppBefore,
+        change: rating - before,
+      },
+      ...s.ratingHistory,
+    ].slice(0, 50);
+
+    const ctx: AchievementContext = {
+      games: s.games,
+      wins: s.wins,
+      rating: s.rating,
+      currentStreak: Math.max(0, s.currentStreak),
+      beatHigherRated: score === 1 && oppBefore > before,
+    };
+    const have = earnedCodes(s);
+    const fresh = earnedAchievements(ctx).filter((code) => !have.has(code));
+    if (fresh.length > 0) {
+      s.achievements = [
+        ...s.achievements,
+        ...fresh.map((code) => ({ code, earnedAt: now })),
+      ];
+    }
+    s.updatedAt = now;
+  };
+
+  applyStats(s1, score1, ratingBefore1, ratingBefore2, rating1);
+  applyStats(s2, score2, ratingBefore2, ratingBefore1, rating2);
 
   await Promise.all([writeStats(s1), writeStats(s2)]);
+
+  if (supabaseConfigured()) {
+    try {
+      await Promise.all([
+        upsertProfiles([s1, s2]),
+        upsertGameRecord(next),
+        upsertAchievements(s1),
+        upsertAchievements(s2),
+      ]);
+    } catch {
+      // Best-effort persistence — chess must never break because of this.
+    }
+  }
+}
+
+/**
+ * Update the public identity on a player's record (guest name → chosen
+ * username on account creation). Ratings/stats are never touched here.
+ */
+export async function updatePlayerIdentity(
+  playerId: string,
+  update: { username?: string; isGuest?: boolean },
+): Promise<PlayerStats> {
+  const stats = await getPlayerStats(playerId);
+  const next: PlayerStats = {
+    ...stats,
+    username: update.username ?? stats.username,
+    isGuest: update.isGuest ?? stats.isGuest,
+    updatedAt: Date.now(),
+  };
+  await writeStats(next);
+  return next;
 }
 
 /* ------------------------------------------------------------------ */
@@ -295,14 +386,19 @@ async function fetchGames(entries: GameIndexEntry[], max: number): Promise<GameS
 /** Real list data for Games / Watch / homepage. */
 export async function listHostedGames(opts: {
   playerId?: string;
+  /** Signed-in account's player id (from the Supabase profile). */
+  accountPlayerId?: string;
   scope?: "mine" | "watch" | "recent";
 }): Promise<{ games?: GameState[]; live?: GameIndexEntry[]; recent?: GameIndexEntry[] }> {
   const entries = await readIndex();
 
   if (opts.scope === "mine" && opts.playerId) {
-    const mine = entries.filter(
-      (e) => e.creator === opts.playerId || e.opponent === opts.playerId,
-    );
+    // Include the signed-in account's games too (cross-device continuity:
+    // a new device starts with a fresh guest id but keeps the account's
+    // player id from its profile).
+    const ids = new Set<string>([opts.playerId]);
+    if (opts.accountPlayerId) ids.add(opts.accountPlayerId);
+    const mine = entries.filter((e) => ids.has(e.creator) || ids.has(e.opponent));
     return { games: await fetchGames(mine, 25) };
   }
 

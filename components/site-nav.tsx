@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, User } from "lucide-react";
+import { Plus } from "lucide-react";
+import { PlayerMenu } from "@/components/auth/player-menu";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -50,16 +51,7 @@ export function SiteNav() {
               </Link>
             );
           })}
-          <Link
-            href="/profile"
-            aria-label="Profile"
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "icon" }),
-              "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <User aria-hidden />
-          </Link>
+          <PlayerMenu />
           <Link
             href="/create"
             aria-label="Create game"

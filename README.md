@@ -72,6 +72,50 @@ To play on the actual GenLayer chain, see
 
 ---
 
+## Player accounts (identity & progression)
+
+ChainMate has a permanent identity layer built on **Supabase** (email
+magic-link / one-time-code auth, Postgres profiles, achievements, game
+history) — fully optional and key-gated:
+
+- **Everyone starts as a guest.** A persistent per-device identity
+  (`Guest_XXXX`) is created automatically: games, ELO, streaks and
+  achievements accumulate with zero setup, and survive refreshes.
+- **Save your progress.** From the navbar menu (or the banner on
+  Games/Profile) a guest creates an account with a username + email. The
+  one-time code signs them in, and the upgrade **carries the guest's real
+  rating, games, streaks and achievements into the new profile** — nothing
+  is reset, duplicated or re-rolled.
+- **Signed-in players** keep their account games across devices; sign-in
+  sessions persist across refreshes.
+- **Ratings & achievements are server-authoritative**: ELO (1200 start,
+  K=32), peak rating, win/loss streaks and the 10 achievement codes are
+  computed and written only by the server from completed rated games. The
+  client can never edit them.
+
+### Enabling accounts (optional)
+
+| Variable | Description |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL (`https://<project>.supabase.co`) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public anon key (client) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret service-role key (server only — never expose) |
+
+1. Create a free project at [supabase.com](https://supabase.com) →
+   **Authentication** → enable **Email** provider (magic link / OTP).
+2. Copy the three values above into your env (Freebuff: Keys / API keys panel;
+   Vercel: Project → Settings → Environment Variables).
+3. Run `supabase/migrations/0001_init.sql` once in the Supabase SQL editor
+   (creates `profiles`, `games`, `player_achievements` with RLS).
+4. Redeploy. Until these keys exist the app simply stays in guest mode —
+   everything else keeps working.
+
+Without Supabase keys, guests still get persistent identities, ratings,
+streaks, achievements and game history (backed by the game store); the
+account layer is what unlocks username + cross-device identity.
+
+---
+
 ## Pages
 
 | Route            | Purpose                                              |
@@ -80,6 +124,11 @@ To play on the actual GenLayer chain, see
 | `/create`        | Create a game (you play White)                       |
 | `/join`          | Join a game by id or share link (you play Black)     |
 | `/game/[id]`     | Live board, move history, commentary, summary        |
+| `/games`         | Your real games (with rating deltas)                 |
+| `/watch`         | Public live games + recent finished matches          |
+| `/leaderboard`   | Real ELO leaderboard                                 |
+| `/profile`       | Your rating, streaks, achievements, recent games     |
+| `/auth`          | Play as guest / create account / sign in             |
 
 ## Game page layout
 
@@ -186,6 +235,9 @@ The smart contract lives in [`contracts/chainmate.py`](contracts/chainmate.py)
 | `AI_API_KEY` | AI features | OpenAI-compatible API key |
 | `AI_BASE_URL` | no | default `https://api.openai.com/v1` |
 | `AI_MODEL` | no | default `gpt-4o-mini` |
+| `NEXT_PUBLIC_SUPABASE_URL` | accounts | Supabase project URL — enables player accounts (see [Player accounts](#player-accounts-identity--progression)) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | accounts | Supabase public anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | accounts | Supabase service-role key (server only) |
 
 **Who needs these keys? Only the app operator — your players never touch them.**
 

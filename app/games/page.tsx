@@ -5,6 +5,8 @@ import Link from "next/link";
 import { AlertCircle, Gamepad2 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
+import { GuestBanner } from "@/components/auth/guest-banner";
+import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
@@ -12,10 +14,11 @@ import { mergeGamesById, cn } from "@/lib/utils";
 import type { GameState } from "@/lib/types";
 
 export default function GamesPage() {
+  const identity = useIdentity();
   const [games, setGames] = useState<GameState[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deltas, setDeltas] = useState<Map<string, number>>(new Map());
 
-  const hostedMe = useMemo(() => getStore("hosted").getMyPlayerId(), []);
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
 
   useEffect(() => {
@@ -24,12 +27,18 @@ export default function GamesPage() {
       try {
         const hosted = getStore("hosted") as HostedGameStore;
         const local = getStore("local") as LocalGameStore;
-        const [remote, localGames] = await Promise.all([
+        const [remote, localGames, profile] = await Promise.all([
           hosted.listMine(),
           Promise.resolve(local.listMyGames()),
+          hosted.myProfile(),
         ]);
         if (cancelled) return;
         setGames(mergeGamesById([...remote, ...localGames]));
+        setDeltas(
+          new Map(
+            profile.stats.ratingHistory.map((h) => [h.gameId, h.change]),
+          ),
+        );
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load games");
@@ -39,7 +48,7 @@ export default function GamesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [identity.playerId]);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
@@ -49,10 +58,16 @@ export default function GamesPage() {
         </p>
         <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Games</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Every match played from this browser, from the online store and local
-          mode.
+          Every match played by {identity.isGuest ? "this device" : "your account"}, from the
+          online store and local mode.
         </p>
       </div>
+
+      {identity.isGuest && (
+        <div className="mt-6 animate-fade-in-up [animation-delay:60ms]">
+          <GuestBanner />
+        </div>
+      )}
 
       <div className="mt-8 animate-fade-in-up [animation-delay:80ms] overflow-hidden rounded-lg border border-border/70 bg-card/50">
         {error && (
@@ -85,7 +100,8 @@ export default function GamesPage() {
               <GameRow
                 key={game.id}
                 game={game}
-                me={game.backend === "local" ? localMe : hostedMe}
+                me={game.backend === "local" ? localMe : identity.playerId}
+                delta={game.backend === "local" ? null : deltas.get(game.id)}
               />
             ))}
           </div>
