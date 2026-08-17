@@ -41,7 +41,11 @@ export function GameRow({ game, me, delta }: GameRowProps) {
     if (game.winner) {
       const winnerSide = game.winner === creator ? "White" : "Black";
       result =
-        game.status === "resigned" ? `${winnerSide} won · resign` : `${winnerSide} won`;
+        game.status === "resigned"
+          ? `${winnerSide} won · resign`
+          : game.status === "timeout"
+            ? `${winnerSide} won · timeout`
+            : `${winnerSide} won`;
     } else if (game.status === "stalemate") {
       result = "Draw · stalemate";
     } else {

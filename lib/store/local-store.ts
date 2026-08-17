@@ -1,7 +1,8 @@
 "use client";
 
-import { applyMoveToGame, joinPlayerToGame, resignPlayerFromGame } from "@/lib/game-logic";
+import { applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
 import { chooseAiMove } from "@/lib/ai-engine";
+import { computeClocks } from "@/lib/clocks";
 import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
 import { buildRuleSummary } from "@/lib/summary";
 import {
@@ -99,8 +100,39 @@ export class LocalGameStore implements GameStore {
     }
   }
 
+  /**
+   * Resolve a flag fall lazily: if the side to move has no time left, the
+   * game ends with a timeout (the other side wins). Deterministic from the
+   * recorded move timestamps, so any tab that reads the game settles it.
+   */
+  private maybeResolveTimeout(game: GameState): GameState {
+    if (game.status !== "active" || !game.timeControl || !game.startedAt) return game;
+    const clocks = computeClocks(game, Date.now());
+    if (!clocks) return game;
+    const turn = game.fen.split(" ")[1] ?? "w";
+    const flagged = turn === "w" ? clocks.white : clocks.black;
+    if (flagged > 0) return game;
+    return this.save({
+      ...game,
+      status: "timeout",
+      winner: turn === "w" ? game.opponent : game.creator,
+      drawOffer: undefined,
+      commentary: [
+        ...game.commentary,
+        {
+          move: "",
+          side: turn === "w" ? "white" : "black",
+          text: `${turn === "w" ? "White" : "Black"} lost on time.`,
+          source: "chain",
+        },
+      ],
+    });
+  }
+
   private getGameSync(id: string): GameState | null {
-    return readGames()[id] ?? null;
+    const raw = readGames()[id] ?? null;
+    if (!raw) return null;
+    return this.maybeResolveTimeout(raw);
   }
 
   /** Persist a state and return the stored copy (timestamps bumped). */
@@ -232,6 +264,22 @@ export class LocalGameStore implements GameStore {
     if (!game) throw new Error("Game not found");
     const me = getPlayerId();
     const res = resignPlayerFromGame(game, me);
+    if (!res.ok) throw new Error(res.error);
+    return this.save(res.game);
+  }
+
+  async offerDraw(id: string): Promise<GameState> {
+    const game = this.getGameSync(id);
+    if (!game) throw new Error("Game not found");
+    const res = offerDrawToGame(game, getPlayerId());
+    if (!res.ok) throw new Error(res.error);
+    return this.save(res.game);
+  }
+
+  async respondDraw(id: string, accept: boolean): Promise<GameState> {
+    const game = this.getGameSync(id);
+    if (!game) throw new Error("Game not found");
+    const res = respondToDrawOffer(game, getPlayerId(), accept);
     if (!res.ok) throw new Error(res.error);
     return this.save(res.game);
   }

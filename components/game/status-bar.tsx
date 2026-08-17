@@ -45,6 +45,7 @@ export function StatusBar({ game, turnSide, inCheck }: StatusBarProps) {
     stalemate: "Stalemate",
     draw: "Draw",
     resigned: "Resignation",
+    timeout: "Timeout",
   };
   const winnerSide = winner === game.creator ? "White" : winner === game.opponent ? "Black" : null;
 

@@ -33,7 +33,18 @@ const REASON_LABEL: Record<string, string> = {
   resigned: "by Resignation",
   stalemate: "by Stalemate",
   draw: "by Draw",
+  timeout: "on Timeout",
 };
+
+function reasonLabel(game: GameState): string {
+  if (game.status === "draw") {
+    // A draw by agreement leaves a real record in the commentary; other
+    // draw paths (stalemate / insufficient material) use the generic label.
+    const agreed = game.commentary.some((c) => /agreed/i.test(c.text));
+    return agreed ? "by Agreement" : "by Draw";
+  }
+  return REASON_LABEL[game.status] ?? game.status;
+}
 
 /**
  * The end-of-match modal. Shown automatically the moment any game ends, on
@@ -166,9 +177,7 @@ export function EndGameModal({
             >
               {verdict}
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {REASON_LABEL[game.status] ?? game.status}
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">{reasonLabel(game)}</p>
           </div>
           <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close result" className="shrink-0">
             <X className="h-4 w-4" aria-hidden />

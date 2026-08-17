@@ -1,4 +1,5 @@
-import { applyMoveToGame, joinPlayerToGame, resignPlayerFromGame } from "@/lib/game-logic";
+import { applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
+import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
@@ -406,14 +407,58 @@ export async function createHostedGame(
   return game;
 }
 
+/**
+ * Resolve a flag fall: if the side to move has no time left, the game ends
+ * (status "timeout", the other side wins). Called lazily on every read and
+ * mutation, so the first poll after the clock hits zero settles the game.
+ * Deterministic from the recorded move timestamps; no-op for games without
+ * clocks or without move timestamps.
+ */
+async function resolveTimeout(game: GameState): Promise<GameState> {
+  if (game.status !== "active" || !game.timeControl || !game.startedAt) return game;
+  const clocks = computeClocks(game, Date.now());
+  if (!clocks) return game;
+
+  const turn = game.fen.split(" ")[1] ?? "w";
+  const flagged = turn === "w" ? clocks.white : clocks.black;
+  if (flagged > 0) return game;
+
+  const winner = turn === "w" ? game.opponent : game.creator;
+  const now = Date.now();
+  const next: GameState = {
+    ...game,
+    status: "timeout",
+    winner,
+    endedAt: now,
+    updatedAt: now,
+    drawOffer: undefined,
+    summary: game.summary || buildRuleSummary(game),
+    commentary: [
+      ...game.commentary,
+      {
+        move: "",
+        side: turn === "w" ? "white" : "black",
+        text: `${turn === "w" ? "White" : "Black"} lost on time.`,
+        source: "chain",
+      },
+    ],
+  };
+  await applyRatingsIfFinished(game, next);
+  await writeGame(next);
+  return next;
+}
+
 export async function getHostedGame(id: string): Promise<GameState | null> {
   const raw = await getGameStorage().get(keyFor(id));
   if (!raw) return null;
+  let game: GameState;
   try {
-    return JSON.parse(raw) as GameState;
+    game = JSON.parse(raw) as GameState;
   } catch {
     return null;
   }
+  // A flag fall may have happened since the last write — settle it now.
+  return resolveTimeout(game);
 }
 
 export async function joinHostedGame(id: string, playerId: string): Promise<GameState> {
@@ -474,6 +519,39 @@ export async function resignHostedGame(id: string, playerId: string): Promise<Ga
     await applyRatingsIfFinished(game, next);
   } else {
     next = { ...next, updatedAt: Date.now() };
+  }
+  await writeGame(next);
+  return next;
+}
+
+export async function offerDrawHostedGame(id: string, playerId: string): Promise<GameState> {
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("Game not found");
+  const res = offerDrawToGame(game, playerId);
+  if (!res.ok) throw new Error(res.error);
+  const next: GameState = { ...res.game, updatedAt: Date.now() };
+  await writeGame(next);
+  return next;
+}
+
+export async function respondHostedDraw(
+  id: string,
+  playerId: string,
+  accept: boolean,
+): Promise<GameState> {
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("Game not found");
+  const res = respondToDrawOffer(game, playerId, accept);
+  if (!res.ok) throw new Error(res.error);
+  let next: GameState = { ...res.game, updatedAt: Date.now() };
+  if (isGameOver(next.status) && !next.endedAt) {
+    next = {
+      ...next,
+      endedAt: Date.now(),
+      updatedAt: Date.now(),
+      summary: next.summary || buildRuleSummary(next),
+    };
+    await applyRatingsIfFinished(game, next);
   }
   await writeGame(next);
   return next;

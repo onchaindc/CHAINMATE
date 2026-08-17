@@ -43,11 +43,15 @@ export function keyMoments(game: GameState): KeyMoments {
     finalTactic =
       game.status === "resigned"
         ? "The game was resigned before any moves were played."
-        : "The game ended before any moves were played.";
+        : game.status === "timeout"
+          ? "The game was lost on time before any moves were played."
+          : "The game ended before any moves were played.";
   } else if (game.status === "checkmate") {
     finalTactic = `Move ${last.number} — ${last.san} delivers checkmate.`;
   } else if (game.status === "resigned") {
     finalTactic = `Move ${last.number} — ${last.san}, then the game was resigned.`;
+  } else if (game.status === "timeout") {
+    finalTactic = `Move ${last.number} — ${last.san}, then the clock ran out.`;
   } else if (game.status === "stalemate") {
     finalTactic = `Move ${last.number} — ${last.san} left no legal moves. Stalemate.`;
   } else {
@@ -65,6 +69,7 @@ export function buildRuleSummary(game: GameState): string {
     stalemate: "stalemate",
     draw: "a draw",
     resigned: "a resignation",
+    timeout: "timeout",
   };
   const label = isGameOver(game.status) ? (resultLabel[game.status] ?? game.status) : "the game";
   const sentences: string[] = [];
@@ -81,18 +86,27 @@ export function buildRuleSummary(game: GameState): string {
 
   if (game.winner) {
     const side = game.winner === game.creator ? "White" : "Black";
-    sentences.push(`${side} came out on top and claimed the win.`);
+    if (game.status === "timeout") {
+      sentences.push(`${side} won on time — the opponent's clock ran out.`);
+    } else {
+      sentences.push(`${side} came out on top and claimed the win.`);
+    }
   } else if (game.status === "stalemate") {
     sentences.push("The side to move ran out of legal moves while not in check, so the game ended in stalemate.");
   } else if (game.status === "draw") {
-    sentences.push("Neither player had enough material to force a win, so honours were shared.");
+    const agreed = game.commentary.some((c) => /agreed/i.test(c.text));
+    sentences.push(
+      agreed
+        ? "The players agreed to a draw and shared the point."
+        : "Neither player had enough material to force a win, so honours were shared.",
+    );
   }
 
-  if (totalPly > 0) {
+  if (totalPly > 0 && (game.status === "resigned" || game.status === "timeout")) {
     const mat = materialScore(game.fen);
-    if (mat.diff !== 0 && game.status === "resigned") {
+    if (mat.diff !== 0) {
       sentences.push(
-        `At resignation, ${mat.diff > 0 ? "White" : "Black"} held a material lead of ${Math.abs(mat.diff)} point${Math.abs(mat.diff) === 1 ? "" : "s"}.`,
+        `When the game ended, ${mat.diff > 0 ? "White" : "Black"} held a material lead of ${Math.abs(mat.diff)} point${Math.abs(mat.diff) === 1 ? "" : "s"}.`,
       );
     }
   }

@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Flag,
+  Handshake,
   Loader2,
   RefreshCw,
   SkipBack,
@@ -63,6 +64,8 @@ export default function GamePage() {
     submitMove,
     submitAiMove,
     resign,
+    offerDraw,
+    respondDraw,
     generateSummary,
   } = useGame(id);
 
@@ -231,6 +234,15 @@ export default function GamePage() {
   const spectator = mySide === null && !waiting;
   const aiThinking = isAiGame && game.status === "active" && !myTurn;
   const moveNumber = Math.floor(game.moves.length / 2) + 1;
+
+  // Draw offer state: who offered, and whether the viewer can respond.
+  // Draws need a human opponent on the shared store — the on-device AI has
+  // no reply path and the on-chain store doesn't support offers yet.
+  const drawSupported = game.backend !== "genlayer" && !isAiGame;
+  const drawOffer = game.drawOffer;
+  const drawOfferFromMe = drawOffer !== undefined && drawOffer.by === myId;
+  const drawOfferFromOpponent =
+    drawOffer !== undefined && mySide !== null && drawOffer.by !== myId;
 
   const aiHint = aiEnabled
     ? null
@@ -423,6 +435,45 @@ export default function GamePage() {
                   Flip board
                 </Button>
                 <div className="flex flex-wrap items-center gap-2">
+                  {game.status === "active" && drawSupported && mySide && drawOfferFromOpponent && (
+                    <>
+                      <Button
+                        size="sm"
+                        disabled={busy !== null}
+                        onClick={() => void respondDraw(true)}
+                      >
+                        {busy === "draw-respond" ? (
+                          <Loader2 className="animate-spin" aria-hidden />
+                        ) : (
+                          <Handshake aria-hidden />
+                        )}
+                        Accept draw
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy !== null}
+                        onClick={() => void respondDraw(false)}
+                      >
+                        Decline
+                      </Button>
+                    </>
+                  )}
+                  {game.status === "active" && drawSupported && mySide && !drawOffer && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy !== null}
+                      onClick={() => void offerDraw()}
+                    >
+                      {busy === "draw-offer" ? (
+                        <Loader2 className="animate-spin" aria-hidden />
+                      ) : (
+                        <Handshake className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      Offer draw
+                    </Button>
+                  )}
                   {game.status === "active" && mySide && (
                     <Button
                       variant="destructive"
@@ -460,13 +511,17 @@ export default function GamePage() {
                   ? "You'll play Black once you join."
                   : game.status === "active" && mySide === null
                     ? "Spectating — the game updates live."
-                    : game.status === "active" && aiThinking
-                      ? "The engine is thinking…"
-                      : game.status === "active" && !myTurn
-                        ? "Waiting for your opponent to move…"
-                        : game.status === "active" && myTurn
-                          ? "Your turn — click a piece, then a destination."
-                          : ""}
+                    : game.status === "active" && drawSupported && drawOfferFromMe
+                      ? "Draw offered — waiting for your opponent's reply."
+                      : game.status === "active" && drawSupported && drawOfferFromOpponent
+                        ? "Opponent offered a draw — accept or decline above."
+                        : game.status === "active" && aiThinking
+                          ? "The engine is thinking…"
+                          : game.status === "active" && !myTurn
+                            ? "Waiting for your opponent to move…"
+                            : game.status === "active" && myTurn
+                              ? "Your turn — click a piece, then a destination."
+                              : ""}
               </p>
             </div>
           )}

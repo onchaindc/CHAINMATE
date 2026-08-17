@@ -105,6 +105,14 @@ export class GenLayerGameStore implements GameStore {
     return data.game;
   }
 
+  async offerDraw(): Promise<GameState> {
+    throw new Error("Draw offers are not supported on-chain yet — resign or keep playing");
+  }
+
+  async respondDraw(): Promise<GameState> {
+    throw new Error("Draw offers are not supported on-chain yet");
+  }
+
   async generateSummary(id: string): Promise<GameState> {
     const data = await api(`/api/games/${encodeURIComponent(id)}`, {
       method: "POST",

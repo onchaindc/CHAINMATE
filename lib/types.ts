@@ -14,7 +14,8 @@ export type GameStatus =
   | "checkmate"
   | "stalemate"
   | "draw"
-  | "resigned";
+  | "resigned"
+  | "timeout";
 
 export type PlayerSide = "white" | "black";
 
@@ -57,6 +58,9 @@ export interface GameState {
   timeControl?: string;
   /** Whether the game shows up in the public Watch list. Defaults to private. */
   visibility?: "public" | "private";
+  /** Pending draw offer: the player id who offered, and when. Cleared on
+   *  accept, decline or the next move. */
+  drawOffer?: { by: string; at: number };
   /** Unix ms timestamps, set by the stores that persist games. */
   createdAt?: number;
   updatedAt?: number;
@@ -162,6 +166,10 @@ export interface GameStore {
   /** Let the AI opponent (if this is an AI game) make its move. */
   submitAiMove(id: string): Promise<GameState>;
   resign(id: string): Promise<GameState>;
+  /** Offer a draw to the opponent (pending until accepted or declined). */
+  offerDraw(id: string): Promise<GameState>;
+  /** Accept or decline the opponent's pending draw offer. */
+  respondDraw(id: string, accept: boolean): Promise<GameState>;
   generateSummary(id: string): Promise<GameState>;
   /** Subscribe to live updates for a game. Returns an unsubscribe fn. */
   subscribe(id: string, callback: (state: GameState) => void): () => void;
@@ -171,7 +179,13 @@ export interface GameStore {
 
 export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-export const GAME_OVER_STATUSES: GameStatus[] = ["checkmate", "stalemate", "draw", "resigned"];
+export const GAME_OVER_STATUSES: GameStatus[] = [
+  "checkmate",
+  "stalemate",
+  "draw",
+  "resigned",
+  "timeout",
+];
 
 export function isGameOver(status: GameStatus): boolean {
   return GAME_OVER_STATUSES.includes(status);

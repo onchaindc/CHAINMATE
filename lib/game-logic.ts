@@ -100,6 +100,7 @@ export function applyMoveToGame(
     source: "chain",
   };
 
+  // Playing a move cancels any pending draw offer (the game moved on).
   let status: GameStatus = "active";
   let winner = "";
   if (after.isCheckmate) {
@@ -118,6 +119,7 @@ export function applyMoveToGame(
       fen: outcome.fen,
       status,
       winner,
+      drawOffer: undefined,
       moves: [
         ...game.moves,
         {
@@ -130,6 +132,85 @@ export function applyMoveToGame(
         },
       ],
       commentary: [...game.commentary, entry],
+    },
+  };
+}
+
+/** Offer a draw to the opponent. The offer stays pending until accepted,
+ *  declined, or the next move is played. */
+export function offerDrawToGame(game: GameState, playerId: string): ActionResult {
+  if (game.status !== "active") {
+    return { ok: false, error: "The game is not active" };
+  }
+  const mySide = sideOfPlayer(game, playerId);
+  if (!mySide) {
+    return { ok: false, error: "You are not a player in this game" };
+  }
+  if (game.drawOffer?.by === playerId) {
+    return { ok: false, error: "You already offered a draw — waiting for your opponent" };
+  }
+  return {
+    ok: true,
+    game: {
+      ...game,
+      drawOffer: { by: playerId, at: Date.now() },
+    },
+  };
+}
+
+/** Accept (ends the game in a draw) or decline the opponent's draw offer. */
+export function respondToDrawOffer(
+  game: GameState,
+  playerId: string,
+  accept: boolean,
+): ActionResult {
+  if (game.status !== "active") {
+    return { ok: false, error: "The game is not active" };
+  }
+  if (!game.drawOffer) {
+    return { ok: false, error: "There is no pending draw offer" };
+  }
+  const mySide = sideOfPlayer(game, playerId);
+  if (!mySide) {
+    return { ok: false, error: "You are not a player in this game" };
+  }
+  if (game.drawOffer.by === playerId) {
+    return { ok: false, error: "You cannot accept your own draw offer" };
+  }
+  if (accept) {
+    return {
+      ok: true,
+      game: {
+        ...game,
+        status: "draw",
+        winner: "",
+        drawOffer: undefined,
+        commentary: [
+          ...game.commentary,
+          {
+            move: "",
+            side: mySide,
+            text: "The players agreed to a draw.",
+            source: "chain",
+          },
+        ],
+      },
+    };
+  }
+  return {
+    ok: true,
+    game: {
+      ...game,
+      drawOffer: undefined,
+      commentary: [
+        ...game.commentary,
+        {
+          move: "",
+          side: mySide,
+          text: "The draw offer was declined; play continues.",
+          source: "chain",
+        },
+      ],
     },
   };
 }

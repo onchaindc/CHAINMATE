@@ -124,6 +124,28 @@ export class HostedGameStore implements GameStore {
     return data.game;
   }
 
+  async offerDraw(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "draw-offer", playerId: getMyPlayerId() }),
+    });
+    if (!data.game) throw new Error("Draw offer failed");
+    return data.game;
+  }
+
+  async respondDraw(id: string, accept: boolean): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "draw-respond",
+        playerId: getMyPlayerId(),
+        accept,
+      }),
+    });
+    if (!data.game) throw new Error("Draw response failed");
+    return data.game;
+  }
+
   async generateSummary(id: string): Promise<GameState> {
     const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",

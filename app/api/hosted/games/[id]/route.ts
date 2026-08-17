@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getHostedGame,
   joinHostedGame,
+  offerDrawHostedGame,
   resignHostedGame,
+  respondHostedDraw,
   submitHostedMove,
   summarizeHostedGame,
 } from "@/lib/server/hosted";
@@ -27,9 +29,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 interface ActionBody {
-  action: "join" | "move" | "resign" | "summary";
+  action: "join" | "move" | "resign" | "draw-offer" | "draw-respond" | "summary";
   playerId?: string;
   move?: { from: string; to: string; promotion?: string };
+  accept?: boolean;
 }
 
 /** POST /api/hosted/games/[id] — state-changing actions. */
@@ -72,6 +75,12 @@ export async function POST(req: NextRequest, { params }: Params) {
         });
       case "resign":
         return NextResponse.json({ game: await resignHostedGame(id, playerId) });
+      case "draw-offer":
+        return NextResponse.json({ game: await offerDrawHostedGame(id, playerId) });
+      case "draw-respond":
+        return NextResponse.json({
+          game: await respondHostedDraw(id, playerId, body.accept === true),
+        });
       case "summary":
         return NextResponse.json({ game: await summarizeHostedGame(id) });
       default:
