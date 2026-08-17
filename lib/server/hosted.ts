@@ -1,10 +1,11 @@
-import { applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
+import { abortGame, applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
 import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
+  profileForPlayerId,
   upsertAchievements,
   upsertGameRecord,
   upsertProfiles,
@@ -204,12 +205,47 @@ function defaultStats(playerId: string): PlayerStats {
 export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
   if (!playerId) return defaultStats(playerId);
   const raw = await getGameStorage().get(`${STATS_PREFIX}${playerId}`);
-  if (!raw) return defaultStats(playerId);
-  try {
-    return JSON.parse(raw) as PlayerStats;
-  } catch {
-    return defaultStats(playerId);
+  if (raw) {
+    try {
+      return JSON.parse(raw) as PlayerStats;
+    } catch {
+      // corrupted record — fall through to the database
+    }
   }
+  // KV miss (fresh instance, new device): fall back to the persisted
+  // Supabase profile so a real rating is never silently reset to 1200.
+  if (supabaseConfigured()) {
+    try {
+      const row = await profileForPlayerId(playerId);
+      if (row) {
+        const stats: PlayerStats = {
+          playerId,
+          username: row.username,
+          isGuest: row.is_guest,
+          rating: row.rating,
+          peakRating: row.peak_rating,
+          wins: row.wins,
+          losses: row.losses,
+          draws: row.draws,
+          games: row.games,
+          currentStreak: row.current_streak,
+          bestStreak: row.best_streak,
+          ratingHistory: [],
+          achievements: [],
+          updatedAt: new Date(row.updated_at).getTime() || Date.now(),
+        };
+        // Warm the fast-path cache so subsequent reads are instant.
+        await getGameStorage().set(
+          `${STATS_PREFIX}${playerId}`,
+          JSON.stringify(stats),
+        );
+        return stats;
+      }
+    } catch {
+      // Supabase problems must never break chess — fall back to defaults.
+    }
+  }
+  return defaultStats(playerId);
 }
 
 async function readLeaderboard(): Promise<PlayerStats[]> {
@@ -249,6 +285,8 @@ export async function getLeaderboard(): Promise<PlayerStats[]> {
 async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise<void> {
   if (prev.endedAt || isGameOver(prev.status)) return;
   if (!isGameOver(next.status)) return;
+  // Aborted games never happened — no rating impact for either side.
+  if (next.status === "aborted") return;
   const p1 = next.creator;
   const p2 = next.opponent;
   if (!p1 || !p2 || p1 === "ai" || p2 === "ai" || p1 === p2) return;
@@ -557,6 +595,62 @@ export async function respondHostedDraw(
   return next;
 }
 
+export async function abortHostedGame(id: string, playerId: string): Promise<GameState> {
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("Game not found");
+  const res = abortGame(game, playerId);
+  if (!res.ok) throw new Error(res.error);
+  const now = Date.now();
+  const next: GameState = {
+    ...res.game,
+    endedAt: now,
+    updatedAt: now,
+    // Aborted games are never rated — just record the outcome.
+    summary: res.game.summary || buildRuleSummary(res.game),
+  };
+  await writeGame(next);
+  return next;
+}
+
+/**
+ * One-click rematch: a fresh match against the same opponent with the same
+ * time control, colours swapped, starting immediately. The opponent can
+ * abort it (no rating impact) before the first move if they don't want it.
+ */
+export async function rematchHostedGame(prevId: string, playerId: string): Promise<GameState> {
+  const prev = await getHostedGame(prevId);
+  if (!prev) throw new Error("Game not found");
+  if (!isGameOver(prev.status)) throw new Error("The previous game is still in progress");
+  if (prev.creator !== playerId && prev.opponent !== playerId) {
+    throw new Error("You were not a player in this game");
+  }
+  const other = prev.creator === playerId ? prev.opponent : prev.creator;
+  if (!other || other === AI_PLAYER_ID) {
+    throw new Error("Rematch requires a human opponent");
+  }
+  const now = Date.now();
+  const id = `hosted_${randomHex(6)}`;
+  const game: GameState = {
+    id,
+    creator: playerId,
+    opponent: other,
+    status: "active",
+    winner: "",
+    fen: START_FEN,
+    moves: [],
+    commentary: [],
+    summary: "",
+    backend: "hosted",
+    timeControl: prev.timeControl,
+    visibility: prev.visibility === "private" ? "private" : "public",
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+  };
+  await writeGame(game);
+  return game;
+}
+
 export async function summarizeHostedGame(id: string): Promise<GameState> {
   const game = await getHostedGame(id);
   if (!game) throw new Error("Game not found");
@@ -580,6 +674,44 @@ async function fetchGames(entries: GameIndexEntry[], max: number): Promise<GameS
   return out;
 }
 
+/**
+ * Settle the live registry against real game state: drop games that ended
+ * (or vanished) and refresh move counts, so the Watch feed never shows a
+ * game that a flag fall already finished. Runs on every watch poll.
+ */
+async function settleLiveRegistry(): Promise<void> {
+  const entries = await readLiveRegistry();
+  if (entries.length === 0) return;
+  const kept: LiveRegistryEntry[] = [];
+  let changed = false;
+  for (const e of entries) {
+    const game = await getHostedGame(e.id);
+    if (!game || isGameOver(game.status)) {
+      changed = true; // settled or gone — no longer broadcastable
+      continue;
+    }
+    if (game.moves.length !== e.moveCount || (game.updatedAt ?? 0) !== e.updatedAt) {
+      changed = true;
+      e.moveCount = game.moves.length;
+      e.updatedAt = game.updatedAt ?? e.updatedAt;
+    }
+    kept.push(e);
+  }
+  if (changed) await writeLiveRegistry(kept);
+}
+
+/** Display info (username + rating) for a set of player ids. */
+async function playerNamesFor(ids: string[]): Promise<Record<string, LivePlayerInfo>> {
+  const out: Record<string, LivePlayerInfo> = {};
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!id || id === AI_PLAYER_ID || seen.has(id)) continue;
+    seen.add(id);
+    out[id] = await livePlayerInfo(id);
+  }
+  return out;
+}
+
 /** Real list data for Games / Watch / homepage. */
 export async function listHostedGames(opts: {
   playerId?: string;
@@ -591,6 +723,7 @@ export async function listHostedGames(opts: {
     live?: LiveGameEntry[];
     open?: GameIndexEntry[];
     recent?: GameIndexEntry[];
+    players?: Record<string, LivePlayerInfo>;
   }> {
   const entries = await readIndex();
 
@@ -601,13 +734,18 @@ export async function listHostedGames(opts: {
     const ids = new Set<string>([opts.playerId]);
     if (opts.accountPlayerId) ids.add(opts.accountPlayerId);
     const mine = entries.filter((e) => ids.has(e.creator) || ids.has(e.opponent));
-    return { games: await fetchGames(mine, 25) };
+    const games = await fetchGames(mine, 25);
+    const players = await playerNamesFor(
+      games.flatMap((g) => [g.creator, g.opponent]),
+    );
+    return { games, players };
   }
 
   if (opts.scope === "watch") {
-    // LIVE feed: every active game, straight from the live registry
-    // (auto-published on start, removed on end). Explicitly private matches
-    // stay out of the broadcast.
+    // Settle any flag falls first so the feed only shows real live games,
+    // then serve the registry (auto-published on start, removed on end).
+    // Explicitly private matches stay out of the broadcast.
+    await settleLiveRegistry();
     const registry = await readLiveRegistry();
     const live = await enrichLive(
       registry.filter((e) => e.visibility !== "private"),
@@ -636,11 +774,16 @@ export async function listHostedGames(opts: {
 export async function getPlayerProfile(playerId: string): Promise<{
   stats: PlayerStats;
   games: GameState[];
+  players: Record<string, LivePlayerInfo>;
 }> {
   const stats = await getPlayerStats(playerId);
   const entries = await readIndex();
   const mine = entries.filter(
     (e) => e.creator === playerId || e.opponent === playerId,
   );
-  return { stats, games: await fetchGames(mine, 15) };
+  const games = await fetchGames(mine, 15);
+  const players = await playerNamesFor(
+    games.flatMap((g) => [g.creator, g.opponent]),
+  );
+  return { stats, games, players };
 }

@@ -9,7 +9,7 @@ import { GuestBanner } from "@/components/auth/guest-banner";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
-import { HostedGameStore } from "@/lib/store/hosted-store";
+import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById, cn } from "@/lib/utils";
 import type { GameState } from "@/lib/types";
 
@@ -18,6 +18,16 @@ export default function GamesPage() {
   const [games, setGames] = useState<GameState[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deltas, setDeltas] = useState<Map<string, number>>(new Map());
+  const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
+
+  // Usernames from the server for everyone in this list (real identities).
+  const names = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const info of Object.values(players)) {
+      if (info.name) map[info.id] = info.name;
+    }
+    return map;
+  }, [players]);
 
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
 
@@ -37,7 +47,8 @@ export default function GamesPage() {
           hosted.myProfile(),
         ]);
         if (cancelled) return;
-        setGames(mergeGamesById([...remote, ...localGames]));
+        setGames(mergeGamesById([...remote.games, ...localGames]));
+        setPlayers(remote.players);
         setDeltas(
           new Map(
             profile.stats.ratingHistory.map((h) => [h.gameId, h.change]),
@@ -93,6 +104,7 @@ export default function GamesPage() {
                   game={game}
                   me={game.backend === "local" ? localMe : identity.playerId}
                   delta={game.backend === "local" ? null : deltas.get(game.id)}
+                  names={game.backend === "local" ? undefined : names}
                 />
               ))}
             </div>
@@ -151,6 +163,7 @@ export default function GamesPage() {
                 game={game}
                 me={game.backend === "local" ? localMe : identity.playerId}
                 delta={game.backend === "local" ? null : deltas.get(game.id)}
+                names={game.backend === "local" ? undefined : names}
               />
             ))}
           </div>

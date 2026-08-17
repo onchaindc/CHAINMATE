@@ -7,6 +7,9 @@ import type { GameState } from "@/lib/types";
 export interface LiveClocks {
   white: string | null;
   black: string | null;
+  /** Raw remaining milliseconds (for the authoritative 00:00 check). */
+  whiteMs: number | null;
+  blackMs: number | null;
   whiteLow: boolean;
   blackLow: boolean;
 }
@@ -27,15 +30,21 @@ export function useClocks(game: GameState | null): LiveClocks {
     return () => clearInterval(timer);
   }, [active, game?.id]);
 
-  if (!game) return { white: null, black: null, whiteLow: false, blackLow: false };
+  if (!game) {
+    return { white: null, black: null, whiteMs: null, blackMs: null, whiteLow: false, blackLow: false };
+  }
 
   const frozen = game.status === "active" ? now : (game.endedAt ?? now);
   const clocks: ClockState | null = computeClocks(game, frozen);
-  if (!clocks) return { white: null, black: null, whiteLow: false, blackLow: false };
+  if (!clocks) {
+    return { white: null, black: null, whiteMs: null, blackMs: null, whiteLow: false, blackLow: false };
+  }
 
   return {
     white: formatClock(clocks.white),
     black: formatClock(clocks.black),
+    whiteMs: clocks.white,
+    blackMs: clocks.black,
     whiteLow: clocks.white < 60_000,
     blackLow: clocks.black < 60_000,
   };

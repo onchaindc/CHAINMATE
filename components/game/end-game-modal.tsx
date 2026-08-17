@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ interface EndGameModalProps {
   mySide: PlayerSide | null;
   busy?: boolean;
   onGenerateSummary: () => void;
+  /** One-click rematch against the same opponent (hosted human games). */
+  onRematch?: () => Promise<void>;
   onReplay: () => void;
   onClose: () => void;
 }
@@ -34,6 +36,7 @@ const REASON_LABEL: Record<string, string> = {
   stalemate: "by Stalemate",
   draw: "by Draw",
   timeout: "on Timeout",
+  aborted: "before any moves",
 };
 
 function reasonLabel(game: GameState): string {
@@ -60,6 +63,7 @@ export function EndGameModal({
   mySide,
   busy,
   onGenerateSummary,
+  onRematch,
   onReplay,
   onClose,
 }: EndGameModalProps) {
@@ -68,15 +72,18 @@ export function EndGameModal({
     winnerId === game.creator ? "white" : winnerId === game.opponent ? "black" : null;
   const isDraw = !winnerSide;
 
-  const verdict = isDraw
-    ? "Draw"
-    : mySide
-      ? winnerSide === mySide
-        ? "You won"
-        : "You lost"
-      : winnerSide === "white"
-        ? "White wins"
-        : "Black wins";
+  const verdict =
+    game.status === "aborted"
+      ? "Aborted"
+      : isDraw
+        ? "Draw"
+        : mySide
+          ? winnerSide === mySide
+            ? "You won"
+            : "You lost"
+          : winnerSide === "white"
+            ? "White wins"
+            : "Black wins";
   const won = !isDraw && mySide === winnerSide;
   const lost = !isDraw && mySide !== null && mySide !== winnerSide;
 
@@ -102,6 +109,7 @@ export function EndGameModal({
 
   const moments = useMemo(() => keyMoments(game), [game]);
   const isAiGame = game.opponent === AI_PLAYER_ID;
+  const [rematching, setRematching] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -274,15 +282,30 @@ export function EndGameModal({
             <Play aria-hidden />
             Replay
           </Button>
-          <Link
-            href={isAiGame ? "/create?mode=ai" : "/create"}
-            className="flex-1"
-          >
-            <Button className="w-full">
-              <RotateCcw aria-hidden />
-              Play again
+          {onRematch ? (
+            <Button
+              className="flex-1"
+              disabled={rematching}
+              onClick={() => {
+                setRematching(true);
+                void onRematch().finally(() => setRematching(false));
+              }}
+            >
+              {rematching ? (
+                <Loader2 className="animate-spin" aria-hidden />
+              ) : (
+                <RotateCcw aria-hidden />
+              )}
+              Rematch
             </Button>
-          </Link>
+          ) : (
+            <Link href={isAiGame ? "/create?mode=ai" : "/create"} className="flex-1">
+              <Button className="w-full">
+                <RotateCcw aria-hidden />
+                Play again
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
     </div>

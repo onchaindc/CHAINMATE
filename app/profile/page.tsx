@@ -11,7 +11,7 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
-import { HostedGameStore } from "@/lib/store/hosted-store";
+import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById, cn } from "@/lib/utils";
 import type { GameState, PlayerStats } from "@/lib/types";
 
@@ -19,7 +19,17 @@ export default function ProfilePage() {
   const identity = useIdentity();
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [games, setGames] = useState<GameState[] | null>(null);
+  const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
   const [error, setError] = useState<string | null>(null);
+
+  // Real usernames for everyone in the recent-games list.
+  const names = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const info of Object.values(players)) {
+      if (info.name) map[info.id] = info.name;
+    }
+    return map;
+  }, [players]);
 
   // The active player id: the account's id when signed in, the device
   // guest id otherwise.
@@ -38,6 +48,7 @@ export default function ProfilePage() {
         ]);
         if (cancelled) return;
         setStats(profile.stats);
+        setPlayers(profile.players);
         setGames(mergeGamesById([...profile.games, ...localGames]));
       } catch (err) {
         if (cancelled) return;
@@ -80,8 +91,10 @@ export default function ProfilePage() {
               </span>
             )}
           </div>
-          <p className="mt-1 font-mono text-xs text-muted-foreground">
-            {identity.isGuest ? "Guest player" : "ChainMate player"} · {playerId.slice(0, 10)}…
+          <p className="mt-1 text-xs text-muted-foreground">
+            {identity.isGuest
+              ? "Guest player — progress is saved on this device"
+              : "ChainMate player — signed in and synced across devices"}
           </p>
         </div>
         {rating !== null && (
@@ -203,6 +216,7 @@ export default function ProfilePage() {
                   key={game.id}
                   game={game}
                   me={game.backend === "local" ? localMe : playerId}
+                  names={game.backend === "local" ? undefined : names}
                 />
               ))}
             </div>

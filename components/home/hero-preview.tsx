@@ -6,15 +6,24 @@ import { BoardVisual } from "@/components/landing/board-visual";
 import { GameRow } from "@/components/game/game-row";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
-import { HostedGameStore } from "@/lib/store/hosted-store";
+import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById } from "@/lib/utils";
 import { isGameOver, type GameState } from "@/lib/types";
 
 export function HeroPreview() {
   const [recent, setRecent] = useState<GameState[] | null>(null);
   const [latest, setLatest] = useState<GameState | null>(null);
+  const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
   const hostedMe = useMemo(() => getStore("hosted").getMyPlayerId(), []);
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
+
+  const names = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const info of Object.values(players)) {
+      if (info.name) map[info.id] = info.name;
+    }
+    return map;
+  }, [players]);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,7 +37,8 @@ export function HeroPreview() {
         ]);
         if (cancelled) return;
         const localGames = local.listMyGames();
-        const merged = mergeGamesById([...mine, ...localGames]);
+        setPlayers(mine.players);
+        const merged = mergeGamesById([...mine.games, ...localGames]);
         setRecent(merged.slice(0, 3));
 
         const analyzed = [...recentGames, ...localGames]
@@ -113,6 +123,7 @@ export function HeroPreview() {
                     key={g.id}
                     game={g}
                     me={g.backend === "local" ? localMe : hostedMe}
+                    names={g.backend === "local" ? undefined : names}
                   />
                 ))}
               </div>

@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   AlertCircle,
+  Ban,
   Bot,
   ChevronLeft,
   ChevronRight,
@@ -33,7 +34,7 @@ import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
-import { AI_PLAYER_ID, isGameOver, shortId, type PlayerStats } from "@/lib/types";
+import { AI_PLAYER_ID, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type MobileTab = "moves" | "analysis" | "info";
@@ -48,6 +49,7 @@ export default function GamePage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const identity = useIdentity();
+  const router = useRouter();
 
   const {
     game,
@@ -66,6 +68,9 @@ export default function GamePage() {
     resign,
     offerDraw,
     respondDraw,
+    abort,
+    rematch,
+    resolveTimeout,
     generateSummary,
   } = useGame(id);
 
@@ -171,7 +176,27 @@ export default function GamePage() {
     };
   }, [game?.id, game?.creator, game?.opponent]);
 
-  const { white: whiteClock, black: blackClock, whiteLow, blackLow } = useClocks(game);
+  const { white: whiteClock, black: blackClock, whiteMs, blackMs, whiteLow, blackLow } = useClocks(game);
+
+  /* ------------------------------------------------------------------ */
+  /* Authoritative flag-fall: the moment the side to move hits 00:00, ask  */
+  /* the store to settle the game as a timeout loss immediately (the      */
+  /* server re-validates the clock itself, so this can never end a game   */
+  /* early). Polling remains the fallback if this call fails.             */
+  /* ------------------------------------------------------------------ */
+  const flagMs = turnSide === "white" ? whiteMs : blackMs;
+  const flagFallen =
+    game?.status === "active" && Boolean(game?.timeControl) && flagMs === 0;
+  const timeoutTriggered = useRef(false);
+  useEffect(() => {
+    if (!flagFallen) {
+      timeoutTriggered.current = false;
+      return;
+    }
+    if (timeoutTriggered.current) return;
+    timeoutTriggered.current = true;
+    void resolveTimeout();
+  }, [flagFallen, resolveTimeout]);
 
   if (loading) {
     return (
@@ -292,16 +317,12 @@ export default function GamePage() {
           </div>
         )}
         <div className="flex items-center justify-between">
-          <dt className="text-muted-foreground">Game id</dt>
-          <dd className="font-mono text-foreground/85">{shortId(game.id)}</dd>
-        </div>
-        <div className="flex items-center justify-between">
           <dt className="text-muted-foreground">Backend</dt>
           <dd className="capitalize text-foreground/85">
             {game.backend === "genlayer"
-              ? "GenLayer"
+              ? "On-chain"
               : game.backend === "hosted"
-                ? "Online store"
+                ? "Online"
                 : "Local"}
           </dd>
         </div>
@@ -331,7 +352,14 @@ export default function GamePage() {
           <h1 className="font-display text-lg font-bold tracking-tight">
             {gameOver ? "Match report" : "Chess match"}
           </h1>
-          <p className="font-mono text-[11px] text-muted-foreground">{shortId(game.id)}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {game.backend === "genlayer"
+              ? "On-chain match"
+              : game.backend === "local"
+                ? "Local match"
+                : "Online match"}
+            {game.timeControl ? ` · ${game.timeControl}` : ""}
+          </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
@@ -435,6 +463,21 @@ export default function GamePage() {
                   Flip board
                 </Button>
                 <div className="flex flex-wrap items-center gap-2">
+                  {game.moves.length === 0 && mySide && (game.status === "waiting" || game.status === "active") && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={busy !== null}
+                      onClick={() => void abort()}
+                    >
+                      {busy === "abort" ? (
+                        <Loader2 className="animate-spin" aria-hidden />
+                      ) : (
+                        <Ban aria-hidden />
+                      )}
+                      Abort game
+                    </Button>
+                  )}
                   {game.status === "active" && drawSupported && mySide && drawOfferFromOpponent && (
                     <>
                       <Button
@@ -474,7 +517,7 @@ export default function GamePage() {
                       Offer draw
                     </Button>
                   )}
-                  {game.status === "active" && mySide && (
+                  {game.status === "active" && mySide && game.moves.length > 0 && (
                     <Button
                       variant="destructive"
                       size="sm"
@@ -600,6 +643,14 @@ export default function GamePage() {
           mySide={mySide}
           busy={busy === "summary"}
           onGenerateSummary={generateSummary}
+          onRematch={
+            game.backend === "hosted" && !isAiGame
+              ? async () => {
+                  const next = await rematch();
+                  router.push(`/game/${next.id}`);
+                }
+              : undefined
+          }
           onReplay={() => {
             setResultOpen(false);
             startReplay();

@@ -55,6 +55,24 @@ export async function profileForUserId(userId: string): Promise<ProfileRow | nul
   return data as unknown as ProfileRow;
 }
 
+/**
+ * Read a player's persisted record by their game-store player id. This is
+ * the database-backed source of truth for ratings: the game store's KV is
+ * fast-path storage, but when it misses (fresh instance, new device) the
+ * rating comes from the profiles table instead of defaulting to 1200.
+ */
+export async function profileForPlayerId(playerId: string): Promise<ProfileRow | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("profiles")
+    .select("*")
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as unknown as ProfileRow;
+}
+
 export async function usernameTaken(username: string, excludeUserId?: string): Promise<boolean> {
   const admin = getSupabaseAdmin();
   if (!admin) return false;
@@ -95,6 +113,15 @@ export async function upsertProfiles(statsList: PlayerStats[]): Promise<void> {
 export async function upsertGameRecord(game: GameState): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
+  // The real termination reason, never guessed from the winner alone.
+  const result: Record<string, string> = {
+    checkmate: "checkmate",
+    stalemate: "stalemate",
+    draw: "draw",
+    resigned: "resignation",
+    timeout: "timeout",
+    aborted: "aborted",
+  };
   await admin.from("games").upsert(
     {
       id: game.id,
@@ -102,14 +129,7 @@ export async function upsertGameRecord(game: GameState): Promise<void> {
       black_player_id: game.opponent || "",
       time_control: game.timeControl ?? null,
       status: game.status,
-      result:
-        game.winner
-          ? game.status === "resigned"
-            ? "resignation"
-            : "checkmate"
-          : game.status === "stalemate"
-            ? "stalemate"
-            : "draw",
+      result: result[game.status] ?? game.status,
       winner_player_id: game.winner || "",
       created_at: game.createdAt ?? Date.now(),
       started_at: game.startedAt ?? null,

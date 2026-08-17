@@ -215,6 +215,43 @@ export function respondToDrawOffer(
   };
 }
 
+/**
+ * Abort a game before any move has been played. No winner, no rating
+ * impact — the game simply never happened. Both players can abort a
+ * waiting or freshly-started match; once the first move is played the
+ * only way out is resignation.
+ */
+export function abortGame(game: GameState, playerId: string): ActionResult {
+  if (game.status !== "waiting" && game.status !== "active") {
+    return { ok: false, error: "The game is already over" };
+  }
+  const mySide = sideOfPlayer(game, playerId);
+  if (!mySide) {
+    return { ok: false, error: "You are not a player in this game" };
+  }
+  if (game.moves.length > 0) {
+    return { ok: false, error: "The game has started — resign instead of aborting" };
+  }
+  return {
+    ok: true,
+    game: {
+      ...game,
+      status: "aborted",
+      winner: "",
+      drawOffer: undefined,
+      commentary: [
+        ...game.commentary,
+        {
+          move: "",
+          side: mySide,
+          text: "The game was aborted before any moves were played.",
+          source: "chain",
+        },
+      ],
+    },
+  };
+}
+
 /** Resign the game as one of the players (the other side wins). */
 export function resignPlayerFromGame(game: GameState, playerId: string): ActionResult {
   if (game.status !== "active") {
