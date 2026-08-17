@@ -2,7 +2,7 @@
 # A chess dApp where two players play chess on-chain and receive
 # AI-generated move commentary and post-game match analysis.
 #
-# # { "Depends": "py-genlayer:test" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 #
 # Deploy to GenLayer (testnet Bradbury):
 #   genlayer network set testnet-bradbury
@@ -15,15 +15,9 @@
 # generation are all computed deterministically on-chain by the bundled
 # chess engine below, so players cannot submit illegal moves.
 
-try:
-    from genlayer import *
-    _HAS_GL = True
-except Exception:
-    # Outside the GenVM (local unit tests) the engine is still importable.
-    gl = None
-    _HAS_GL = False
+from dataclasses import dataclass
 
-import json
+from genlayer import *
 
 # ─────────────────────────────────────────────────────────────
 # Minimal deterministic chess engine (rules only)
@@ -397,15 +391,30 @@ def insufficient_material(board):
     return False
 
 
-def replay_captures(moves: list) -> list:
+def as_move_dict(m) -> dict:
+    """Normalise a stored MoveRecord (or a plain engine move dict) for the
+    deterministic replay helpers, which work on dict moves."""
+    if hasattr(m, "from_sq"):
+        return {
+            "from": m.from_sq,
+            "to": m.to_sq,
+            "promotion": m.promotion or None,
+            "castle": None,
+            "ep": False,
+        }
+    return m
+
+
+def replay_captures(moves) -> list:
     """Replays the move list from the start position and returns captures."""
     board, turn, castling, ep, _h, _f = parse_fen(START_FEN)
     caps = []
     for m in moves:
-        target = board[sq_to_idx(m["to"])]
-        if m.get("ep") or target is not None:
+        d = as_move_dict(m)
+        target = board[sq_to_idx(d["to"])]
+        if d.get("ep") or target is not None:
             caps.append(m)
-        board, castling, ep = apply_move(board, m, castling, ep)
+        board, castling, ep = apply_move(board, d, castling, ep)
         turn = "b" if turn == "w" else "w"
     return caps
 
@@ -436,251 +445,306 @@ def build_move_commentary(move, san, side, enemy_in_check, result, captured_name
 # The contract
 # ─────────────────────────────────────────────────────────────
 
-if _HAS_GL:
+@allow_storage
+@dataclass
+class MoveRecord:
+    # Sized integer — GenVM storage rejects bare Python ints.
+    number: u64
+    side: str
+    from_sq: str
+    to_sq: str
+    promotion: str
+    san: str
 
-    class ChainMate(gl.Contract):
-        creator: str
-        opponent: str
-        status: str
-        winner: str
-        fen: str
-        moves: list
-        commentary: list
-        summary: str
 
-        def __init__(self):
-            self.creator = ""
-            self.opponent = ""
-            self.status = ""
-            self.winner = ""
-            self.fen = START_FEN
-            self.moves = []
-            self.commentary = []
-            self.summary = ""
+@allow_storage
+@dataclass
+class CommentaryRecord:
+    move: str
+    side: str
+    text: str
 
-        # ── game lifecycle ────────────────────────────────────
 
-        @gl.public.write
-        def create_game(self) -> dict:
-            assert self.status == "", "This contract already hosts a game"
-            self.creator = str(gl.message.sender_address)
-            self.opponent = ""
-            self.status = "waiting"
-            self.winner = ""
-            self.fen = START_FEN
-            self.moves = []
-            self.commentary = []
-            self.summary = ""
-            return self.get_game()
+class ChainMate(gl.Contract):
+    creator: str
+    opponent: str
+    status: str
+    winner: str
+    fen: str
+    moves: DynArray[MoveRecord]
+    commentary: DynArray[CommentaryRecord]
+    summary: str
 
-        @gl.public.write
-        def join_game(self) -> dict:
-            assert self.status == "waiting", "This game is not waiting for players"
-            sender = str(gl.message.sender_address)
-            assert sender != self.creator, "The creator cannot join their own game"
-            self.opponent = sender
-            self.status = "active"
-            return self.get_game()
+    def __init__(self):
+        self.creator = ""
+        self.opponent = ""
+        self.status = ""
+        self.winner = ""
+        self.fen = START_FEN
+        self.summary = ""
 
-        @gl.public.write
-        def submit_move(self, from_sq: str, to_sq: str, promotion: str = "") -> dict:
-            assert self.status == "active", "The game is not active"
-            sender = str(gl.message.sender_address)
-            assert sender in (self.creator, self.opponent), "Only players can move"
-            side = "white" if sender == self.creator else "black"
-            turn = "w" if side == "white" else "b"
+    # ── game lifecycle ────────────────────────────────────────
 
-            board, fen_turn, castling, ep, halfmove, fullmove = parse_fen(self.fen)
-            assert fen_turn == turn, "It is not your turn"
+    @gl.public.write
+    def create_game(self) -> dict:
+        # One contract hosts exactly one game; it cannot be re-created.
+        if self.status != "":
+            raise gl.vm.UserError("This contract already hosts a game")
+        # The deployer is White. Only the authenticated sender of this
+        # transaction can ever act as White — the contract never accepts
+        # a caller-supplied player id or signing key.
+        self.creator = str(gl.message.sender_address)
+        self.opponent = ""
+        self.status = "waiting"
+        self.winner = ""
+        self.fen = START_FEN
+        self.summary = ""
+        return self.get_game()
 
-            legal = legal_moves(board, turn, castling, ep)
-            target = None
-            promo = promotion.lower() if promotion else None
-            for m in legal:
-                if m["from"] == from_sq and m["to"] == to_sq:
-                    if promo is None or m.get("promotion") == promo:
-                        target = m
-                        break
-            assert target is not None, "Illegal move"
+    @gl.public.write
+    def join_game(self) -> dict:
+        if self.status != "waiting":
+            raise gl.vm.UserError("This game is not waiting for players")
+        sender = str(gl.message.sender_address)
+        if sender == self.creator:
+            raise gl.vm.UserError("The creator cannot join their own game")
+        # Black is bound to the authenticated joining sender.
+        self.opponent = sender
+        self.status = "active"
+        return self.get_game()
 
-            captured_name = None
-            if target.get("ep"):
-                captured_name = "pawn"
-            elif board[sq_to_idx(target["to"])] is not None:
-                captured_name = PIECE_NAMES[board[sq_to_idx(target["to"])].lower()]
+    @gl.public.write
+    def submit_move(self, from_sq: str, to_sq: str, promotion: str = "") -> dict:
+        if self.status != "active":
+            raise gl.vm.UserError("The game is not active")
+        # Authorization boundary: the side that moves is derived ONLY from
+        # the authenticated transaction sender. No caller-selected player
+        # slot or server key can ever steer this contract.
+        sender = str(gl.message.sender_address)
+        if sender not in (self.creator, self.opponent):
+            raise gl.vm.UserError("Only players can move")
+        side = "white" if sender == self.creator else "black"
+        turn = "w" if side == "white" else "b"
 
-            san = san_for_move(board, legal, target, turn, castling, ep)
-            new_board, new_castling, new_ep = apply_move(board, target, castling, ep)
+        board, fen_turn, castling, ep, halfmove, fullmove = parse_fen(self.fen)
+        if fen_turn != turn:
+            raise gl.vm.UserError("It is not your turn")
 
-            moved_piece = board[sq_to_idx(target["from"])].lower()
-            if moved_piece == "p" or board[sq_to_idx(target["to"])] is not None or target.get("ep"):
-                halfmove = 0
+        legal = legal_moves(board, turn, castling, ep)
+        target = None
+        promo = promotion.lower() if promotion else None
+        for m in legal:
+            if m["from"] == from_sq and m["to"] == to_sq:
+                if promo is None or m.get("promotion") == promo:
+                    target = m
+                    break
+        if target is None:
+            raise gl.vm.UserError("Illegal move")
+
+        captured_name = None
+        if target.get("ep"):
+            captured_name = "pawn"
+        elif board[sq_to_idx(target["to"])] is not None:
+            captured_name = PIECE_NAMES[board[sq_to_idx(target["to"])].lower()]
+
+        san = san_for_move(board, legal, target, turn, castling, ep)
+        new_board, new_castling, new_ep = apply_move(board, target, castling, ep)
+
+        moved_piece = board[sq_to_idx(target["from"])].lower()
+        if moved_piece == "p" or board[sq_to_idx(target["to"])] is not None or target.get("ep"):
+            halfmove = 0
+        else:
+            halfmove += 1
+        fullmove = fullmove + (1 if turn == "b" else 0)
+
+        enemy = "b" if turn == "w" else "w"
+        enemy_in_check = in_check(new_board, enemy)
+        enemy_legal = legal_moves(new_board, enemy, new_castling, new_ep)
+        result = "active"
+        winner = ""
+        if not enemy_legal:
+            if enemy_in_check:
+                result = "checkmate"
+                winner = sender
             else:
-                halfmove += 1
-            fullmove = fullmove + (1 if turn == "b" else 0)
+                result = "stalemate"
+        elif insufficient_material(new_board):
+            result = "draw"
 
-            enemy = "b" if turn == "w" else "w"
-            enemy_in_check = in_check(new_board, enemy)
-            enemy_legal = legal_moves(new_board, enemy, new_castling, new_ep)
-            result = "active"
-            winner = ""
-            if not enemy_legal:
-                if enemy_in_check:
-                    result = "checkmate"
-                    winner = sender
-                else:
-                    result = "stalemate"
-            elif insufficient_material(new_board):
-                result = "draw"
+        self.fen = to_fen(new_board, enemy, new_castling, new_ep, halfmove, fullmove)
+        self.moves.append(MoveRecord(
+            number=len(self.moves) + 1,
+            side=side,
+            from_sq=target["from"],
+            to_sq=target["to"],
+            promotion=target.get("promotion") or "",
+            san=san,
+        ))
+        self.commentary.append(CommentaryRecord(
+            move=san,
+            side=side,
+            text=build_move_commentary(target, san, side, enemy_in_check, result,
+                                       captured_name),
+        ))
+        self.status = result
+        self.winner = winner
+        return self.get_game()
 
-            self.fen = to_fen(new_board, enemy, new_castling, new_ep, halfmove, fullmove)
-            self.moves.append({
-                "number": len(self.moves) + 1,
-                "side": side,
-                "from": target["from"],
-                "to": target["to"],
-                "promotion": target.get("promotion") or "",
-                "san": san,
-            })
-            self.commentary.append({
-                "move": san,
-                "side": side,
-                "text": build_move_commentary(target, san, side, enemy_in_check, result,
-                                              captured_name),
-            })
-            self.status = result
-            self.winner = winner
-            return self.get_game()
+    @gl.public.write
+    def resign_game(self) -> dict:
+        if self.status != "active":
+            raise gl.vm.UserError("The game is not active")
+        # Authorization boundary: only the authenticated player themselves
+        # can resign — never a caller-chosen key or slot.
+        sender = str(gl.message.sender_address)
+        if sender not in (self.creator, self.opponent):
+            raise gl.vm.UserError("Only players can resign")
+        side = "white" if sender == self.creator else "black"
+        self.status = "resigned"
+        self.winner = self.opponent if side == "white" else self.creator
+        self.commentary.append(CommentaryRecord(
+            move="",
+            side=side,
+            text=f"{side.capitalize()} resigned — {self.winner[:10]}… wins.",
+        ))
+        return self.get_game()
 
-        @gl.public.write
-        def resign_game(self) -> dict:
-            assert self.status == "active", "The game is not active"
-            sender = str(gl.message.sender_address)
-            assert sender in (self.creator, self.opponent), "Only players can resign"
-            side = "white" if sender == self.creator else "black"
-            self.status = "resigned"
-            self.winner = self.opponent if side == "white" else self.creator
-            self.commentary.append({
-                "move": "",
-                "side": side,
-                "text": f"{side.capitalize()} resigned — {self.winner[:10]}… wins.",
-            })
-            return self.get_game()
+    @gl.public.view
+    def get_game(self) -> dict:
+        return {
+            "creator": self.creator,
+            "opponent": self.opponent,
+            "status": self.status,
+            "winner": self.winner,
+            "fen": self.fen,
+            "moves": [
+                {
+                    "number": m.number,
+                    "side": m.side,
+                    "from": m.from_sq,
+                    "to": m.to_sq,
+                    "promotion": m.promotion,
+                    "san": m.san,
+                }
+                for m in self.moves
+            ],
+            "commentary": [
+                {"move": c.move, "side": c.side, "text": c.text}
+                for c in self.commentary
+            ],
+            "summary": self.summary,
+        }
 
-        @gl.public.view
-        def get_game(self) -> dict:
-            return {
-                "creator": self.creator,
-                "opponent": self.opponent,
-                "status": self.status,
-                "winner": self.winner,
-                "fen": self.fen,
-                "moves": self.moves,
-                "commentary": self.commentary,
-                "summary": self.summary,
-            }
+    # ── AI: match summary ─────────────────────────────────────
 
-        # ── AI: match summary ─────────────────────────────────
-
-        @gl.public.write
-        def generate_match_summary(self) -> str:
-            assert self.status in ("checkmate", "stalemate", "draw", "resigned"), \
-                "The game is still in progress"
-            if self.summary:
-                return self.summary
-
-            ai = self._request_ai_summary()
-            self.summary = ai if ai else self._build_deterministic_summary()
+    @gl.public.write
+    def generate_match_summary(self) -> str:
+        if self.status not in ("checkmate", "stalemate", "draw", "resigned"):
+            raise gl.vm.UserError("The game is still in progress")
+        if self.summary:
             return self.summary
 
-        def _request_ai_summary(self) -> str:
-            """Ask the GenLayer validators' LLMs to write the analysis.
+        ai = self._request_ai_summary()
+        self.summary = ai if ai else self._build_deterministic_summary()
+        return self.summary
 
-            The LLM call runs inside a non-deterministic block executed
-            independently by every validator; the validator function checks
-            that both summaries are plausible and agree on the winner.
-            """
-            moves = self.moves
-            winner = self.winner
-            status = self.status
-            result_label = {
-                "checkmate": "checkmate", "stalemate": "stalemate",
-                "draw": "a draw", "resigned": "a resignation",
-            }.get(status, status)
-            san_list = [m["san"] for m in moves]
-            moves_text = ", ".join(san_list) if san_list else "(no moves were played)"
-            winner_text = winner if winner else "nobody (draw/stalemate)"
+    def _request_ai_summary(self) -> str:
+        """Ask the GenLayer validators' LLMs to write the analysis.
 
-            prompt = (
-                "You are a chess commentator analysing a finished game for the ChainMate dApp.\n"
-                f"Game result: {result_label}. Winner address: {winner_text}.\n"
-                f"Complete move history (SAN): {moves_text}\n"
-                "Write a 3-5 sentence game analysis: how the game developed, key moments, "
-                "turning points or blunders, and why the game ended as it did. "
-                "Do NOT invent moves that are not listed. "
-                f"The analysis MUST mention the winner address {winner_text} exactly as given "
-                "(or the word 'draw' when it was a draw/stalemate).\n"
-                "Respond ONLY with valid JSON in this exact shape:\n"
-                '{"summary": "your analysis here"}\n'
-                "No markdown, no extra text."
-            )
+        The LLM call runs inside a non-deterministic block executed
+        independently by every validator; the validator function checks
+        that both summaries are plausible and agree on the winner. The
+        move list / winner are captured into locals BEFORE the block so
+        the nondet code never reads or writes storage.
+        """
+        san_list = [m.san for m in self.moves]
+        winner = self.winner
+        status = self.status
+        result_label = {
+            "checkmate": "checkmate", "stalemate": "stalemate",
+            "draw": "a draw", "resigned": "a resignation",
+        }.get(status, status)
+        moves_text = ", ".join(san_list) if san_list else "(no moves were played)"
+        winner_text = winner if winner else "draw"
 
-            def leader_fn():
-                try:
-                    raw = gl.nondet.exec_prompt(prompt)
-                    data = json.loads(raw)
-                    summary = str(data.get("summary", "")).strip()
-                    return json.dumps({"summary": summary, "ok": bool(summary)}, sort_keys=True)
-                except Exception:
-                    return json.dumps({"summary": "", "ok": False}, sort_keys=True)
+        prompt = (
+            "You are a chess commentator analysing a finished game for the ChainMate dApp.\n"
+            f"Game result: {result_label}. Winner address: {winner_text}.\n"
+            f"Complete move history (SAN): {moves_text}\n"
+            "Write a 3-5 sentence game analysis: how the game developed, key moments, "
+            "turning points or blunders, and why the game ended as it did. "
+            "Do NOT invent moves that are not listed. "
+            "The winner field must be exactly " + repr(winner_text) + ".\n"
+            "Respond ONLY with valid JSON in this exact shape:\n"
+            '{"summary": "your analysis here", "winner": "' + winner_text + '"}\n'
+            "No markdown, no extra text."
+        )
 
-            def validator_fn(leader_result):
-                try:
-                    if not isinstance(leader_result, gl.vm.Return):
-                        return False
-                    leader = json.loads(leader_result.calldata)
-                    if leader.get("ok") is False:
-                        return True  # both sides failed — equivalent
-                    mine = json.loads(leader_fn())
-                    if mine.get("ok") is False:
-                        return True  # leader succeeded, we failed — leader ran first
-                    ls, ms = leader["summary"], mine["summary"]
-                    if not (80 <= len(ls) <= 2000 and 80 <= len(ms) <= 2000):
-                        return False
-                    if winner:
-                        return winner in ls and winner in ms
-                    return "draw" in ls.lower() and "draw" in ms.lower()
-                except Exception:
-                    return False
-
+        def leader_fn():
             try:
-                data = json.loads(gl.vm.run_nondet_unsafe(leader_fn, validator_fn))
-                return str(data.get("summary", "")) if data.get("ok") else ""
+                data = gl.nondet.exec_prompt(prompt, response_format="json")
+                if not isinstance(data, dict):
+                    return {"summary": "", "winner": ""}
+                return {
+                    "summary": str(data.get("summary", "")).strip(),
+                    "winner": str(data.get("winner", "")).strip(),
+                }
             except Exception:
-                return ""
+                return {"summary": "", "winner": ""}
 
-        def _build_deterministic_summary(self) -> str:
-            """Offline fallback analysis — always works, no LLM needed."""
-            total_ply = len(self.moves)
-            status = self.status
-            winner = self.winner
-            result_label = {
-                "checkmate": "checkmate", "stalemate": "stalemate",
-                "draw": "a draw", "resigned": "a resignation",
-            }.get(status, status)
-            captures = replay_captures(self.moves)
+        def validator_fn(leader_result):
+            try:
+                if not isinstance(leader_result, gl.vm.Return):
+                    return False
+                leader = leader_result.calldata
+                if not isinstance(leader, dict):
+                    return False
+                ls = str(leader.get("summary", "")).strip()
+                lw = str(leader.get("winner", "")).strip()
+                if not (80 <= len(ls) <= 2000):
+                    return False
+                mine = leader_fn()
+                ms = str(mine.get("summary", "")).strip()
+                mw = str(mine.get("winner", "")).strip()
+                if not (80 <= len(ms) <= 2000):
+                    return False
+                # Both validators must agree on the outcome they describe.
+                if winner:
+                    return lw == winner and mw == winner
+                return lw == "draw" and mw == "draw"
+            except Exception:
+                return False
 
-            sentences = []
-            if total_ply == 0:
-                sentences.append(f"The game ended by {result_label} without a single move being played.")
-            else:
-                sentences.append(f"The game lasted {total_ply} moves and ended by {result_label}.")
-            if captures:
-                sentences.append(f"There were {len(captures)} captures in the game.")
-            if winner:
-                side = "White" if winner == self.creator else "Black"
-                sentences.append(f"{side} ({winner[:10]}…) came out on top.")
-            else:
-                sentences.append("Neither player could force a win, so honours were shared.")
-            sentences.append("Both players can review the full move history and replay the game move by move.")
-            return " ".join(sentences)
+        try:
+            data = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+            if isinstance(data, dict) and data.get("summary"):
+                return str(data["summary"])
+        except Exception:
+            pass
+        return ""
+
+    def _build_deterministic_summary(self) -> str:
+        """Offline fallback analysis — always works, no LLM needed."""
+        total_ply = len(self.moves)
+        status = self.status
+        winner = self.winner
+        result_label = {
+            "checkmate": "checkmate", "stalemate": "stalemate",
+            "draw": "a draw", "resigned": "a resignation",
+        }.get(status, status)
+        captures = replay_captures(self.moves)
+
+        sentences = []
+        if total_ply == 0:
+            sentences.append(f"The game ended by {result_label} without a single move being played.")
+        else:
+            sentences.append(f"The game lasted {total_ply} moves and ended by {result_label}.")
+        if captures:
+            sentences.append(f"There were {len(captures)} captures in the game.")
+        if winner:
+            side = "White" if winner == self.creator else "Black"
+            sentences.append(f"{side} ({winner[:10]}…) came out on top.")
+        else:
+            sentences.append("Neither player could force a win, so honours were shared.")
+        sentences.append("Both players can review the full move history and replay the game move by move.")
+        return " ".join(sentences)

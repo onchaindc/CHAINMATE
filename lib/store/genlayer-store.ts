@@ -1,5 +1,6 @@
 "use client";
 
+import { getAuthIdentity, getGuestIdentity } from "@/lib/identity";
 import type { CreateGameOptions, GameState, GameStore } from "@/lib/types";
 
 /**
@@ -7,11 +8,19 @@ import type { CreateGameOptions, GameState, GameStore } from "@/lib/types";
  * lib/server/genlayer.ts) and state is read back from the contract.
  * Live updates come from polling get_game; on testnet a move typically
  * finalises in a few seconds (LLM-heavy calls longer).
+ *
+ * The server binds the game's White/Black to the browser identities that
+ * created/joined it; moves and resignations send only our own identity — the
+ * client never chooses a signing key (no caller-selected server key).
  */
 
-const SLOT_KEY = "chainmate:genlayer:slot";
 const MY_ID_KEY = "chainmate:genlayer:my-id";
 const POLL_MS = 2500;
+
+/** The app identity the server bound this game's slot to. */
+function myPlayerId(): string {
+  return getAuthIdentity()?.playerId ?? getGuestIdentity().playerId;
+}
 
 interface ApiResponse {
   game?: GameState;
@@ -47,9 +56,11 @@ export class GenLayerGameStore implements GameStore {
   private lastState = new Map<string, string>();
 
   async createGame(_options?: CreateGameOptions): Promise<GameState> {
-    const data = await api("/api/games", { method: "POST" });
+    const data = await api("/api/games", {
+      method: "POST",
+      body: JSON.stringify({ playerId: myPlayerId() }),
+    });
     if (!data.game) throw new Error("Failed to create game");
-    writeLocal(SLOT_KEY, "1");
     if (data.myId) writeLocal(MY_ID_KEY, data.myId);
     return data.game;
   }
@@ -61,10 +72,9 @@ export class GenLayerGameStore implements GameStore {
   async joinGame(id: string): Promise<GameState> {
     const data = await api(`/api/games/${encodeURIComponent(id)}`, {
       method: "POST",
-      body: JSON.stringify({ action: "join" }),
+      body: JSON.stringify({ action: "join", playerId: myPlayerId() }),
     });
     if (!data.game) throw new Error("Failed to join game");
-    writeLocal(SLOT_KEY, "2");
     if (data.myId) writeLocal(MY_ID_KEY, data.myId);
     return data.game;
   }
@@ -84,7 +94,7 @@ export class GenLayerGameStore implements GameStore {
       method: "POST",
       body: JSON.stringify({
         action: "move",
-        player: this.mySlot(),
+        playerId: myPlayerId(),
         move: { from, to, promotion },
       }),
     });
@@ -99,7 +109,7 @@ export class GenLayerGameStore implements GameStore {
   async resign(id: string): Promise<GameState> {
     const data = await api(`/api/games/${encodeURIComponent(id)}`, {
       method: "POST",
-      body: JSON.stringify({ action: "resign", player: this.mySlot() }),
+      body: JSON.stringify({ action: "resign", playerId: myPlayerId() }),
     });
     if (!data.game) throw new Error("Resignation failed");
     return data.game;
@@ -134,10 +144,6 @@ export class GenLayerGameStore implements GameStore {
     });
     if (!data.game) throw new Error("Summary generation failed");
     return data.game;
-  }
-
-  private mySlot(): 1 | 2 {
-    return readLocal(SLOT_KEY) === "2" ? 2 : 1;
   }
 
   subscribe(id: string, callback: (state: GameState) => void): () => void {

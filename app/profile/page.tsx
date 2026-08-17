@@ -107,7 +107,7 @@ export default function ProfilePage() {
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             {identity.isGuest
-              ? "Guest player — progress is saved on this device"
+              ? "Guest — casual play, nothing is saved. Sign up for a permanent record."
               : "ChainMate player — signed in and synced across devices"}
           </p>
         </div>

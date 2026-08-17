@@ -15,25 +15,17 @@ export const runtime = "nodejs";
 
 interface LinkBody {
   username?: string;
-  playerId?: string;
-  /**
-   * Guest → account upgrade mode. true (default): the guest's real stats,
-   * games and achievements carry into the permanent profile under the SAME
-   * player id. false: the account starts clean with a fresh identity and the
-   * default provisional rating — the guest's device history is left behind.
-   */
-  keepHistory?: boolean;
 }
 
 /**
- * POST /api/identity/link  { username, playerId }
+ * POST /api/identity/link  { username }
  * Authorization: Bearer <access_token>
  *
- * The guest → account upgrade. The anonymous player's real stats (ELO,
- * W/L/D, streaks, peak, achievements, games — all keyed by playerId in the
- * game store) are attached to the new Supabase profile. Nothing is reset,
- * duplicated or re-rolled: the same player id keeps playing, and the account
- * becomes the permanent record of that identity.
+ * Creates the account profile after the email code is verified. Accounts
+ * ALWAYS start fresh: the profile gets a brand-new player id with the
+ * default provisional rating (1200 / rd 350). Guest games are casual and
+ * never rated, so there is no guest history to carry over — the guest's
+ * device id stays on this device and is never merged.
  */
 export async function POST(req: NextRequest) {
   if (!supabaseConfigured()) {
@@ -89,14 +81,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: nameError }, { status: 400 });
   }
 
-  const playerId = typeof body.playerId === "string" ? body.playerId.trim() : "";
-  if (!playerId) {
-    return NextResponse.json(
-      { error: "Your player identity is missing. Refresh and try again." },
-      { status: 400 },
-    );
-  }
-
   if (!(await supabaseSchemaReady())) {
     return NextResponse.json(
       {
@@ -131,38 +115,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const keepHistory = body.keepHistory !== false;
-    if (!keepHistory) {
-      // "Start fresh": the account gets a brand-new identity with the
-      // default provisional rating (fresh stats, no guest games attached).
-      // The guest's old id stays on this device; nothing is merged or reset
-      // on the account side.
-      const freshPlayerId = `acct_${randomHex(8)}`;
-      const stats = await getPlayerStats(freshPlayerId); // defaults: 1200 / rd 350
-      const profile = await linkProfileToAccount({
-        userId,
-        playerId: freshPlayerId,
-        username,
-        stats,
-      });
-      await updatePlayerIdentity(freshPlayerId, { username, isGuest: false });
-      return NextResponse.json({ profile, playerId: freshPlayerId });
-    }
-
-    // "Keep history": carry the guest's real stats into the permanent profile
-    // under the same player id — one identity, nothing duplicated or reset.
-    const stats = await getPlayerStats(playerId);
+    // Always start fresh: a brand-new identity with the default provisional
+    // rating (fresh stats, no guest games attached). The guest's old id stays
+    // on this device; nothing is merged or reset on the account side.
+    const freshPlayerId = `acct_${randomHex(8)}`;
+    const stats = await getPlayerStats(freshPlayerId); // defaults: 1200 / rd 350
     const profile = await linkProfileToAccount({
       userId,
-      playerId,
+      playerId: freshPlayerId,
       username,
       stats,
     });
-
-    // The game store now knows this player by their chosen name.
-    await updatePlayerIdentity(playerId, { username, isGuest: false });
-
-    return NextResponse.json({ profile, playerId });
+    await updatePlayerIdentity(freshPlayerId, { username, isGuest: false });
+    return NextResponse.json({ profile, playerId: freshPlayerId });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "We couldn't save your profile. Please try again.";

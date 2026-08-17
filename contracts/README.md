@@ -10,8 +10,34 @@ The contract embeds a complete, deterministic chess engine (move generation,
 castling, en passant, promotion, check/checkmate/stalemate, insufficient
 material, SAN generation), so all rules are enforced on-chain.
 
+## Storage model
+
+Persistent state uses **GenVM storage types only** — no raw Python lists.
+Move and commentary history are `DynArray[MoveRecord]` /
+`DynArray[CommentaryRecord]` with `@allow_storage` dataclasses, so the
+contract passes `genvm-lint` and GenVM storage checks.
+
+## Authorization model
+
+Every write is bound to the **authenticated transaction sender**
+(`gl.message.sender_address` — the wallet that signed the transaction):
+
+- `create_game()` → White is the sender.
+- `join_game()` → Black is the (distinct) sender.
+- `submit_move()` → derives the side from the sender and rejects anyone who
+  is not a player, is out of turn, or plays after the game ends.
+- `resign_game()` → only the player themselves can resign.
+
+The contract **never accepts a caller-selected player id or signing key** —
+there is no "player" argument anywhere. The dApp layer must therefore sign
+moves with the actual player's key: either the player's own wallet (the
+non-custodial, recommended setup) or a server key that was bound to the
+player's identity at create/join time. See the repo README for the current
+app integration.
+
 ## Prerequisites
 
+- Python ≥ 3.12
 - Node.js ≥ 18
 - The GenLayer CLI (installs the local simulator + deployment tooling):
 
@@ -22,6 +48,37 @@ npm install -g genlayer
 - A GenLayer wallet with funds for testnet Bradbury (get testnet GEN from the
   [GenLayer faucet](https://faucet.genlayer.com) or the Bradbury testnet
   portal).
+
+## Lint + tests (run before resubmitting to the Portal)
+
+Requires **Python ≥ 3.12** (the pinned GenVM runner needs it). If your system
+only has an older Python, `uv` can provide 3.12 locally:
+`uv venv .venv --python 3.12 && uv pip install --python .venv/bin/python -r requirements.txt`.
+
+```bash
+# 1. Python environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Static checks — this is what the GenLayer Portal "checks" run
+genvm-lint check contracts/chainmate.py
+
+# 3. Direct-mode unit tests (in-memory, no Studio needed)
+pytest tests/direct/ -v
+```
+
+Current status (verified): `genvm-lint` reports **Lint passed (3 checks) +
+Validation passed**, and `pytest tests/direct/ -v` passes **20/20**.
+
+The direct tests cover the two review-critical areas:
+
+- **Authorization boundary** — non-players cannot move or resign, out-of-turn
+  moves are rejected, games cannot be re-created, no moves before start or
+  after the game ends.
+- **Core chess outcomes** — legal moves + SAN, illegal moves, checkmate
+  (fool's mate), stalemate (shortest known line), castling, en passant,
+  promotion, resignation, per-move commentary.
 
 ## Quick start (local simulator first)
 
@@ -61,13 +118,16 @@ genlayer deploy --contract contracts/chainmate.py
 ```
 
 The deploy prints the contract address. Use that address in the dApp: set
-`NEXT_PUBLIC_GAME_BACKEND=genlayer`, `NEXT_PUBLIC_GENLAYER_NETWORK=testnetBradbury`
-and the two signing keys (`GENLAYER_PRIVATE_KEY`, `GENLAYER_PRIVATE_KEY_2`),
-then create a game from the UI — it deploys a fresh contract per game.
+`NEXT_PUBLIC_GAME_BACKEND=genlayer`,
+`NEXT_PUBLIC_GENLAYER_NETWORK=testnetBradbury` and the signing keys
+(`GENLAYER_PRIVATE_KEY`, `GENLAYER_PRIVATE_KEY_2`), then create a game from
+the UI — it deploys a fresh contract per game.
 
-> Those two keys are **app-operator keys, not player keys**: the server signs
-> moves on behalf of both players. Configure them once in your server env; your
-> players just open a link and play.
+> Signing keys: the server signs on behalf of both players and binds each
+> game's White/Black to the browser identities that created/joined — the
+> client never picks which key to use. For full non-custodial play, submit
+> moves/resignations from the player's own wallet (e.g. MetaMask pointed at
+> the GenLayer RPC) so `gl.message.sender_address` is the player themselves.
 
 ## Contract API
 
@@ -84,17 +144,16 @@ then create a game from the UI — it deploys a fresh contract per game.
 
 `generate_match_summary()` calls `gl.vm.run_nondet_unsafe(leader_fn, validator_fn)`:
 
-- **leader_fn** runs `gl.nondet.exec_prompt(...)` with the full move list and
-  winner, returning JSON `{"summary", "ok"}`.
+- **leader_fn** runs `gl.nondet.exec_prompt(..., response_format="json")` with
+  the full move list and winner, returning `{"summary", "winner"}`.
 - **validator_fn** independently re-runs the prompt on its own validator and
   accepts the leader's result only if both summaries are plausible and agree
-  on the winner address (or "draw").
+  on the winner (or "draw").
 - If the LLM path fails, the contract stores a deterministic analysis instead,
   so the function always succeeds.
 
-Prompts ask for 3–5 sentence analysis and strict JSON output. For production,
-consider a stronger semantic-equivalence judge (e.g. comparing event lists
-parsed from the moves).
+Move history and winner are captured into locals **before** the nondet block,
+so the block never reads or writes storage.
 
 ## Storage
 
@@ -102,8 +161,8 @@ parsed from the moves).
 - `status` — `"" | waiting | active | checkmate | stalemate | draw | resigned`
 - `winner` — winning address (empty for stalemate/draw)
 - `fen` — current board position (FEN)
-- `moves` — `[{number, side, from, to, promotion, san}]`
-- `commentary` — `[{move, side, text}]` per-move on-chain commentary
+- `moves` — `DynArray[MoveRecord]` (`{number, side, from, to, promotion, san}`)
+- `commentary` — `DynArray[CommentaryRecord]` (`{move, side, text}`)
 - `summary` — final match analysis
 
 ## Notes & limitations

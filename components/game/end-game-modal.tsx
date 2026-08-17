@@ -209,12 +209,19 @@ export function EndGameModal({
           {playerCell("black")}
         </div>
 
-        {/* Computer games are casual by design — say so, don't leave it unexplained. */}
+        {/* Casual games are casual by design — say so, don't leave it unexplained. */}
         {isAiGame && (
           <p className="mt-2.5 text-center text-[11px] leading-snug text-muted-foreground">
             Casual match — games against the computer never change your rating.
           </p>
         )}
+        {!isAiGame &&
+          [game.creator, game.opponent].some((id) => stats[id]?.isGuest) && (
+            <p className="mt-2.5 text-center text-[11px] leading-snug text-muted-foreground">
+              Casual match — guest games never change a rating. Sign up for
+              rated play.
+            </p>
+          )}
 
         {/* Achievements actually earned in this game */}
         {unlocked.length > 0 && (

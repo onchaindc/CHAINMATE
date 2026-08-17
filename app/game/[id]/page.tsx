@@ -113,6 +113,35 @@ export default function GamePage() {
   }, []);
 
   /* ------------------------------------------------------------------ */
+  /* Mobile: keep the viewport steady while the board updates. Some     */
+  /* mobile browsers scroll the page when the board re-renders after a  */
+  /* move (layout/animation churn around the re-render). We capture the */
+  /* scroll position the moment the player makes their move and restore */
+  /* it the instant the new position lands — so the board never jumps   */
+  /* away mid-game on touch devices. Desktop is unaffected.             */
+  /* ------------------------------------------------------------------ */
+  const touchDeviceRef = useRef(false);
+  const pendingScrollRef = useRef<number | null>(null);
+  useEffect(() => {
+    touchDeviceRef.current = window.matchMedia("(pointer: coarse)").matches;
+  }, []);
+
+  const previousFenRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!game) return;
+    const fen = game.fen;
+    if (previousFenRef.current !== null && previousFenRef.current !== fen) {
+      // The position just changed (own move or opponent reply) — put the
+      // viewport back where the player left it before the move round-trip.
+      if (pendingScrollRef.current !== null) {
+        window.scrollTo({ top: pendingScrollRef.current, behavior: "instant" });
+        pendingScrollRef.current = null;
+      }
+    }
+    previousFenRef.current = fen;
+  }, [game?.fen]);
+
+  /* ------------------------------------------------------------------ */
   /* Post-game modal: appears automatically when the game ends.          */
   /* ------------------------------------------------------------------ */
   const [resultOpen, setResultOpen] = useState(false);
@@ -418,6 +447,9 @@ export default function GamePage() {
               inCheck={inCheck}
               lastMove={replayMode ? replayLastMove : lastMove}
               onMove={(from, to, promotion) => {
+                if (touchDeviceRef.current) {
+                  pendingScrollRef.current = window.scrollY;
+                }
                 void submitMove(from, to, promotion);
               }}
               busy={busy === "move"}

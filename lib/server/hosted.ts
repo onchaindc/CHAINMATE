@@ -232,6 +232,9 @@ async function enrichLive(entries: LiveRegistryEntry[]): Promise<LiveGameEntry[]
 function defaultStats(playerId: string): PlayerStats {
   return {
     playerId,
+    // Players without a persistent account profile are guests: they stay at
+    // the provisional 1200 and their games are casual (never rated).
+    isGuest: true,
     rating: START_RATING,
     rd: START_RD,
     lastPlayedAt: null,
@@ -325,11 +328,16 @@ export async function getLeaderboard(): Promise<PlayerStats[]> {
 }
 
 /**
- * Apply ELO ratings when a real game between two distinct human players
- * finishes. Runs exactly once per game (guarded by endedAt). Also updates
- * peak rating, win/loss streaks, per-game rating history and achievements —
- * all server-authoritative. Finally mirrors the results to Supabase when it
- * is configured (best-effort; Supabase problems never affect the game).
+ * Apply ELO ratings when a real rated game between two distinct human
+ * accounts finishes. Runs exactly once per game (guarded by endedAt). Also
+ * updates peak rating, win/loss streaks, per-game rating history and
+ * achievements — all server-authoritative. Finally mirrors the results to
+ * Supabase when it is configured (best-effort; Supabase problems never
+ * affect the game).
+ *
+ * Guests are guests: any game involving a guest is casual and never touches
+ * persistent ratings, streaks or achievements. Only two authenticated
+ * accounts produce a rated result.
  */
 async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise<void> {
   if (prev.endedAt || isGameOver(prev.status)) return;
@@ -341,6 +349,9 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   if (!p1 || !p2 || p1 === "ai" || p2 === "ai" || p1 === p2) return;
 
   const [s1, s2] = await Promise.all([getPlayerStats(p1), getPlayerStats(p2)]);
+  // Guests have no persistent record — their games stay casual.
+  if (s1.isGuest || s2.isGuest) return;
+
   const ratingBefore1 = s1.rating;
   const ratingBefore2 = s2.rating;
   let score1: number;

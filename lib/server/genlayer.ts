@@ -17,6 +17,7 @@ import {
 } from "genlayer-js/types";
 import type { Address } from "viem";
 import { GENLAYER_NETWORK, GENLAYER_RPC_URL } from "@/lib/config";
+import { getGameStorage } from "@/lib/server/storage";
 import type { GameState } from "@/lib/types";
 
 /**
@@ -26,7 +27,48 @@ import type { GameState } from "@/lib/types";
  * Signing keys come from server env vars:
  *   GENLAYER_PRIVATE_KEY    — player 1 (White / game creator), deploys games
  *   GENLAYER_PRIVATE_KEY_2  — player 2 (Black), optional second key
+ *
+ * The contract binds every move/resignation to the authenticated transaction
+ * sender. This wrapper never lets the caller choose a signing key: each game
+ * records which app identity created (White) and joined (Black) it, and the
+ * signing key is resolved server-side from that binding — the caller can only
+ * act as themselves.
  */
+
+/** game address → { creatorPlayerId, opponentPlayerId } (app identities). */
+const bindingKeyFor = (address: string) => `chainmate:genlayer:binding:${address}`;
+
+interface GameBinding {
+  creatorPlayerId: string;
+  opponentPlayerId: string;
+}
+
+async function readBinding(address: string): Promise<GameBinding | null> {
+  const raw = await getGameStorage().get(bindingKeyFor(address));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as GameBinding;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBinding(address: string, binding: GameBinding): Promise<void> {
+  await getGameStorage().set(bindingKeyFor(address), JSON.stringify(binding));
+}
+
+/**
+ * Resolve the server signing key for a player on a given game. The caller
+ * sends their own app identity (never a slot number): White is whoever
+ * created the game, Black is whoever joined — recorded server-side at those
+ * moments, so a client can never request the opponent's key.
+ */
+async function signerForPlayer(address: string, playerId: string): Promise<1 | 2> {
+  const binding = await readBinding(address);
+  if (binding && playerId && binding.creatorPlayerId === playerId) return 1;
+  if (binding && playerId && binding.opponentPlayerId === playerId) return 2;
+  throw new Error("You are not a player in this game");
+}
 
 const CONTRACT_PATH = path.join(process.cwd(), "contracts", "chainmate.py");
 
@@ -159,9 +201,12 @@ export async function deployChainMate(): Promise<{ address: string; myId: string
 }
 
 /** Full create flow: deploy a contract, then initialise it (deployer = White). */
-export async function createGameOnChain(): Promise<{ game: GameState; myId: string }> {
+export async function createGameOnChain(
+  playerId: string,
+): Promise<{ game: GameState; myId: string }> {
   const { address, myId } = await deployChainMate();
   const created = await writeGame(address, "create_game", [], 1);
+  await writeBinding(address, { creatorPlayerId: playerId, opponentPlayerId: "" });
   return { game: created, myId };
 }
 
@@ -173,8 +218,11 @@ export async function getGameOnChain(id: string): Promise<GameState | null> {
   }
 }
 
-export async function joinGameOnChain(id: string): Promise<GameState> {
-  return writeGame(id, "join_game", [], 2);
+export async function joinGameOnChain(id: string, playerId: string): Promise<GameState> {
+  const game = await writeGame(id, "join_game", [], 2);
+  const binding = (await readBinding(id)) ?? { creatorPlayerId: "", opponentPlayerId: "" };
+  await writeBinding(id, { ...binding, opponentPlayerId: playerId });
+  return game;
 }
 
 export async function submitMoveOnChain(
@@ -182,13 +230,15 @@ export async function submitMoveOnChain(
   from: string,
   to: string,
   promotion: string | undefined,
-  player: 1 | 2,
+  playerId: string,
 ): Promise<GameState> {
-  return writeGame(id, "submit_move", [from, to, promotion ?? ""], player);
+  const which = await signerForPlayer(id, playerId);
+  return writeGame(id, "submit_move", [from, to, promotion ?? ""], which);
 }
 
-export async function resignGameOnChain(id: string, player: 1 | 2): Promise<GameState> {
-  return writeGame(id, "resign_game", [], player);
+export async function resignGameOnChain(id: string, playerId: string): Promise<GameState> {
+  const which = await signerForPlayer(id, playerId);
+  return writeGame(id, "resign_game", [], which);
 }
 
 export async function generateSummaryOnChain(id: string): Promise<GameState> {

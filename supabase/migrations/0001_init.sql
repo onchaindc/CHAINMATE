@@ -5,9 +5,10 @@
 --
 -- Design notes:
 --  * player_id is the game-store identity (a device guest id or the account's
---    player id). user_id links the profile to Supabase Auth for accounts;
---    guests keep user_id NULL until they create an account (the guest →
---    account upgrade simply sets user_id on the same row).
+--    fresh `acct_…` player id). user_id links the profile to Supabase Auth
+--    for accounts; guests keep user_id NULL until they create an account.
+--    Accounts always start fresh — guest history is never merged, so an
+--    account's player_id is never a guest id.
 --  * All writes go through the service-role key (bypasses RLS). Clients can
 --    only SELECT — they can never edit ratings, results or achievements.
 
