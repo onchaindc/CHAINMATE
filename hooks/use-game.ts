@@ -5,7 +5,14 @@ import { describePosition, turnLabel, type PositionInfo } from "@/lib/chess";
 import { getStoreForId } from "@/lib/store";
 import type { GameState, GameStore, PlayerSide } from "@/lib/types";
 
-export type BusyAction = "join" | "move" | "resign" | "summary" | null;
+export type BusyAction =
+  | "join"
+  | "move"
+  | "resign"
+  | "draw-offer"
+  | "draw-respond"
+  | "summary"
+  | null;
 
 export function useGame(id: string) {
   const storeRef = useRef<GameStore | null>(null);
@@ -85,6 +92,15 @@ export function useGame(id: string) {
     () => runAction("resign", () => storeRef.current!.resign(id)),
     [id, runAction],
   );
+  const offerDraw = useCallback(
+    () => runAction("draw-offer", () => storeRef.current!.offerDraw(id)),
+    [id, runAction],
+  );
+  const respondDraw = useCallback(
+    (accept: boolean) =>
+      runAction("draw-respond", () => storeRef.current!.respondDraw(id, accept)),
+    [id, runAction],
+  );
   const generateSummary = useCallback(
     () => runAction("summary", () => storeRef.current!.generateSummary(id)),
     [id, runAction],
@@ -129,6 +145,8 @@ export function useGame(id: string) {
     submitMove,
     submitAiMove,
     resign,
+    offerDraw,
+    respondDraw,
     generateSummary,
   };
 }

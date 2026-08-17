@@ -65,7 +65,7 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
           </span>
         </div>
         <p className="mt-1 truncate font-mono text-[11px] tabular-nums text-muted-foreground">
-          Move {entry.moveCount}
+          Move {Math.floor(entry.moveCount / 2) + 1}
           {entry.timeControl ? ` · ${entry.timeControl}` : ""}
         </p>
       </div>
