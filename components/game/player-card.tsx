@@ -2,6 +2,7 @@
 
 import { Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { flagFor } from "@/lib/countries";
 import { cn } from "@/lib/utils";
 import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
 
@@ -14,6 +15,8 @@ interface PlayerCardProps {
   waiting?: boolean;
   /** Display name (username when known, otherwise the short player id). */
   name?: string;
+  /** ISO country code — renders the player's flag next to their name. */
+  country?: string;
   /** Current ELO rating when known (real server data). */
   rating?: number | null;
   /** Formatted clock ("08:42") when the game has a time control. */
@@ -31,6 +34,7 @@ export function PlayerCard({
   isTurn,
   waiting,
   name,
+  country,
   rating,
   clock,
   clockLow,
@@ -62,6 +66,11 @@ export function PlayerCard({
         </span>
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+            {country && (
+              <span className="shrink-0 text-sm leading-none" title={country}>
+                {flagFor(country)}
+              </span>
+            )}
             <span className="truncate capitalize">{displayName}</span>
             {isYou && (
               <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
@@ -91,7 +100,7 @@ export function PlayerCard({
             {active && (
               <span className="flex shrink-0 items-center gap-1.5 font-medium text-primary">
                 <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
-                to move
+                {side === "white" ? "White" : "Black"} to move
                 {inCheck && <span className="text-[#E07A5F]">· check</span>}
               </span>
             )}

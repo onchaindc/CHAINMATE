@@ -143,6 +143,9 @@ export function validateUsername(raw: string): string | null {
     "ai",
     "chess",
     "official",
+    "me",
+    "search",
+    "friends",
   ]);
   if (reserved.has(username.toLowerCase())) {
     return "That username is reserved.";

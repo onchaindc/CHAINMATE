@@ -10,11 +10,12 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { supabaseClientConfigured } from "@/lib/supabase/config";
+import type { Session } from "@supabase/supabase-js";
 import { getGuestIdentity, setAuthIdentity } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 type Mode = "guest" | "create" | "signin";
-type Step = "form" | "code" | "done";
+type Step = "form" | "code" | "migrate" | "done";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -121,6 +122,14 @@ function AuthContent() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Verified session awaiting the guest-history choice (create flow only). */
+  const [pendingSession, setPendingSession] = useState<Session | null>(null);
+  /** The guest's real device progress, fetched when the choice is shown. */
+  const [guestProgress, setGuestProgress] = useState<{
+    games: number;
+    rating: number;
+    achievements: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [usernameState, setUsernameState] = useState<
     "idle" | "checking" | "ok" | "taken" | "invalid"
@@ -177,6 +186,96 @@ function AuthContent() {
     return (message || "Something went wrong. Please try again.").replace(/^AuthApiError:\s*/i, "");
   }, []);
 
+  /**
+   * Finish authentication once the email code is verified: for account
+   * creation, ask the server to either carry the guest's real history into
+   * the new profile (keepHistory) or start a clean account. Stores the
+   * session, clears the one-time token, and redirects to the intended page.
+   */
+  const completeAuth = useCallback(
+    async (session: Session, keepHistory: boolean, targetOverride?: string) => {
+      if (mode === "create") {
+        const res = await fetch("/api/identity/link", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            username: username.trim(),
+            playerId: getGuestIdentity().playerId,
+            keepHistory,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          playerId?: string;
+        };
+        if (!res.ok) {
+          throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
+        }
+        setAuthIdentity({
+          userId: session.user.id,
+          playerId: body.playerId ?? getGuestIdentity().playerId,
+          username: username.trim(),
+          rating: 0,
+          accessToken: session.access_token,
+        });
+      } else {
+        // Sign-in: record the session; the identity provider resolves the profile.
+        setAuthIdentity({
+          userId: session.user.id,
+          playerId: getGuestIdentity().playerId,
+          username: "",
+          rating: 0,
+          accessToken: session.access_token,
+        });
+      }
+
+      clearPendingAuth();
+      setPendingSession(null);
+      // Drop any one-time token from the URL so a refresh never re-verifies it.
+      window.history.replaceState(null, "", "/auth");
+      setStep("done");
+      await identity.refresh();
+      const target =
+        targetOverride && targetOverride.startsWith("/") ? targetOverride : returnTo;
+      setTimeout(() => {
+        router.push(target.startsWith("/") ? target : "/profile");
+      }, 350);
+    },
+    [mode, username, returnTo, identity, router],
+  );
+
+  // When the guest-history choice is shown, load the guest's real progress
+  // so the buttons can say exactly what would be kept or left behind.
+  useEffect(() => {
+    if (step !== "migrate" || !pendingSession) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/hosted/players/me?playerId=${encodeURIComponent(getGuestIdentity().playerId)}`,
+        );
+        const data = (await res.json()) as {
+          stats?: { games?: number; rating?: number; achievements?: unknown[] };
+        };
+        if (!cancelled && data.stats) {
+          setGuestProgress({
+            games: data.stats.games ?? 0,
+            rating: data.stats.rating ?? 1200,
+            achievements: (data.stats.achievements ?? []).length,
+          });
+        }
+      } catch {
+        // progress stays null → generic copy
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, pendingSession]);
+
   const configured = supabaseClientConfigured();
   const guest = useMemo(() => getGuestIdentity(), []);
 
@@ -207,39 +306,17 @@ function AuthContent() {
 
         const pending = readPendingAuth();
         if (pending?.mode === "create" && pending.username) {
-          // Guest → account: carry all real progress into the new profile.
-          const res = await fetch("/api/identity/link", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ username: pending.username, playerId: guest.playerId }),
-          });
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          if (!res.ok) {
-            throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
-          }
-        } else {
-          setAuthIdentity({
-            userId: session.user.id,
-            playerId: guest.playerId,
-            username: "",
-            rating: 0,
-            accessToken: session.access_token,
-          });
+          // Account creation: ask whether the guest history should carry into
+          // the new profile before linking anything.
+          window.history.replaceState(null, "", "/auth");
+          setPendingSession(session);
+          setStep("migrate");
+          setBusy(false);
+          return;
         }
-
-        clearPendingAuth();
-        // Drop the one-time token from the URL so a refresh doesn't re-verify it.
-        window.history.replaceState(null, "", "/auth");
-        setStep("done");
-        await identity.refresh();
-        const target =
-          pending?.returnTo && pending.returnTo.startsWith("/") ? pending.returnTo : returnTo;
-        setTimeout(() => {
-          router.replace(target.startsWith("/") ? target : "/profile");
-        }, 250);
+        // Sign-in via magic link: existing account, complete directly.
+        await completeAuth(session, true, pending?.returnTo);
+        // (completeAuth redirects; nothing more to do here.)
       } catch (err) {
         setBusy(false);
         setError(friendlyAuthError(err));
@@ -351,41 +428,14 @@ function AuthContent() {
       if (!session) throw new Error("We couldn't start your session. Try again.");
 
       if (mode === "create") {
-        // Guest → account: carry all real progress into the new profile.
-        const res = await fetch("/api/identity/link", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            username: username.trim(),
-            playerId: guest.playerId,
-          }),
-        });
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        if (!res.ok) {
-          throw new Error(
-            body.error ?? "We couldn't save your profile. Please try again.",
-          );
-        }
-      } else {
-        // Sign-in: record the session; the identity provider resolves the profile.
-        setAuthIdentity({
-          userId: session.user.id,
-          playerId: guest.playerId,
-          username: "",
-          rating: 0,
-          accessToken: session.access_token,
-        });
+        // Account creation: ask whether the guest history should carry into
+        // the new profile before linking anything.
+        setPendingSession(session);
+        setStep("migrate");
+        return;
       }
-
-      clearPendingAuth();
-      setStep("done");
-      await identity.refresh();
-      setTimeout(() => {
-        router.push(returnTo.startsWith("/") ? returnTo : "/profile");
-      }, 350);
+      // Sign-in: existing account, complete directly.
+      await completeAuth(session, true);
     } catch (err) {
       setError(friendlyAuthError(err));
     } finally {
@@ -416,11 +466,12 @@ function AuthContent() {
         {upgrade && identity.isGuest && (
           <div className="mt-6 rounded-lg border border-border/70 bg-card/50 px-4 py-3 text-sm text-foreground/85">
             You&rsquo;re playing as <span className="font-mono text-primary">{identity.username || "Guest"}</span>
-            {identity.rating !== null ? (
-              <> — currently {identity.rating} ELO. Creating an account keeps your rating,
-              games and achievements.</>
+            {identity.rating !== null && identity.rating > 0 ? (
+              <> — currently {identity.rating} ELO. You&rsquo;ll choose whether to keep
+              your guest history or start fresh.</>
             ) : (
-              <> — creating an account keeps your games and progress.</>
+              <> — after verifying your email you&rsquo;ll choose whether to keep
+              your guest history or start fresh.</>
             )}
           </div>
         )}
@@ -555,6 +606,64 @@ function AuthContent() {
               Tip: if the email shows a <span className="text-foreground/80">Sign in</span>{" "}
               button instead of a code, click it — it opens this page and signs
               you in automatically.
+            </p>
+          </div>
+        ) : step === "migrate" && pendingSession ? (
+          <div className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">
+                Keep your guest history?
+              </h2>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                {guestProgress
+                  ? `This device has played ${guestProgress.games} game${
+                      guestProgress.games === 1 ? "" : "s"
+                    } as ${identity.username || "a guest"}${
+                      guestProgress.games > 0
+                        ? ` — ${guestProgress.rating} ELO, ${guestProgress.achievements} achievement${
+                            guestProgress.achievements === 1 ? "" : "s"
+                          }`
+                        : ""
+                    }.`
+                  : "This device has a guest identity with its own record."}{" "}
+                You decide what happens to it.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Button
+                className="w-full"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setError(null);
+                  void completeAuth(pendingSession, true).catch((err) => {
+                    setBusy(false);
+                    setError(friendlyAuthError(err));
+                  });
+                }}
+              >
+                Keep history
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setError(null);
+                  void completeAuth(pendingSession, false).catch((err) => {
+                    setBusy(false);
+                    setError(friendlyAuthError(err));
+                  });
+                }}
+              >
+                Start fresh
+              </Button>
+            </div>
+            <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
+              Keep history carries your rating, games and achievements into
+              your account. Start fresh creates a clean profile at 1200 ELO
+              and leaves the guest record on this device.
             </p>
           </div>
         ) : (

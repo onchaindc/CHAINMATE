@@ -9,12 +9,20 @@ import {
 } from "@/lib/supabase/db";
 import { validateUsername } from "@/lib/achievements";
 import { getPlayerStats, updatePlayerIdentity } from "@/lib/server/hosted";
+import { randomHex } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
 interface LinkBody {
   username?: string;
   playerId?: string;
+  /**
+   * Guest → account upgrade mode. true (default): the guest's real stats,
+   * games and achievements carry into the permanent profile under the SAME
+   * player id. false: the account starts clean with a fresh identity and the
+   * default provisional rating — the guest's device history is left behind.
+   */
+  keepHistory?: boolean;
 }
 
 /**
@@ -123,7 +131,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // The upgrade: carry the guest's real stats into the permanent profile.
+    const keepHistory = body.keepHistory !== false;
+    if (!keepHistory) {
+      // "Start fresh": the account gets a brand-new identity with the
+      // default provisional rating (fresh stats, no guest games attached).
+      // The guest's old id stays on this device; nothing is merged or reset
+      // on the account side.
+      const freshPlayerId = `acct_${randomHex(8)}`;
+      const stats = await getPlayerStats(freshPlayerId); // defaults: 1200 / rd 350
+      const profile = await linkProfileToAccount({
+        userId,
+        playerId: freshPlayerId,
+        username,
+        stats,
+      });
+      await updatePlayerIdentity(freshPlayerId, { username, isGuest: false });
+      return NextResponse.json({ profile, playerId: freshPlayerId });
+    }
+
+    // "Keep history": carry the guest's real stats into the permanent profile
+    // under the same player id — one identity, nothing duplicated or reset.
     const stats = await getPlayerStats(playerId);
     const profile = await linkProfileToAccount({
       userId,
@@ -135,7 +162,7 @@ export async function POST(req: NextRequest) {
     // The game store now knows this player by their chosen name.
     await updatePlayerIdentity(playerId, { username, isGuest: false });
 
-    return NextResponse.json({ profile });
+    return NextResponse.json({ profile, playerId });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "We couldn't save your profile. Please try again.";

@@ -178,7 +178,10 @@ export default function GamePage() {
     return () => {
       cancelled = true;
     };
-  }, [game?.id, game?.creator, game?.opponent]);
+    // Re-fetch the moment a game ends so the result modal shows the real
+    // rating deltas the server just applied (+X / −X), not the pre-game
+    // ratings. Same players — status/endedAt is what changed.
+  }, [game?.id, game?.creator, game?.opponent, game?.status, game?.endedAt]);
 
   const { white: whiteClock, black: blackClock, whiteMs, blackMs, whiteLow, blackLow } = useClocks(game);
 
@@ -397,6 +400,7 @@ export default function GamePage() {
             side="black"
             playerId={game.opponent}
             name={playerName(game.opponent)}
+            country={profiles[game.opponent]?.country}
             rating={playerRating(game.opponent)}
             clock={blackClock}
             clockLow={blackLow}
@@ -423,6 +427,7 @@ export default function GamePage() {
             side="white"
             playerId={game.creator}
             name={playerName(game.creator)}
+            country={profiles[game.creator]?.country}
             rating={playerRating(game.creator)}
             clock={whiteClock}
             clockLow={whiteLow}

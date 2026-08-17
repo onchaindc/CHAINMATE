@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Bot, Loader2, ShieldCheck, Users } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, ArrowRight, Bot, Loader2, Search, ShieldCheck, Swords, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getGameBackend } from "@/lib/config";
 import { getStore } from "@/lib/store";
+import { HostedGameStore } from "@/lib/store/hosted-store";
 import { AI_LEVELS, type AiDifficulty } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +38,73 @@ export default function CreateGamePage() {
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** True while matchmaking: registered in the seek pool, polling for a pair. */
+  const [seeking, setSeeking] = useState(false);
+  const mountedRef = useRef(true);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attemptsRef = useRef(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+      // Leaving the page cancels a pending search so the pool never rots.
+      if (seeking) void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
+    };
+  }, [seeking]);
+
+  /** Register in the seek pool, then poll for a compatible partner. */
+  const findOpponent = useCallback(async () => {
+    setError(null);
+    setBusy(true);
+    attemptsRef.current = 0;
+    try {
+      const store = getStore("hosted") as HostedGameStore;
+      const first = await store.seekMatch(timeControl);
+      if (!mountedRef.current) return;
+      if (first.status === "matched") {
+        router.push(`/game/${first.game.id}`);
+        return;
+      }
+      setBusy(false);
+      setSeeking(true);
+      const poll = () => {
+        pollTimer.current = setTimeout(async () => {
+          if (!mountedRef.current) return;
+          attemptsRef.current += 1;
+          // Give it ~15s, then fall back to the normal options.
+          if (attemptsRef.current >= 6) {
+            setSeeking(false);
+            void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
+            return;
+          }
+          try {
+            const result = await (getStore("hosted") as HostedGameStore).pollSeek();
+            if (result.status === "matched") {
+              setSeeking(false);
+              router.push(`/game/${result.game.id}`);
+              return;
+            }
+          } catch {
+            // transient — keep polling
+          }
+          poll();
+        }, 2500);
+      };
+      poll();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : "Failed to find an opponent");
+    }
+  }, [router, timeControl]);
+
+  const cancelSearch = useCallback(() => {
+    setSeeking(false);
+    setBusy(false);
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
+  }, []);
 
   const create = useCallback(async () => {
     setBusy(true);
@@ -72,6 +141,59 @@ export default function CreateGamePage() {
 
       <Card className="mt-8 animate-fade-in-up [animation-delay:80ms]">
         <CardContent className="space-y-5 p-5">
+          {/* Play online — live matchmaking with real players */}
+          <div className="flex flex-col gap-2">
+            <Button
+              onClick={() => void findOpponent()}
+              disabled={busy || seeking}
+              className="w-full"
+              size="lg"
+            >
+              {busy && !seeking ? (
+                <Loader2 className="animate-spin" aria-hidden />
+              ) : (
+                <Swords aria-hidden />
+              )}
+              {seeking
+                ? "Searching…"
+                : busy
+                  ? "Finding opponent…"
+                  : "Play online — find a match"}
+            </Button>
+            <p className="text-center text-[11px] leading-snug text-muted-foreground">
+              Pairs you with a live player of similar rating in the same time
+              control ({timeControl}). If no one is searching right now, you&rsquo;ll
+              see the options below instead.
+            </p>
+          </div>
+
+          {seeking && (
+            <div className="animate-fade-in-up flex flex-col items-center gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-4 py-5 text-center">
+              <Search className="h-5 w-5 animate-pulse-soft text-primary" aria-hidden />
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Searching for an opponent…
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  You&rsquo;re in the pool. The moment another player starts
+                  searching at a compatible rating, a rated match begins and
+                  this page takes you straight to it.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={cancelSearch}>
+                Cancel search
+              </Button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3" aria-hidden>
+            <span className="h-px flex-1 bg-border/70" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              or set up a game
+            </span>
+            <span className="h-px flex-1 bg-border/70" />
+          </div>
+
           {/* Mode — segmented control */}
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -250,6 +372,14 @@ export default function CreateGamePage() {
             </div>
             <ShieldCheck className="h-4 w-4 shrink-0 text-primary/70" aria-hidden />
           </div>
+
+          {/* Direct challenge — find a player and invite them */}
+          <Link
+            href="/profile"
+            className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+          >
+            Challenge a specific player <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
 
           {error && (
             <div className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">

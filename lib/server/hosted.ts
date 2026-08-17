@@ -3,11 +3,13 @@ import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
+import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
   gameSnapshotById,
   profileForPlayerId,
   recentGameSnapshots,
+  setPlayerCountry,
   upsertAchievements,
   upsertGameRecord,
   upsertGameSnapshot,
@@ -47,8 +49,6 @@ const STATS_PREFIX = "chainmate:player:";
 const INDEX_MAX = 400;
 const LEADERBOARD_MAX = 100;
 const LIVE_MAX = 24;
-const START_RATING = 1200;
-const K = 32;
 
 /* ------------------------------------------------------------------ */
 /* Games index                                                         */
@@ -201,6 +201,7 @@ async function livePlayerInfo(playerId: string): Promise<LivePlayerInfo> {
     id: playerId,
     name: stats.username,
     rating: stats.rating,
+    country: stats.country,
   };
 }
 
@@ -232,6 +233,8 @@ function defaultStats(playerId: string): PlayerStats {
   return {
     playerId,
     rating: START_RATING,
+    rd: START_RD,
+    lastPlayedAt: null,
     peakRating: START_RATING,
     wins: 0,
     losses: 0,
@@ -265,7 +268,10 @@ export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
           playerId,
           username: row.username,
           isGuest: row.is_guest,
+          country: row.country ?? undefined,
           rating: row.rating,
+          rd: row.rd ?? START_RD,
+          lastPlayedAt: row.last_played_at ?? null,
           peakRating: row.peak_rating,
           wins: row.wins,
           losses: row.losses,
@@ -343,12 +349,20 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   else score1 = 0;
   const score2 = 1 - score1;
 
-  const e1 = 1 / (1 + Math.pow(10, (s2.rating - s1.rating) / 400));
-  const e2 = 1 - e1;
-
+  // Glicko-1: both sides update atomically; the size of each change depends
+  // on the opponent's rating and both players' rating deviation (confidence).
+  // New/inactive players (high RD) move more; established players barely budge.
   const now = Date.now();
-  const rating1 = Math.max(100, Math.round(s1.rating + K * (score1 - e1)));
-  const rating2 = Math.max(100, Math.round(s2.rating + K * (score2 - e2)));
+  const result = glickoUpdate(
+    { rating: s1.rating, rd: s1.rd ?? START_RD, lastPlayedAt: s1.lastPlayedAt ?? null },
+    { rating: s2.rating, rd: s2.rd ?? START_RD, lastPlayedAt: s2.lastPlayedAt ?? null },
+    score1,
+    now,
+  );
+  const rating1 = result.a.rating;
+  const rating2 = result.b.rating;
+  const rd1 = result.a.rd;
+  const rd2 = result.b.rd;
 
   const applyStats = (
     s: PlayerStats,
@@ -356,8 +370,11 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
     before: number,
     oppBefore: number,
     rating: number,
+    rd: number,
   ) => {
     s.rating = rating;
+    s.rd = rd;
+    s.lastPlayedAt = now;
     s.peakRating = Math.max(s.peakRating, rating);
     s.games += 1;
     s.wins += score === 1 ? 1 : 0;
@@ -397,8 +414,8 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
     s.updatedAt = now;
   };
 
-  applyStats(s1, score1, ratingBefore1, ratingBefore2, rating1);
-  applyStats(s2, score2, ratingBefore2, ratingBefore1, rating2);
+  applyStats(s1, score1, ratingBefore1, ratingBefore2, rating1, rd1);
+  applyStats(s2, score2, ratingBefore2, ratingBefore1, rating2, rd2);
 
   await Promise.all([writeStats(s1), writeStats(s2)]);
 
@@ -422,17 +439,42 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
  */
 export async function updatePlayerIdentity(
   playerId: string,
-  update: { username?: string; isGuest?: boolean },
+  update: { username?: string; isGuest?: boolean; country?: string | null },
 ): Promise<PlayerStats> {
   const stats = await getPlayerStats(playerId);
   const next: PlayerStats = {
     ...stats,
     username: update.username ?? stats.username,
     isGuest: update.isGuest ?? stats.isGuest,
+    country:
+      update.country !== undefined
+        ? (update.country ?? undefined)
+        : stats.country,
     updatedAt: Date.now(),
   };
   await writeStats(next);
   return next;
+}
+
+/**
+ * Set (or clear) the player's optional country — display-only, mirrored to
+ * the persistent Supabase profile so it survives storage resets and shows
+ * on other devices.
+ */
+export async function updatePlayerCountry(
+  playerId: string,
+  country: string | null,
+): Promise<PlayerStats> {
+  const normalized = country && /^[A-Za-z]{2}$/.test(country) ? country.toUpperCase() : null;
+  const stats = await updatePlayerIdentity(playerId, { country: normalized });
+  if (supabaseConfigured()) {
+    try {
+      await setPlayerCountry(playerId, normalized);
+    } catch {
+      // best-effort — country is decorative, never blocks anything
+    }
+  }
+  return stats;
 }
 
 /* ------------------------------------------------------------------ */
@@ -856,4 +898,141 @@ export async function getPlayerProfile(playerId: string): Promise<{
     games.flatMap((g) => [g.creator, g.opponent]),
   );
   return { stats, games, players };
+}
+
+/* ------------------------------------------------------------------ */
+/* Matchmaking — live seek registry, rating-proximity pairing          */
+/* ------------------------------------------------------------------ */
+
+const SEEKERS_KEY = "chainmate:index:seekers:v1";
+const SEEK_RESULT_PREFIX = "chainmate:seeker:result:";
+/** Stale seekers are dropped after 5 minutes so the pool never rots. */
+const SEEKER_TTL_MS = 5 * 60 * 1000;
+
+export interface SeekerEntry {
+  playerId: string;
+  rating: number;
+  timeControl?: string;
+  seekedAt: number;
+}
+
+export type SeekResult =
+  | { status: "matched"; game: GameState }
+  | { status: "waiting" };
+
+async function readSeekers(): Promise<SeekerEntry[]> {
+  const raw = await getGameStorage().get(SEEKERS_KEY);
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw) as SeekerEntry[];
+    const now = Date.now();
+    return list.filter((s) => now - s.seekedAt < SEEKER_TTL_MS);
+  } catch {
+    return [];
+  }
+}
+
+async function writeSeekers(entries: SeekerEntry[]): Promise<void> {
+  await getGameStorage().set(SEEKERS_KEY, JSON.stringify(entries));
+}
+
+/**
+ * Register the player as actively seeking, then try to pair them with the
+ * closest compatible seeker. Pairing uses rating proximity: same time
+ * control preferred, closest rating wins, and the match is only made when
+ * the gap is reasonable for the player's confidence (provisional players
+ * match almost anyone; established players pair within ~300 points). The
+ * player who waited longer plays White. When a pair is found, a real rated
+ * hosted game starts immediately — nothing is faked or staged.
+ */
+export async function seekMatch(
+  playerId: string,
+  timeControl?: string,
+): Promise<SeekResult> {
+  const now = Date.now();
+  const seekers = await readSeekers();
+  const others = seekers.filter((s) => s.playerId !== playerId);
+  const me = await getPlayerStats(playerId);
+
+  const candidates = others.filter(
+    (s) => !timeControl || !s.timeControl || s.timeControl === timeControl,
+  );
+  let best: SeekerEntry | null = null;
+  let bestDiff = Infinity;
+  for (const c of candidates) {
+    const diff = Math.abs(c.rating - me.rating);
+    if (diff < bestDiff) {
+      best = c;
+      bestDiff = diff;
+    }
+  }
+  const maxDiff = (me.rd ?? START_RD) >= 250 ? 500 : 300;
+
+  if (best && bestDiff <= maxDiff) {
+    const game: GameState = {
+      id: `hosted_${randomHex(6)}`,
+      creator: best.playerId, // White — waited longer
+      opponent: playerId, // Black
+      status: "active",
+      winner: "",
+      fen: START_FEN,
+      moves: [],
+      commentary: [],
+      summary: "",
+      backend: "hosted",
+      timeControl: best.timeControl ?? timeControl,
+      visibility: "public",
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+    };
+    await writeGame(game);
+    // Both players leave the pool; the earlier seeker picks the game up
+    // through pollSeek (their seek call already returned "waiting").
+    await writeSeekers(others.filter((s) => s.playerId !== best!.playerId));
+    await getGameStorage().set(
+      `${SEEK_RESULT_PREFIX}${best.playerId}`,
+      JSON.stringify({ id: game.id }),
+    );
+    return { status: "matched", game };
+  }
+
+  await writeSeekers([...others, { playerId, rating: me.rating, timeControl, seekedAt: now }]);
+  return { status: "waiting" };
+}
+
+/**
+ * Check whether a pairing was created for this player (the other side's
+ * seek call may have matched while this player's poll was in flight), and
+ * recover from the two-simultaneous-seek race by re-entering the pool and
+ * trying to pair again — so two players who started searching at the same
+ * instant still get matched on the next poll.
+ */
+export async function pollSeek(playerId: string): Promise<SeekResult> {
+  const raw = await getGameStorage().get(`${SEEK_RESULT_PREFIX}${playerId}`);
+  if (raw) {
+    try {
+      const { id } = JSON.parse(raw) as { id: string };
+      const game = await getHostedGame(id);
+      if (game) {
+        await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`);
+        return { status: "matched", game };
+      }
+    } catch {
+      // corrupted result — treat as still waiting
+    }
+  }
+  // Still registered? Re-seek with the same time control (re-entering the
+  // pool is idempotent) so a simultaneous-seek race still ends in a match.
+  const seekers = await readSeekers();
+  const mine = seekers.find((s) => s.playerId === playerId);
+  if (mine) return seekMatch(playerId, mine.timeControl);
+  return { status: "waiting" };
+}
+
+/** Leave the seek pool (user cancelled or found an opponent elsewhere). */
+export async function cancelSeek(playerId: string): Promise<void> {
+  const seekers = await readSeekers();
+  await writeSeekers(seekers.filter((s) => s.playerId !== playerId));
+  await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`).catch(() => {});
 }
