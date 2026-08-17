@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Globe } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
+import { FriendsPanel } from "@/components/profile/friends-panel";
 import { GuestBanner } from "@/components/auth/guest-banner";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { COUNTRIES, countryName, flagFor } from "@/lib/countries";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
@@ -35,6 +37,8 @@ export default function ProfilePage() {
   // guest id otherwise.
   const playerId = identity.playerId;
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
+  const hostedStore = useMemo(() => getStore("hosted") as HostedGameStore, []);
+  const [savingCountry, setSavingCountry] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +72,7 @@ export default function ProfilePage() {
   const winRate =
     stats && stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : null;
   const streak = stats?.currentStreak ?? 0;
+  const country = stats?.country;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
@@ -75,6 +80,15 @@ export default function ProfilePage() {
         <PlayerAvatar name={name} size="lg" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
+            {country && (
+              <span
+                className="text-xl leading-none"
+                title={countryName(country) ?? undefined}
+                aria-label={countryName(country) ?? undefined}
+              >
+                {flagFor(country)}
+              </span>
+            )}
             <h1 className="font-display truncate text-2xl font-bold tracking-tight">{name}</h1>
             {identity.isGuest ? (
               <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -112,6 +126,41 @@ export default function ProfilePage() {
           <GuestBanner />
         </div>
       )}
+
+      {/* Optional country — editable, shown as a flag next to the name */}
+      <div className="mt-6 flex animate-fade-in-up items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3 [animation-delay:60ms]">
+        <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        <label
+          htmlFor="country"
+          className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+        >
+          Country
+        </label>
+        <select
+          id="country"
+          value={country ?? ""}
+          disabled={savingCountry}
+          onChange={(e) => {
+            const value = e.target.value;
+            setSavingCountry(true);
+            void hostedStore
+              .setCountry(value || null)
+              .then((next) =>
+                setStats((prev) => (prev ? { ...prev, country: next.country } : prev)),
+              )
+              .catch(() => setError("Couldn't save your country — try again."))
+              .finally(() => setSavingCountry(false));
+          }}
+          className="min-w-0 flex-1 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors focus:border-primary/50"
+        >
+          <option value="">No country</option>
+          {COUNTRIES.map((c) => (
+            <option key={c.code} value={c.code}>
+              {flagFor(c.code)} {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {error && (
         <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
@@ -185,6 +234,11 @@ export default function ProfilePage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Friends + player search */}
+      <div className="mt-10 animate-fade-in-up [animation-delay:140ms]">
+        <FriendsPanel store={hostedStore} />
       </div>
 
       {/* Recent games */}

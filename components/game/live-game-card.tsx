@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
+import { flagFor } from "@/lib/countries";
 import { cn } from "@/lib/utils";
 import { type LiveGameEntry } from "@/lib/types";
 
@@ -39,6 +40,11 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
             >
               ♔
             </span>
+            {white.country && (
+              <span className="shrink-0 text-sm leading-none" aria-hidden>
+                {flagFor(white.country)}
+              </span>
+            )}
             <span className="truncate font-medium text-foreground/90">{whiteName}</span>
             {typeof white.rating === "number" && (
               <span className="shrink-0 font-mono text-xs tabular-nums text-primary">
@@ -56,6 +62,11 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
             >
               ♚
             </span>
+            {black.country && (
+              <span className="shrink-0 text-sm leading-none" aria-hidden>
+                {flagFor(black.country)}
+              </span>
+            )}
             <span className="truncate font-medium text-foreground/90">{blackName}</span>
             {typeof black.rating === "number" && (
               <span className="shrink-0 font-mono text-xs tabular-nums text-primary">

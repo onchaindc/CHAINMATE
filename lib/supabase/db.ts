@@ -16,6 +16,12 @@ export interface ProfileRow {
   username: string;
   is_guest: boolean;
   rating: number;
+  /** Glicko rating deviation (confidence) — 350 provisional → 30 solid. */
+  rd: number;
+  /** Unix ms of the player's last rated game (drives RD decay). */
+  last_played_at: number | null;
+  /** Optional ISO 3166-1 alpha-2 country code (flag display only). */
+  country: string | null;
   peak_rating: number;
   wins: number;
   losses: number;
@@ -97,6 +103,9 @@ export async function upsertProfiles(statsList: PlayerStats[]): Promise<void> {
     username: s.username ?? `Guest_${s.playerId.slice(0, 4).toUpperCase()}`,
     is_guest: s.isGuest ?? true,
     rating: s.rating,
+    rd: s.rd ?? 350,
+    last_played_at: s.lastPlayedAt ?? null,
+    country: s.country ?? null,
     peak_rating: s.peakRating,
     wins: s.wins,
     losses: s.losses,
@@ -251,6 +260,9 @@ export async function linkProfileToAccount(input: {
     username: input.username,
     is_guest: false,
     rating: input.stats.rating,
+    rd: input.stats.rd ?? 350,
+    last_played_at: input.stats.lastPlayedAt ?? null,
+    country: input.stats.country ?? null,
     peak_rating: input.stats.peakRating,
     wins: input.stats.wins,
     losses: input.stats.losses,
@@ -270,4 +282,225 @@ export async function linkProfileToAccount(input: {
     throw new Error("We couldn't save your profile. Please try again.");
   }
   return data as unknown as ProfileRow;
+}
+
+/** Update the optional country flag on a player's profile (display only). */
+export async function setPlayerCountry(
+  playerId: string,
+  country: string | null,
+): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  await admin
+    .from("profiles")
+    .update({ country: country || null, updated_at: new Date().toISOString() })
+    .eq("player_id", playerId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Player search + public profiles                                     */
+/* ------------------------------------------------------------------ */
+
+export interface PlayerSearchResult {
+  player_id: string;
+  username: string;
+  is_guest: boolean;
+  rating: number;
+  country: string | null;
+  games: number;
+}
+
+/** Search ChainMate accounts by username fragment (case-insensitive). */
+export async function searchPlayersByUsername(
+  query: string,
+  limit = 10,
+): Promise<PlayerSearchResult[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin || query.trim().length < 1) return [];
+  const { data, error } = await admin
+    .from("profiles")
+    .select("player_id, username, is_guest, rating, country, games")
+    .ilike("username", `%${query.trim()}%`)
+    .order("rating", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  return data as unknown as PlayerSearchResult[];
+}
+
+/** Look up a profile by exact username (case-insensitive). */
+export async function playerProfileByUsername(
+  username: string,
+): Promise<ProfileRow | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("profiles")
+    .select("*")
+    .ilike("username", username)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as unknown as ProfileRow;
+}
+
+/* ------------------------------------------------------------------ */
+/* Friendships (persistent, server-written)                            */
+/* ------------------------------------------------------------------ */
+
+export type FriendshipStatus = "pending" | "accepted" | "rejected";
+
+export interface FriendshipRow {
+  requester_player_id: string;
+  addressee_player_id: string;
+  status: FriendshipStatus;
+  created_at: number;
+  responded_at: number | null;
+}
+
+async function friendshipBetween(
+  a: string,
+  b: string,
+): Promise<FriendshipRow | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("friendships")
+    .select("*")
+    .or(`requester_player_id.eq.${a},addressee_player_id.eq.${a}`)
+    .or(`requester_player_id.eq.${b},addressee_player_id.eq.${b}`)
+    .limit(4);
+  if (error || !data) return null;
+  const rows = data as unknown as FriendshipRow[];
+  return (
+    rows.find(
+      (r) =>
+        (r.requester_player_id === a && r.addressee_player_id === b) ||
+        (r.requester_player_id === b && r.addressee_player_id === a),
+    ) ?? null
+  );
+}
+
+/**
+ * The friendship status between two players from `me`'s perspective:
+ * "none" | "requested" (I asked) | "incoming" (they asked) | "friends".
+ */
+export async function friendshipStatus(
+  me: string,
+  other: string,
+): Promise<"none" | "requested" | "incoming" | "friends"> {
+  const row = await friendshipBetween(me, other);
+  if (!row) return "none";
+  if (row.status === "accepted") return "friends";
+  if (row.requester_player_id === me) return "requested";
+  return "incoming";
+}
+
+/** Send a friend request. Accepts silently when the other side already asked. */
+export async function requestFriend(
+  requesterId: string,
+  addresseeId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { ok: false, error: "Accounts aren't configured yet." };
+  if (requesterId === addresseeId) return { ok: false, error: "You can't add yourself." };
+
+  const existing = await friendshipBetween(requesterId, addresseeId);
+  if (existing?.status === "accepted") {
+    return { ok: false, error: "You're already friends." };
+  }
+  if (existing?.requester_player_id === requesterId && existing.status === "pending") {
+    return { ok: false, error: "Request already sent — waiting for a reply." };
+  }
+  if (existing?.addressee_player_id === requesterId && existing.status === "pending") {
+    // They asked first — just accept instead of stacking a duplicate.
+    await admin
+      .from("friendships")
+      .update({ status: "accepted", responded_at: Date.now() })
+      .eq("requester_player_id", addresseeId)
+      .eq("addressee_player_id", requesterId);
+    return { ok: true };
+  }
+
+  // Clear any stale row (rejected / old direction) so the pair stays unique.
+  await admin
+    .from("friendships")
+    .delete()
+    .or(`requester_player_id.eq.${requesterId},requester_player_id.eq.${addresseeId}`)
+    .or(`addressee_player_id.eq.${requesterId},addressee_player_id.eq.${addresseeId}`);
+
+  const { error } = await admin.from("friendships").insert({
+    requester_player_id: requesterId,
+    addressee_player_id: addresseeId,
+    status: "pending",
+    created_at: Date.now(),
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+/** Accept or reject a pending request addressed to `playerId`. */
+export async function respondFriend(
+  playerId: string,
+  otherId: string,
+  accept: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { ok: false, error: "Accounts aren't configured yet." };
+  const { error } = await admin
+    .from("friendships")
+    .update({ status: accept ? "accepted" : "rejected", responded_at: Date.now() })
+    .eq("requester_player_id", otherId)
+    .eq("addressee_player_id", playerId)
+    .eq("status", "pending");
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+/** Remove an accepted friendship (or cancel a pending request). */
+export async function removeFriend(
+  playerId: string,
+  otherId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { ok: false, error: "Accounts aren't configured yet." };
+  const { error } = await admin
+    .from("friendships")
+    .delete()
+    .or(`requester_player_id.eq.${playerId},requester_player_id.eq.${otherId}`)
+    .or(`addressee_player_id.eq.${playerId},addressee_player_id.eq.${otherId}`);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+/** All accepted friend player-ids for a player. */
+export async function listFriendIds(playerId: string): Promise<string[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return [];
+  const { data, error } = await admin
+    .from("friendships")
+    .select("*")
+    .or(`requester_player_id.eq.${playerId},addressee_player_id.eq.${playerId}`)
+    .eq("status", "accepted")
+    .limit(200);
+  if (error || !data) return [];
+  const rows = data as unknown as FriendshipRow[];
+  return rows.map((r) =>
+    r.requester_player_id === playerId ? r.addressee_player_id : r.requester_player_id,
+  );
+}
+
+/** Pending requests addressed to this player (from others). */
+export async function listIncomingRequests(playerId: string): Promise<string[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return [];
+  const { data, error } = await admin
+    .from("friendships")
+    .select("requester_player_id")
+    .eq("addressee_player_id", playerId)
+    .eq("status", "pending")
+    .limit(50);
+  if (error || !data) return [];
+  return (data as unknown as { requester_player_id: string }[]).map(
+    (r) => r.requester_player_id,
+  );
 }

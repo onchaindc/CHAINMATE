@@ -32,6 +32,13 @@ interface ApiResponse {
   stats?: PlayerStats;
   myId?: string;
   error?: string;
+  status?: "matched" | "waiting";
+  player?: PublicPlayer;
+  friendship?: "none" | "requested" | "incoming" | "friends";
+  friends?: PlayerStats[];
+  incoming?: PlayerStats[];
+  playersSearch?: SearchPlayerResult[];
+  ok?: boolean;
 }
 
 /** Display info for one player, as served by the games/profile APIs. */
@@ -39,8 +46,43 @@ export interface PlayerInfo {
   id: string;
   name?: string;
   rating?: number;
+  /** ISO country code when the player set one (for flags). */
+  country?: string;
   isAi?: boolean;
 }
+
+/** A player's public profile (as served by /api/players/[username]). */
+export interface PublicPlayer {
+  playerId: string;
+  username: string;
+  isGuest: boolean;
+  country: string | null;
+  rating: number;
+  peakRating: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  games: number;
+  currentStreak: number;
+  bestStreak: number;
+  createdAt: string;
+}
+
+/** One row from the username search. */
+export interface SearchPlayerResult {
+  player_id: string;
+  username: string;
+  is_guest: boolean;
+  rating: number;
+  country: string | null;
+  games: number;
+}
+
+export type SeekResult =
+  | { status: "matched"; game: GameState }
+  | { status: "waiting" };
+
+export type FriendshipAction = "request" | "accept" | "decline" | "remove";
 
 function getMyPlayerId(): string {
   // Persistent per-device identity (lib/identity.ts): the same player on
@@ -302,5 +344,107 @@ export class HostedGameStore implements GameStore {
       games: data.games ?? [],
       players,
     };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Matchmaking — find a live opponent (real pairing, not a fake queue)  */
+  /* ------------------------------------------------------------------ */
+
+  /** Register as seeking, or get matched instantly when a partner waits. */
+  async seekMatch(timeControl?: string): Promise<SeekResult> {
+    const data = await api("/api/matchmaking/seek", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId(), timeControl }),
+    });
+    return data as SeekResult;
+  }
+
+  /** Check whether a pairing appeared since the last seek call. */
+  async pollSeek(): Promise<SeekResult> {
+    const data = await api(
+      `/api/matchmaking/status?playerId=${encodeURIComponent(getMyPlayerId())}`,
+    );
+    return data as SeekResult;
+  }
+
+  /** Leave the seek pool (user cancelled or gave up). */
+  async cancelSeek(): Promise<void> {
+    await api("/api/matchmaking/cancel", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId() }),
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Player search, public profiles & friends                             */
+  /* ------------------------------------------------------------------ */
+
+  /** Search ChainMate accounts by username fragment. */
+  async searchPlayers(q: string): Promise<SearchPlayerResult[]> {
+    const data = await api(`/api/players/search?q=${encodeURIComponent(q)}`);
+    return data.playersSearch ?? [];
+  }
+
+  /** Load another player's public profile (+ friendship status with me). */
+  async publicProfile(username: string): Promise<{
+    player: PublicPlayer;
+    stats: PlayerStats;
+    games: GameState[];
+    players: Record<string, PlayerInfo>;
+    friends: PlayerStats[];
+    friendship: "none" | "requested" | "incoming" | "friends";
+  }> {
+    const params = new URLSearchParams({ viewer: getMyPlayerId() });
+    const data = await api(`/api/players/${encodeURIComponent(username)}?${params}`);
+    if (!data.player) throw new Error("Player not found");
+    return {
+      player: data.player,
+      stats:
+        data.stats ??
+        ({
+          playerId: data.player.playerId,
+          rating: data.player.rating,
+          peakRating: data.player.peakRating,
+          wins: data.player.wins,
+          losses: data.player.losses,
+          draws: data.player.draws,
+          games: data.player.games,
+          currentStreak: data.player.currentStreak,
+          bestStreak: data.player.bestStreak,
+          ratingHistory: [],
+          achievements: [],
+          updatedAt: 0,
+        } as PlayerStats),
+      games: data.games ?? [],
+      players: (data.players ?? {}) as Record<string, PlayerInfo>,
+      friends: data.friends ?? [],
+      friendship: data.friendship ?? "none",
+    };
+  }
+
+  /** My accepted friends + incoming requests. */
+  async friends(): Promise<{ friends: PlayerStats[]; incoming: PlayerStats[] }> {
+    const data = await api(
+      `/api/friends?playerId=${encodeURIComponent(getMyPlayerId())}`,
+    );
+    return { friends: data.friends ?? [], incoming: data.incoming ?? [] };
+  }
+
+  /** Send / accept / decline / remove a friendship with another player. */
+  async friendAction(action: FriendshipAction, otherId: string): Promise<void> {
+    await api("/api/friends", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId(), otherId, action }),
+    });
+  }
+
+  /** Set (or clear) the optional country flag on my profile. */
+  async setCountry(country: string | null): Promise<PlayerStats> {
+    const data = await api("/api/players/me", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId(), country }),
+    });
+    if (!data.stats) throw new Error("Failed to update profile");
+    return data.stats;
   }
 }

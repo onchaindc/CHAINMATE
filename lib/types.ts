@@ -130,7 +130,13 @@ export interface PlayerStats {
   username?: string;
   /** True while the player is an anonymous guest (provisional rating). */
   isGuest?: boolean;
+  /** ISO 3166-1 alpha-2 country code when the player set one (optional). */
+  country?: string;
   rating: number;
+  /** Glicko rating deviation — confidence in the rating (30 solid → 350 new). */
+  rd?: number;
+  /** Unix ms of the player's last rated game (drives rating confidence decay). */
+  lastPlayedAt?: number | null;
   /** Highest rating ever reached (tracked server-side). */
   peakRating: number;
   wins: number;
@@ -154,6 +160,8 @@ export interface LivePlayerInfo {
   name?: string;
   /** Current ELO rating (always present for real players). */
   rating?: number;
+  /** ISO country code when the player set one (for flags). */
+  country?: string;
   isAi?: boolean;
 }
 

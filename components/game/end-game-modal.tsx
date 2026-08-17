@@ -125,7 +125,11 @@ export function EndGameModal({
     const isAi = id === AI_PLAYER_ID;
     const line = ratingLine(id);
     const isViewer = id === myPlayerId;
-    const name = isAi ? aiLevelFor(game.aiDifficulty).name : isViewer ? "You" : undefined;
+    const name = isAi
+      ? aiLevelFor(game.aiDifficulty).name
+      : isViewer
+        ? "You"
+        : stats[id]?.username ?? "Guest";
     return (
       <div className={side === "white" ? "min-w-0 text-left" : "min-w-0 text-right"}>
         <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">
