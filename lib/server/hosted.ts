@@ -5,9 +5,12 @@ import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/
 import { buildRuleSummary } from "@/lib/summary";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
+  gameSnapshotById,
   profileForPlayerId,
+  recentGameSnapshots,
   upsertAchievements,
   upsertGameRecord,
+  upsertGameSnapshot,
   upsertProfiles,
 } from "@/lib/supabase/db";
 import {
@@ -68,12 +71,28 @@ function entryFromGame(game: GameState): GameIndexEntry {
 
 async function readIndex(): Promise<GameIndexEntry[]> {
   const raw = await getGameStorage().get(INDEX_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw) as GameIndexEntry[];
-  } catch {
-    return [];
+  if (raw) {
+    try {
+      return JSON.parse(raw) as GameIndexEntry[];
+    } catch {
+      // corrupted — rebuild from the database below
+    }
   }
+  // Fast store miss (cold start / storage reset): rebuild the index from the
+  // durable Supabase snapshots so Games / Watch / homepage keep working.
+  if (supabaseConfigured()) {
+    try {
+      const games = await recentGameSnapshots(INDEX_MAX);
+      if (games.length > 0) {
+        const entries = games.map(entryFromGame);
+        await getGameStorage().set(INDEX_KEY, JSON.stringify(entries));
+        return entries;
+      }
+    } catch {
+      // Best-effort — Supabase problems never break the game flow.
+    }
+  }
+  return [];
 }
 
 async function upsertIndex(entry: GameIndexEntry): Promise<void> {
@@ -108,12 +127,36 @@ interface LiveRegistryEntry {
 
 async function readLiveRegistry(): Promise<LiveRegistryEntry[]> {
   const raw = await getGameStorage().get(LIVE_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw) as LiveRegistryEntry[];
-  } catch {
-    return [];
+  if (raw) {
+    try {
+      return JSON.parse(raw) as LiveRegistryEntry[];
+    } catch {
+      // corrupted — rebuild from the database below
+    }
   }
+  // Fast store miss: re-derive the live feed from durable active snapshots.
+  if (supabaseConfigured()) {
+    try {
+      const games = await recentGameSnapshots(LIVE_MAX, "active");
+      if (games.length > 0) {
+        const entries: LiveRegistryEntry[] = games.map((g) => ({
+          id: g.id,
+          creator: g.creator,
+          opponent: g.opponent,
+          visibility: g.visibility === "private" ? "private" : "public",
+          timeControl: g.timeControl,
+          moveCount: g.moves.length,
+          startedAt: g.startedAt,
+          updatedAt: g.updatedAt ?? Date.now(),
+        }));
+        await writeLiveRegistry(entries);
+        return entries;
+      }
+    } catch {
+      // Best-effort
+    }
+  }
+  return [];
 }
 
 async function writeLiveRegistry(entries: LiveRegistryEntry[]): Promise<void> {
@@ -406,6 +449,16 @@ async function writeGame(game: GameState): Promise<void> {
   } else {
     await removeLive(game.id);
   }
+  // Durability: mirror the full state to Supabase so a mid-game cold start
+  // or storage reset can never turn into "Game not found" (restored in
+  // getHostedGame). Best-effort — the game store stays the source of truth.
+  if (supabaseConfigured()) {
+    try {
+      await upsertGameSnapshot(game);
+    } catch {
+      // Supabase hiccups must never break a chess move.
+    }
+  }
 }
 
 /** Record when a move was played — powers the real chess clocks. */
@@ -488,13 +541,30 @@ async function resolveTimeout(game: GameState): Promise<GameState> {
 
 export async function getHostedGame(id: string): Promise<GameState | null> {
   const raw = await getGameStorage().get(keyFor(id));
-  if (!raw) return null;
-  let game: GameState;
-  try {
-    game = JSON.parse(raw) as GameState;
-  } catch {
-    return null;
+  let game: GameState | null = null;
+  if (raw) {
+    try {
+      game = JSON.parse(raw) as GameState;
+    } catch {
+      game = null;
+    }
   }
+  if (!game) {
+    // Fast store miss (cold start, instance switch, storage reset): restore
+    // the game from the durable Supabase snapshot and re-seed local storage
+    // so the match keeps playing exactly where it left off.
+    if (supabaseConfigured()) {
+      try {
+        game = await gameSnapshotById(id);
+        if (game) {
+          await writeGame(game);
+        }
+      } catch {
+        // Best-effort
+      }
+    }
+  }
+  if (!game) return null;
   // A flag fall may have happened since the last write — settle it now.
   return resolveTimeout(game);
 }

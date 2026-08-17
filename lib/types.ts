@@ -2,8 +2,43 @@
 
 export type GameBackend = "local" | "hosted" | "genlayer";
 
-/** Strength preset for the built-in on-device chess AI. */
-export type AiDifficulty = "casual" | "competitive";
+/** Strength preset for the built-in chess AI opponent. */
+export type AiDifficulty = "beginner" | "casual" | "club" | "advanced" | "expert";
+
+/** One named computer opponent — a real name and rating, chess.com-style. */
+export interface AiLevel {
+  id: AiDifficulty;
+  /** Display name of this computer opponent. */
+  name: string;
+  /** Rating the computer plays at (display only — computer games are casual). */
+  rating: number;
+  /** Short player-facing description. */
+  blurb: string;
+  /** Search depth in ply — higher is stronger (and slower). */
+  depth: number;
+  /** Chance the computer plays a random legal move instead of its best. */
+  blunderChance: number;
+}
+
+export const AI_LEVELS: AiLevel[] = [
+  { id: "beginner", name: "Pawn", rating: 600, blurb: "New to the game — hangs pieces you can punish.", depth: 1, blunderChance: 0.3 },
+  { id: "casual", name: "Nova", rating: 900, blurb: "A relaxed club player who makes the odd slip.", depth: 1, blunderChance: 0.12 },
+  { id: "club", name: "Atlas", rating: 1200, blurb: "Solid fundamentals — punishes blunders.", depth: 2, blunderChance: 0.06 },
+  { id: "advanced", name: "Onyx", rating: 1600, blurb: "Sharp tactical play with few mistakes.", depth: 2, blunderChance: 0.02 },
+  { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless — bring your A-game.", depth: 3, blunderChance: 0 },
+];
+
+/** Map any stored difficulty value (incl. legacy ids) onto a known level. */
+export function normalizeAiDifficulty(d?: string): AiDifficulty {
+  if (d === "competitive") return "advanced"; // legacy id from older builds
+  if (d && AI_LEVELS.some((l) => l.id === d)) return d as AiDifficulty;
+  return "casual";
+}
+
+/** Full level info for a stored difficulty value (with legacy fallback). */
+export function aiLevelFor(d?: string): AiLevel {
+  return AI_LEVELS.find((l) => l.id === normalizeAiDifficulty(d)) ?? AI_LEVELS[1];
+}
 
 /** The opponent id used by single-player games (plays Black). */
 export const AI_PLAYER_ID = "ai";

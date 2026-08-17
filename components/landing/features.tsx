@@ -3,7 +3,7 @@ const FEATURES = [
     index: "01",
     title: "Play",
     description:
-      "Competitive matches with familiar chess controls. Create a game, share the link, and play from any device — or challenge the on-device AI.",
+      "Competitive matches with familiar chess controls. Create a game, share the link, and play from any device — or challenge the computer.",
   },
   {
     index: "02",

@@ -2,7 +2,7 @@
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseConfigured } from "@/lib/supabase/config";
-import type { GameState, PlayerStats } from "@/lib/types";
+import type { GameState, GameStatus, PlayerStats } from "@/lib/types";
 
 /**
  * Trusted writes to the Supabase persistence layer. Every function is
@@ -113,15 +113,6 @@ export async function upsertProfiles(statsList: PlayerStats[]): Promise<void> {
 export async function upsertGameRecord(game: GameState): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  // The real termination reason, never guessed from the winner alone.
-  const result: Record<string, string> = {
-    checkmate: "checkmate",
-    stalemate: "stalemate",
-    draw: "draw",
-    resigned: "resignation",
-    timeout: "timeout",
-    aborted: "aborted",
-  };
   await admin.from("games").upsert(
     {
       id: game.id,
@@ -129,7 +120,7 @@ export async function upsertGameRecord(game: GameState): Promise<void> {
       black_player_id: game.opponent || "",
       time_control: game.timeControl ?? null,
       status: game.status,
-      result: result[game.status] ?? game.status,
+      result: resultLabel(game.status),
       winner_player_id: game.winner || "",
       created_at: game.createdAt ?? Date.now(),
       started_at: game.startedAt ?? null,
@@ -139,6 +130,94 @@ export async function upsertGameRecord(game: GameState): Promise<void> {
     },
     { onConflict: "id" },
   );
+}
+
+/** The real termination reason, never guessed from the winner alone. */
+function resultLabel(status: GameStatus): string {
+  const result: Record<string, string> = {
+    checkmate: "checkmate",
+    stalemate: "stalemate",
+    draw: "draw",
+    resigned: "resignation",
+    timeout: "timeout",
+    aborted: "aborted",
+  };
+  return result[status] ?? status;
+}
+
+/**
+ * Mirror the FULL game state (live or finished) into the games table. This is
+ * the durability layer for multiplayer: every mutation writes a snapshot here
+ * best-effort, and the server restores the game from this table when the fast
+ * store (KV / file store) misses it — so a serverless cold start or storage
+ * reset can never produce a mid-game "Game not found".
+ */
+export async function upsertGameSnapshot(game: GameState): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  await admin.from("games").upsert(
+    {
+      id: game.id,
+      white_player_id: game.creator,
+      black_player_id: game.opponent || "",
+      time_control: game.timeControl ?? null,
+      status: game.status,
+      result: resultLabel(game.status),
+      winner_player_id: game.winner || "",
+      created_at: game.createdAt ?? Date.now(),
+      started_at: game.startedAt ?? null,
+      ended_at: game.endedAt ?? null,
+      moves: JSON.stringify(game.moves),
+      summary: game.summary || "",
+      snapshot: JSON.stringify(game),
+    },
+    { onConflict: "id" },
+  );
+}
+
+function parseSnapshot(raw: unknown): GameState | null {
+  if (typeof raw !== "string") return null;
+  try {
+    return JSON.parse(raw) as GameState;
+  } catch {
+    return null;
+  }
+}
+
+/** Restore a full game by id from the snapshot table (null when absent). */
+export async function gameSnapshotById(id: string): Promise<GameState | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("games")
+    .select("snapshot")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return parseSnapshot(data.snapshot);
+}
+
+/** Recent game snapshots (newest first), optionally filtered by status. */
+export async function recentGameSnapshots(
+  limit: number,
+  status?: GameStatus,
+): Promise<GameState[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return [];
+  let q = admin
+    .from("games")
+    .select("snapshot")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (status) q = q.eq("status", status);
+  const { data, error } = await q;
+  if (error || !data) return [];
+  const out: GameState[] = [];
+  for (const row of data) {
+    const game = parseSnapshot(row.snapshot);
+    if (game) out.push(game);
+  }
+  return out;
 }
 
 /** Persist awarded achievements for a player (trusted server-side records). */

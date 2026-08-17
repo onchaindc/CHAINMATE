@@ -34,7 +34,7 @@ import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
-import { AI_PLAYER_ID, isGameOver, type PlayerStats } from "@/lib/types";
+import { AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type MobileTab = "moves" | "analysis" | "info";
@@ -152,7 +152,11 @@ export default function GamePage() {
   const [profiles, setProfiles] = useState<Record<string, PlayerStats>>({});
 
   useEffect(() => {
-    if (!game || !isHostedGameId(game.id)) return;
+    if (!game) return;
+    // Fetch real ratings for both humans — hosted games, solo games against
+    // the computer, and local two-player games alike. The server is the
+    // authority: guests get provisional 1200, accounts get their persisted
+    // rating (never a hardcoded default).
     const ids = [game.creator, game.opponent].filter((p) => p && p !== AI_PLAYER_ID);
     if (ids.length === 0) return;
     let cancelled = false;
@@ -274,10 +278,18 @@ export default function GamePage() {
     : "Set NEXT_PUBLIC_AI_ENABLED=true and an AI_API_KEY to unlock deeper LLM commentary.";
 
   const playerName = (playerId: string) => {
+    // The computer opponent is a named player, chess.com-style.
+    if (playerId === AI_PLAYER_ID) return aiLevelFor(game?.aiDifficulty).name;
     if (playerId === myId) return identity.username || undefined;
     return profiles[playerId]?.username;
   };
-  const playerRating = (playerId: string) => profiles[playerId]?.rating ?? null;
+  const playerRating = (playerId: string) => {
+    // Computer opponents carry the rating of their difficulty level.
+    if (playerId === AI_PLAYER_ID) return aiLevelFor(game?.aiDifficulty).rating;
+    // Humans always have a rating — real value when known, provisional 1200
+    // for guests / before the profile fetch resolves.
+    return profiles[playerId]?.rating ?? 1200;
+  };
 
   const inCheck = pos?.inCheck ?? false;
 
@@ -559,7 +571,7 @@ export default function GamePage() {
                       : game.status === "active" && drawSupported && drawOfferFromOpponent
                         ? "Opponent offered a draw — accept or decline above."
                         : game.status === "active" && aiThinking
-                          ? "The engine is thinking…"
+                          ? `${aiLevelFor(game?.aiDifficulty).name} is thinking…`
                           : game.status === "active" && !myTurn
                             ? "Waiting for your opponent to move…"
                             : game.status === "active" && myTurn
