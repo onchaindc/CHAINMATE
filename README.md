@@ -75,23 +75,26 @@ To play on the actual GenLayer chain, see
 ## Player accounts (identity & progression)
 
 ChainMate has a permanent identity layer built on **Supabase** (email
-magic-link / one-time-code auth, Postgres profiles, achievements, game
-history) — fully optional and key-gated:
+one-time-code auth, Postgres profiles, achievements, game history) — fully
+optional and key-gated:
 
-- **Everyone starts as a guest.** A persistent per-device identity
-  (`Guest_XXXX`) is created automatically: games, ELO, streaks and
-  achievements accumulate with zero setup, and survive refreshes.
-- **Save your progress.** From the navbar menu (or the banner on
+- **Guests are guests.** A per-device identity (`Guest_XXXX`) is created so
+  a live hosted game survives a refresh, but guest games are **casual**:
+  they never touch ratings, streaks, achievements or any persistent record.
+  A guest's rating stays at the provisional 1200 with zero games — nothing
+  is hardcoded or accumulated on their behalf.
+- **Accounts start fresh.** From the navbar menu (or the banner on
   Games/Profile) a guest creates an account with a username + email. The
-  one-time code signs them in, and the upgrade **carries the guest's real
-  rating, games, streaks and achievements into the new profile** — nothing
-  is reset, duplicated or re-rolled.
+  one-time code signs them in and the server creates a **brand-new profile
+  at 1200 ELO** with its own player id — guest history is never merged,
+  imported or carried over.
 - **Signed-in players** keep their account games across devices; sign-in
   sessions persist across refreshes.
-- **Ratings & achievements are server-authoritative**: ELO (1200 start,
-  K=32), peak rating, win/loss streaks and the 10 achievement codes are
-  computed and written only by the server from completed rated games. The
-  client can never edit them.
+- **Ratings & achievements are server-authoritative**: Glicko-1 (1200
+  start, rating deviation 350 → 30), peak rating, win/loss streaks and the
+  10 achievement codes are computed and written only by the server from
+  completed rated games between two signed-in accounts. The client can
+  never edit them.
 
 ### Enabling accounts (optional)
 
@@ -110,9 +113,10 @@ history) — fully optional and key-gated:
 4. Redeploy. Until these keys exist the app simply stays in guest mode —
    everything else keeps working.
 
-Without Supabase keys, guests still get persistent identities, ratings,
-streaks, achievements and game history (backed by the game store); the
-account layer is what unlocks username + cross-device identity.
+Without Supabase keys, guests still get a stable per-device id (so a live
+match survives a refresh), but their games stay casual and nothing is
+rated or recorded; the account layer is what unlocks username, a persistent
+rating and cross-device history.
 
 ---
 

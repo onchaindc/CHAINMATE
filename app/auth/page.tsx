@@ -15,7 +15,7 @@ import { getGuestIdentity, setAuthIdentity } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 type Mode = "guest" | "create" | "signin";
-type Step = "form" | "code" | "migrate" | "done";
+type Step = "form" | "code" | "done";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -122,14 +122,6 @@ function AuthContent() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  /** Verified session awaiting the guest-history choice (create flow only). */
-  const [pendingSession, setPendingSession] = useState<Session | null>(null);
-  /** The guest's real device progress, fetched when the choice is shown. */
-  const [guestProgress, setGuestProgress] = useState<{
-    games: number;
-    rating: number;
-    achievements: number;
-  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [usernameState, setUsernameState] = useState<
     "idle" | "checking" | "ok" | "taken" | "invalid"
@@ -178,22 +170,34 @@ function AuthContent() {
       return "Couldn't reach the accounts service — this preview can't connect to Supabase. Deploy the app or run it locally to create an account.";
     }
     if (/rate limit|rate_limit|over_email_send_rate_limit|too many/i.test(message)) {
-      return "Too many emails were sent in the last hour, so the accounts service paused sends for now (they reset hourly). Wait a bit and try again, or raise the limit in Supabase under Authentication → Rate Limits.";
+      return "Too many emails were sent in the last hour, so the accounts service paused sends for now (they reset hourly). Wait a bit and try again, or raise the limit in Supabase under Authentication → Rate Limits → Email OTP.";
     }
     if (/expired|invalid/i.test(message)) {
       return "That code is invalid or has expired. Double-check the code from the email and try again, or request a new one.";
+    }
+    // Create-account attempts with an email that already has an account.
+    if (/already registered|already exists|user_already_exists/i.test(message)) {
+      return "That email already has a ChainMate account — use the Sign in tab instead.";
+    }
+    // The Supabase project has new-user sign-ups switched off.
+    if (/signups not allowed|signup.*disabled|sign-ups? disabled/i.test(message)) {
+      return "New account creation is currently turned off in the accounts service. Turn on \u201cAllow new users to sign up\u201d under Supabase \u2192 Authentication \u2192 Sign In / Up, then try again.";
+    }
+    // Sign-in attempts with an email that was never registered.
+    if (/no user found|user not found|email not registered|not registered/i.test(message)) {
+      return "No account exists for that email yet — use the Create tab to sign up.";
     }
     return (message || "Something went wrong. Please try again.").replace(/^AuthApiError:\s*/i, "");
   }, []);
 
   /**
-   * Finish authentication once the email code is verified: for account
-   * creation, ask the server to either carry the guest's real history into
-   * the new profile (keepHistory) or start a clean account. Stores the
-   * session, clears the one-time token, and redirects to the intended page.
+   * Finish authentication once the email code is verified. For account
+   * creation the server creates a fresh profile (guest history is never
+   * merged). Stores the session, clears the one-time token, and redirects to
+   * the intended page.
    */
   const completeAuth = useCallback(
-    async (session: Session, keepHistory: boolean, targetOverride?: string) => {
+    async (session: Session, targetOverride?: string) => {
       if (mode === "create") {
         const res = await fetch("/api/identity/link", {
           method: "POST",
@@ -201,11 +205,7 @@ function AuthContent() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({
-            username: username.trim(),
-            playerId: getGuestIdentity().playerId,
-            keepHistory,
-          }),
+          body: JSON.stringify({ username: username.trim() }),
         });
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
@@ -233,7 +233,6 @@ function AuthContent() {
       }
 
       clearPendingAuth();
-      setPendingSession(null);
       // Drop any one-time token from the URL so a refresh never re-verifies it.
       window.history.replaceState(null, "", "/auth");
       setStep("done");
@@ -246,35 +245,6 @@ function AuthContent() {
     },
     [mode, username, returnTo, identity, router],
   );
-
-  // When the guest-history choice is shown, load the guest's real progress
-  // so the buttons can say exactly what would be kept or left behind.
-  useEffect(() => {
-    if (step !== "migrate" || !pendingSession) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/hosted/players/me?playerId=${encodeURIComponent(getGuestIdentity().playerId)}`,
-        );
-        const data = (await res.json()) as {
-          stats?: { games?: number; rating?: number; achievements?: unknown[] };
-        };
-        if (!cancelled && data.stats) {
-          setGuestProgress({
-            games: data.stats.games ?? 0,
-            rating: data.stats.rating ?? 1200,
-            achievements: (data.stats.achievements ?? []).length,
-          });
-        }
-      } catch {
-        // progress stays null → generic copy
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [step, pendingSession]);
 
   const configured = supabaseClientConfigured();
   const guest = useMemo(() => getGuestIdentity(), []);
@@ -305,17 +275,8 @@ function AuthContent() {
         if (!session) throw new Error("We couldn't start your session. Try again.");
 
         const pending = readPendingAuth();
-        if (pending?.mode === "create" && pending.username) {
-          // Account creation: ask whether the guest history should carry into
-          // the new profile before linking anything.
-          window.history.replaceState(null, "", "/auth");
-          setPendingSession(session);
-          setStep("migrate");
-          setBusy(false);
-          return;
-        }
-        // Sign-in via magic link: existing account, complete directly.
-        await completeAuth(session, true, pending?.returnTo);
+        // Accounts always start fresh — guest history is never merged.
+        await completeAuth(session, pending?.returnTo);
         // (completeAuth redirects; nothing more to do here.)
       } catch (err) {
         setBusy(false);
@@ -427,15 +388,8 @@ function AuthContent() {
       const session = data.session;
       if (!session) throw new Error("We couldn't start your session. Try again.");
 
-      if (mode === "create") {
-        // Account creation: ask whether the guest history should carry into
-        // the new profile before linking anything.
-        setPendingSession(session);
-        setStep("migrate");
-        return;
-      }
-      // Sign-in: existing account, complete directly.
-      await completeAuth(session, true);
+      // Accounts always start fresh — guest history is never merged.
+      await completeAuth(session);
     } catch (err) {
       setError(friendlyAuthError(err));
     } finally {
@@ -465,14 +419,9 @@ function AuthContent() {
 
         {upgrade && identity.isGuest && (
           <div className="mt-6 rounded-lg border border-border/70 bg-card/50 px-4 py-3 text-sm text-foreground/85">
-            You&rsquo;re playing as <span className="font-mono text-primary">{identity.username || "Guest"}</span>
-            {identity.rating !== null && identity.rating > 0 ? (
-              <> — currently {identity.rating} ELO. You&rsquo;ll choose whether to keep
-              your guest history or start fresh.</>
-            ) : (
-              <> — after verifying your email you&rsquo;ll choose whether to keep
-              your guest history or start fresh.</>
-            )}
+            You&rsquo;re playing as <span className="font-mono text-primary">{identity.username || "Guest"}</span>.
+            Guest games are casual and never change a rating — after verifying
+            your email you&rsquo;ll get a fresh account that starts at 1200 ELO.
           </div>
         )}
       </div>
@@ -534,18 +483,18 @@ function AuthContent() {
             <p className="mt-1 text-xs text-muted-foreground">
               {identity.rating !== null ? (
                 <>
-                  {identity.rating} ELO · progress saved on this device
+                  {identity.rating} ELO · casual play, nothing is saved
                 </>
               ) : (
-                "Anonymous player · progress saved on this device"
+                "Anonymous player · casual play, nothing is saved"
               )}
             </p>
             <Button size="lg" className="mt-6 w-full" onClick={startAsGuest}>
               Play as guest <ArrowRight aria-hidden />
             </Button>
             <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-              No email, no password. You can create an account later to keep
-              your rating and games permanently.
+              No email, no password. Guest games never change a rating —
+              create an account when you&rsquo;re ready for a permanent record.
             </p>
           </div>
         ) : step === "code" ? (
@@ -606,64 +555,6 @@ function AuthContent() {
               Tip: if the email shows a <span className="text-foreground/80">Sign in</span>{" "}
               button instead of a code, click it — it opens this page and signs
               you in automatically.
-            </p>
-          </div>
-        ) : step === "migrate" && pendingSession ? (
-          <div className="flex flex-col gap-4">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                Keep your guest history?
-              </h2>
-              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                {guestProgress
-                  ? `This device has played ${guestProgress.games} game${
-                      guestProgress.games === 1 ? "" : "s"
-                    } as ${identity.username || "a guest"}${
-                      guestProgress.games > 0
-                        ? ` — ${guestProgress.rating} ELO, ${guestProgress.achievements} achievement${
-                            guestProgress.achievements === 1 ? "" : "s"
-                          }`
-                        : ""
-                    }.`
-                  : "This device has a guest identity with its own record."}{" "}
-                You decide what happens to it.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Button
-                className="w-full"
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  setError(null);
-                  void completeAuth(pendingSession, true).catch((err) => {
-                    setBusy(false);
-                    setError(friendlyAuthError(err));
-                  });
-                }}
-              >
-                Keep history
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  setError(null);
-                  void completeAuth(pendingSession, false).catch((err) => {
-                    setBusy(false);
-                    setError(friendlyAuthError(err));
-                  });
-                }}
-              >
-                Start fresh
-              </Button>
-            </div>
-            <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
-              Keep history carries your rating, games and achievements into
-              your account. Start fresh creates a clean profile at 1200 ELO
-              and leaves the guest record on this device.
             </p>
           </div>
         ) : (

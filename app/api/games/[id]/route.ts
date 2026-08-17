@@ -24,7 +24,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 interface ActionBody {
   action: "join" | "move" | "resign" | "summary";
-  player?: 1 | 2;
+  /** The requesting player's app identity — never a slot number. */
+  playerId?: string;
   move?: { from: string; to: string; promotion?: string };
 }
 
@@ -39,10 +40,17 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   try {
+    const playerId = typeof body.playerId === "string" ? body.playerId.trim() : "";
+    if (body.action !== "summary" && !playerId) {
+      return NextResponse.json(
+        { error: "playerId is required — send your browser's player identity" },
+        { status: 400 },
+      );
+    }
     switch (body.action) {
       case "join":
         return NextResponse.json({
-          game: await joinGameOnChain(id),
+          game: await joinGameOnChain(id, playerId),
           myId: signerAddress(2),
         });
       case "move":
@@ -58,12 +66,12 @@ export async function POST(req: NextRequest, { params }: Params) {
             body.move.from,
             body.move.to,
             body.move.promotion,
-            body.player === 2 ? 2 : 1,
+            playerId,
           ),
         });
       case "resign":
         return NextResponse.json({
-          game: await resignGameOnChain(id, body.player === 2 ? 2 : 1),
+          game: await resignGameOnChain(id, playerId),
         });
       case "summary":
         return NextResponse.json({ game: await generateSummaryOnChain(id) });

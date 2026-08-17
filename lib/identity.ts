@@ -2,14 +2,15 @@
  * Client-side identity storage (plain TS — safe to import from stores).
  *
  * Two records live in localStorage:
- *  - chainmate:identity:v1 — the persistent per-device player identity.
- *    Every visitor gets one automatically (a guest), so games, rating and
- *    history are tied to a stable id across refreshes and tabs.
+ *  - chainmate:identity:v1 — the per-device player identity. Every visitor
+ *    gets one automatically (a guest). The id is stable per device only so a
+ *    live hosted game survives a refresh — guest games are casual and never
+ *    rated, so no "history" accumulates.
  *  - chainmate:auth:v1     — the signed-in Supabase account when present.
  *
- * Guest progress is never destroyed: creating an account links the SAME
- * player id (and therefore games, rating, streaks and achievements) to the
- * new account instead of starting a second identity.
+ * Guests are guests: their games never touch ratings, streaks or
+ * achievements, and creating an account always starts a fresh 1200 profile —
+ * guest history is never merged.
  */
 
 import { HOSTED_PLAYER_KEY } from "@/lib/config";
@@ -27,7 +28,7 @@ export interface GuestIdentity {
 
 export interface AuthIdentity {
   userId: string;
-  /** The account's permanent player id (== the device guest id on upgrade). */
+  /** The account's permanent player id (fresh `acct_…` id, never a guest id). */
   playerId: string;
   username: string;
   rating: number;
@@ -54,8 +55,9 @@ function writeJSON(key: string, value: unknown) {
 }
 
 /**
- * The per-device player identity. Created on first use and reused forever,
- * so a refresh or a new tab keeps the same player (and their games).
+ * The per-device player identity. Created on first use and reused, so a
+ * refresh or a new tab keeps the same player while a hosted game is live.
+ * Guests stay casual: games are never rated and no stats accumulate.
  * Migrates the pre-identity sessionStorage player id if one exists.
  */
 export function getGuestIdentity(): GuestIdentity {
