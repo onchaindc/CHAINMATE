@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import {
   AI_PLAYER_ID,
   isGameOver,
-  shortId,
   type GameIndexEntry,
   type GameState,
 } from "@/lib/types";
@@ -16,25 +15,25 @@ interface GameRowProps {
   me?: string;
   /** Rating change for this game (+16 / −12), when known from rating history. */
   delta?: number | null;
+  /** Real display names for player ids (usernames from the server). */
+  names?: Record<string, string>;
 }
 
-export function GameRow({ game, me, delta }: GameRowProps) {
+export function GameRow({ game, me, delta, names }: GameRowProps) {
   const over = isGameOver(game.status);
   const creator = game.creator;
   const opponent = game.opponent || "";
   const isCreatorMe = Boolean(me && creator === me);
   const isOpponentMe = Boolean(me && opponent === me);
-  const opponentLabel =
-    opponent === AI_PLAYER_ID
-      ? "AI"
-      : opponent
-        ? shortId(opponent)
-        : "Waiting…";
+  const nameFor = (id: string) =>
+    id === AI_PLAYER_ID ? "Computer" : names?.[id] ?? "Guest";
+  const opponentLabel = opponent ? nameFor(opponent) : "Waiting…";
+  const creatorLabel = nameFor(creator);
   const title = isCreatorMe
     ? `You vs ${opponentLabel}`
     : isOpponentMe
-      ? `${shortId(creator)} vs You`
-      : `${shortId(creator)} vs ${opponentLabel}`;
+      ? `${creatorLabel} vs You`
+      : `${creatorLabel} vs ${opponentLabel}`;
 
   let result: string;
   if (over) {
@@ -48,6 +47,8 @@ export function GameRow({ game, me, delta }: GameRowProps) {
             : `${winnerSide} won`;
     } else if (game.status === "stalemate") {
       result = "Draw · stalemate";
+    } else if (game.status === "aborted") {
+      result = "Aborted";
     } else {
       result = "Draw";
     }
@@ -71,8 +72,8 @@ export function GameRow({ game, me, delta }: GameRowProps) {
     >
       <div className="min-w-0">
         <p className="truncate text-sm text-foreground/90">{title}</p>
-        <p className="truncate font-mono text-[11px] text-muted-foreground">
-          {shortId(game.id)}
+        <p className="truncate text-[11px] text-muted-foreground">
+          {game.timeControl ?? "Match"}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-3 text-right">

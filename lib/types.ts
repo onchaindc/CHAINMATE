@@ -15,7 +15,8 @@ export type GameStatus =
   | "stalemate"
   | "draw"
   | "resigned"
-  | "timeout";
+  | "timeout"
+  | "aborted";
 
 export type PlayerSide = "white" | "black";
 
@@ -170,6 +171,12 @@ export interface GameStore {
   offerDraw(id: string): Promise<GameState>;
   /** Accept or decline the opponent's pending draw offer. */
   respondDraw(id: string, accept: boolean): Promise<GameState>;
+  /** Abort a game before any move is played (no rating impact). */
+  abort(id: string): Promise<GameState>;
+  /** Start a fresh match against the same opponent (hosted games). */
+  rematch(id: string): Promise<GameState>;
+  /** Settle a flag fall now; returns the (possibly ended) current state. */
+  resolveTimeout(id: string): Promise<GameState>;
   generateSummary(id: string): Promise<GameState>;
   /** Subscribe to live updates for a game. Returns an unsubscribe fn. */
   subscribe(id: string, callback: (state: GameState) => void): () => void;
@@ -185,6 +192,7 @@ export const GAME_OVER_STATUSES: GameStatus[] = [
   "draw",
   "resigned",
   "timeout",
+  "aborted",
 ];
 
 export function isGameOver(status: GameStatus): boolean {

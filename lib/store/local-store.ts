@@ -1,6 +1,6 @@
 "use client";
 
-import { applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
+import { abortGame, applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
 import { chooseAiMove } from "@/lib/ai-engine";
 import { computeClocks } from "@/lib/clocks";
 import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
@@ -282,6 +282,24 @@ export class LocalGameStore implements GameStore {
     const res = respondToDrawOffer(game, getPlayerId(), accept);
     if (!res.ok) throw new Error(res.error);
     return this.save(res.game);
+  }
+
+  async abort(id: string): Promise<GameState> {
+    const game = this.getGameSync(id);
+    if (!game) throw new Error("Game not found");
+    const res = abortGame(game, getPlayerId());
+    if (!res.ok) throw new Error(res.error);
+    return this.save(res.game);
+  }
+
+  async rematch(): Promise<GameState> {
+    throw new Error("Rematch is for online games — start a new game instead");
+  }
+
+  async resolveTimeout(id: string): Promise<GameState> {
+    const game = this.getGameSync(id);
+    if (!game) throw new Error("Game not found");
+    return game;
   }
 
   async generateSummary(id: string): Promise<GameState> {

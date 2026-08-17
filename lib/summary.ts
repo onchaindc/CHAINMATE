@@ -45,7 +45,9 @@ export function keyMoments(game: GameState): KeyMoments {
         ? "The game was resigned before any moves were played."
         : game.status === "timeout"
           ? "The game was lost on time before any moves were played."
-          : "The game ended before any moves were played.";
+          : game.status === "aborted"
+            ? "The game was aborted before any moves were played."
+            : "The game ended before any moves were played.";
   } else if (game.status === "checkmate") {
     finalTactic = `Move ${last.number} — ${last.san} delivers checkmate.`;
   } else if (game.status === "resigned") {
@@ -70,6 +72,7 @@ export function buildRuleSummary(game: GameState): string {
     draw: "a draw",
     resigned: "a resignation",
     timeout: "timeout",
+    aborted: "an abort",
   };
   const label = isGameOver(game.status) ? (resultLabel[game.status] ?? game.status) : "the game";
   const sentences: string[] = [];
@@ -91,6 +94,8 @@ export function buildRuleSummary(game: GameState): string {
     } else {
       sentences.push(`${side} came out on top and claimed the win.`);
     }
+  } else if (game.status === "aborted") {
+    sentences.push("The match was aborted before it began, so no result was recorded.");
   } else if (game.status === "stalemate") {
     sentences.push("The side to move ran out of legal moves while not in check, so the game ended in stalemate.");
   } else if (game.status === "draw") {

@@ -3,7 +3,7 @@
 import { Bot, Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { AI_PLAYER_ID, shortId, type PlayerSide } from "@/lib/types";
+import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -37,7 +37,7 @@ export function PlayerCard({
   inCheck,
 }: PlayerCardProps) {
   const isAi = playerId === AI_PLAYER_ID;
-  const displayName = name ?? (isAi ? "ChainMate AI" : shortId(playerId));
+  const displayName = name ?? (isAi ? "ChainMate AI" : "Guest");
   const active = isTurn && !waiting;
 
   return (
@@ -87,12 +87,12 @@ export function PlayerCard({
             )}
             <span className="truncate">
               {isAi
-                ? "on-device engine"
-                : playerId
-                  ? shortId(playerId)
-                  : waiting
-                    ? "Waiting…"
-                    : "—"}
+                ? "Computer"
+                : waiting
+                  ? "Waiting…"
+                  : name
+                    ? ""
+                    : "Guest"}
             </span>
             {active && (
               <span className="flex shrink-0 items-center gap-1.5 font-medium text-primary">

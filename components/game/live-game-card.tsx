@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { shortId, type LiveGameEntry } from "@/lib/types";
+import { type LiveGameEntry } from "@/lib/types";
 
 /**
  * One live match card in the Watch feed. Backed entirely by the server's
@@ -14,8 +14,8 @@ import { shortId, type LiveGameEntry } from "@/lib/types";
 export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
   const white = entry.creator;
   const black = entry.opponent;
-  const whiteName = white.name ?? shortId(white.id);
-  const blackName = black.name ?? (black.isAi ? "ChainMate AI" : shortId(black.id));
+  const whiteName = white.name ?? "Guest";
+  const blackName = black.name ?? (black.isAi ? "ChainMate AI" : "Guest");
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 sm:gap-4">

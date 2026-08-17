@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  abortHostedGame,
   getHostedGame,
   joinHostedGame,
   offerDrawHostedGame,
+  rematchHostedGame,
   resignHostedGame,
   respondHostedDraw,
   submitHostedMove,
@@ -29,7 +31,16 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 interface ActionBody {
-  action: "join" | "move" | "resign" | "draw-offer" | "draw-respond" | "summary";
+  action:
+    | "join"
+    | "move"
+    | "resign"
+    | "draw-offer"
+    | "draw-respond"
+    | "abort"
+    | "rematch"
+    | "timeout"
+    | "summary";
   playerId?: string;
   move?: { from: string; to: string; promotion?: string };
   accept?: boolean;
@@ -80,6 +91,18 @@ export async function POST(req: NextRequest, { params }: Params) {
       case "draw-respond":
         return NextResponse.json({
           game: await respondHostedDraw(id, playerId, body.accept === true),
+        });
+      case "abort":
+        return NextResponse.json({ game: await abortHostedGame(id, playerId) });
+      case "rematch":
+        return NextResponse.json({ game: await rematchHostedGame(id, playerId) });
+      case "timeout":
+        // Settle a flag fall now (server-authoritative clock check).
+        return NextResponse.json({
+          game: await getHostedGame(id).then((g) => {
+            if (!g) throw new Error("Game not found");
+            return g;
+          }),
         });
       case "summary":
         return NextResponse.json({ game: await summarizeHostedGame(id) });

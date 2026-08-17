@@ -27,10 +27,19 @@ interface ApiResponse {
   live?: LiveGameEntry[];
   open?: GameIndexEntry[];
   recent?: GameIndexEntry[];
-  players?: PlayerStats[];
+  /** Leaderboard rows (array) OR the per-game player display map. */
+  players?: PlayerStats[] | Record<string, PlayerInfo>;
   stats?: PlayerStats;
   myId?: string;
   error?: string;
+}
+
+/** Display info for one player, as served by the games/profile APIs. */
+export interface PlayerInfo {
+  id: string;
+  name?: string;
+  rating?: number;
+  isAi?: boolean;
 }
 
 function getMyPlayerId(): string {
@@ -146,6 +155,33 @@ export class HostedGameStore implements GameStore {
     return data.game;
   }
 
+  async abort(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "abort", playerId: getMyPlayerId() }),
+    });
+    if (!data.game) throw new Error("Abort failed");
+    return data.game;
+  }
+
+  async rematch(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "rematch", playerId: getMyPlayerId() }),
+    });
+    if (!data.game) throw new Error("Rematch failed");
+    return data.game;
+  }
+
+  async resolveTimeout(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "timeout", playerId: getMyPlayerId() }),
+    });
+    if (!data.game) throw new Error("Failed to settle the clock");
+    return data.game;
+  }
+
   async generateSummary(id: string): Promise<GameState> {
     const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",
@@ -199,7 +235,7 @@ export class HostedGameStore implements GameStore {
   /* Platform data (real games / stats from the server store)            */
   /* ------------------------------------------------------------------ */
 
-  async listMine(): Promise<GameState[]> {
+  async listMine(): Promise<{ games: GameState[]; players: Record<string, PlayerInfo> }> {
     const auth = getAuthIdentity();
     const params = new URLSearchParams({
       scope: "mine",
@@ -210,7 +246,8 @@ export class HostedGameStore implements GameStore {
       params.set("accountPlayerId", auth.playerId);
     }
     const data = await api(`/api/hosted/games?${params.toString()}`);
-    return data.games ?? [];
+    const players = (data.players ?? {}) as Record<string, PlayerInfo>;
+    return { games: data.games ?? [], players };
   }
 
   async listWatch(): Promise<{
@@ -233,13 +270,18 @@ export class HostedGameStore implements GameStore {
 
   async leaderboard(): Promise<PlayerStats[]> {
     const data = await api("/api/hosted/leaderboard");
-    return data.players ?? [];
+    return (data.players as PlayerStats[] | undefined) ?? [];
   }
 
-  async myProfile(): Promise<{ stats: PlayerStats; games: GameState[] }> {
+  async myProfile(): Promise<{
+    stats: PlayerStats;
+    games: GameState[];
+    players: Record<string, PlayerInfo>;
+  }> {
     const data = await api(
       `/api/hosted/players/me?playerId=${encodeURIComponent(getMyPlayerId())}`,
     );
+    const players = (data.players ?? {}) as Record<string, PlayerInfo>;
     return {
       stats:
         data.stats ??
@@ -258,6 +300,7 @@ export class HostedGameStore implements GameStore {
           updatedAt: 0,
         },
       games: data.games ?? [],
+      players,
     };
   }
 }

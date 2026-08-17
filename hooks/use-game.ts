@@ -11,6 +11,8 @@ export type BusyAction =
   | "resign"
   | "draw-offer"
   | "draw-respond"
+  | "abort"
+  | "rematch"
   | "summary"
   | null;
 
@@ -101,6 +103,25 @@ export function useGame(id: string) {
       runAction("draw-respond", () => storeRef.current!.respondDraw(id, accept)),
     [id, runAction],
   );
+  const abort = useCallback(
+    () => runAction("abort", () => storeRef.current!.abort(id)),
+    [id, runAction],
+  );
+  const rematch = useCallback(
+    () => runAction("rematch", () => storeRef.current!.rematch(id)),
+    [id, runAction],
+  );
+  /** Settle a flag fall right now — silent: failures fall back to polling. */
+  const resolveTimeout = useCallback(async () => {
+    try {
+      const next = await storeRef.current!.resolveTimeout(id);
+      setGame(next);
+      return next;
+    } catch {
+      // the next poll will settle it server-side
+      return null;
+    }
+  }, [id]);
   const generateSummary = useCallback(
     () => runAction("summary", () => storeRef.current!.generateSummary(id)),
     [id, runAction],
@@ -147,6 +168,9 @@ export function useGame(id: string) {
     resign,
     offerDraw,
     respondDraw,
+    abort,
+    rematch,
+    resolveTimeout,
     generateSummary,
   };
 }
