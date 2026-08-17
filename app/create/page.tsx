@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getGameBackend } from "@/lib/config";
 import { getStore } from "@/lib/store";
-import type { AiDifficulty } from "@/lib/types";
+import { AI_LEVELS, type AiDifficulty } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type GameMode = "pvp" | "ai";
@@ -20,11 +20,6 @@ function initialMode(): GameMode {
 const MODES: { id: GameMode; label: string; icon: typeof Users }[] = [
   { id: "pvp", label: "2 players", icon: Users },
   { id: "ai", label: "Play vs AI", icon: Bot },
-];
-
-const DIFFICULTIES: { id: AiDifficulty; label: string; hint: string }[] = [
-  { id: "casual", label: "Casual", hint: "2-ply" },
-  { id: "competitive", label: "Competitive", hint: "3-ply" },
 ];
 
 const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
@@ -138,8 +133,8 @@ export default function CreateGamePage() {
                 ))}
               </div>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Minutes per side + increment per move. Timed clocks are not part
-                of this build — the control is recorded on the game.
+                Minutes per side + increment per move. Real clocks with
+                automatic flag-fall — if your time runs out, you lose on time.
               </p>
             </div>
           )}
@@ -184,38 +179,57 @@ export default function CreateGamePage() {
             </div>
           )}
 
-          {/* AI difficulty — segmented control */}
+          {/* AI difficulty — pick a named opponent, chess.com-style */}
           {mode === "ai" && (
             <div className="animate-fade-in-up">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Difficulty
+                Opponent
               </p>
               <div
-                className="grid grid-cols-2 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                className="space-y-1.5"
                 role="radiogroup"
                 aria-label="AI difficulty"
               >
-                {DIFFICULTIES.map((d) => (
+                {AI_LEVELS.map((level) => (
                   <button
-                    key={d.id}
+                    key={level.id}
                     type="button"
                     role="radio"
-                    aria-checked={difficulty === d.id}
-                    onClick={() => setDifficulty(d.id)}
+                    aria-checked={difficulty === level.id}
+                    onClick={() => setDifficulty(level.id)}
                     className={cn(
-                      "rounded-md px-3 py-2 text-sm font-medium transition-all",
-                      difficulty === d.id
-                        ? "bg-card text-foreground shadow-sm ring-1 ring-primary/30"
-                        : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
+                      "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-all",
+                      difficulty === level.id
+                        ? "border-primary/40 bg-primary/[0.06] ring-1 ring-primary/25"
+                        : "border-border/70 bg-secondary/30 hover:bg-card/60",
                     )}
                   >
-                    {d.label}
-                    <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
-                      {d.hint}
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        <span className="truncate">{level.name}</span>
+                        <span className="shrink-0 font-mono text-[10px] tabular-nums text-primary">
+                          {level.rating}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        {level.blurb}
+                      </span>
                     </span>
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0 rounded-full border",
+                        difficulty === level.id
+                          ? "border-primary bg-primary"
+                          : "border-border bg-transparent",
+                      )}
+                    />
                   </button>
                 ))}
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Pick an opponent. The computer plays Black — instant, no setup.
+              </p>
             </div>
           )}
 
@@ -230,7 +244,7 @@ export default function CreateGamePage() {
               </p>
               <p className="text-xs text-muted-foreground">
                 {mode === "ai"
-                  ? "The on-device engine plays Black — instant, no setup."
+                  ? "Casual match — games against the computer never change your rating."
                   : "White moves first. Games are rated and broadcast live on Watch by default."}
               </p>
             </div>

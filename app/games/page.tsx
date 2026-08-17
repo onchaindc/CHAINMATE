@@ -142,7 +142,7 @@ export default function GamesPage() {
             <Gamepad2 className="h-8 w-8 text-muted-foreground/50" aria-hidden />
             <p className="mt-3 text-sm font-medium text-foreground/85">No games yet</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Play your first match — create a game or challenge the on-device AI.
+              Play your first match — create a game or challenge the computer.
             </p>
             <Link href="/create" className={cn(buttonVariants({ size: "sm" }), "mt-5")}>
               Create a game

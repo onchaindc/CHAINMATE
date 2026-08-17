@@ -1,5 +1,5 @@
 import { Chess, type Move } from "chess.js";
-import type { AiDifficulty } from "@/lib/types";
+import { aiLevelFor, type AiDifficulty } from "@/lib/types";
 
 /**
  * Built-in chess opponent for single-player games. Pure client-side minimax
@@ -199,7 +199,15 @@ export function chooseAiMove(fen: string, difficulty: AiDifficulty = "casual"): 
   const moves = orderedMoves(chess);
   if (moves.length === 0) return null;
 
-  const depth = difficulty === "competitive" ? 3 : 2;
+  const level = aiLevelFor(difficulty);
+  // Weaker levels sometimes play a random legal move — the classic way lower
+  // ratings hang pieces — while stronger levels always take the best line.
+  if (level.blunderChance > 0 && Math.random() < level.blunderChance) {
+    const random = moves[Math.floor(Math.random() * moves.length)];
+    return { from: random.from, to: random.to, promotion: random.promotion };
+  }
+
+  const depth = level.depth;
   const maximizing = chess.turn() === "w";
 
   let bestMove: Move | null = null;

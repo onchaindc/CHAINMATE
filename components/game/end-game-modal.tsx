@@ -9,6 +9,7 @@ import { keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
   AI_PLAYER_ID,
+  aiLevelFor,
   type GameState,
   type PlayerSide,
   type PlayerStats,
@@ -124,7 +125,7 @@ export function EndGameModal({
     const isAi = id === AI_PLAYER_ID;
     const line = ratingLine(id);
     const isViewer = id === myPlayerId;
-    const name = isAi ? "ChainMate AI" : isViewer ? "You" : undefined;
+    const name = isAi ? aiLevelFor(game.aiDifficulty).name : isViewer ? "You" : undefined;
     return (
       <div className={side === "white" ? "min-w-0 text-left" : "min-w-0 text-right"}>
         <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -152,8 +153,11 @@ export function EndGameModal({
             )}
           </p>
         ) : (
-          <p className="mt-1 font-mono text-xs text-muted-foreground">
-            {isAi ? "engine" : "unrated"}
+          <p className="mt-1 flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+            <span className="text-foreground/80">
+              {isAi ? aiLevelFor(game.aiDifficulty).rating : 1200}
+            </span>
+            <span className="normal-case">{isAi ? "Computer" : "provisional"}</span>
           </p>
         )}
       </div>
@@ -200,6 +204,13 @@ export function EndGameModal({
           </span>
           {playerCell("black")}
         </div>
+
+        {/* Computer games are casual by design — say so, don't leave it unexplained. */}
+        {isAiGame && (
+          <p className="mt-2.5 text-center text-[11px] leading-snug text-muted-foreground">
+            Casual match — games against the computer never change your rating.
+          </p>
+        )}
 
         {/* Achievements actually earned in this game */}
         {unlocked.length > 0 && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Crown } from "lucide-react";
+import { Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
@@ -63,12 +63,6 @@ export function PlayerCard({
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
             <span className="truncate capitalize">{displayName}</span>
-            {isAi && (
-              <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px]">
-                <Bot className="h-3 w-3" aria-hidden />
-                ENGINE
-              </Badge>
-            )}
             {isYou && (
               <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
                 you
