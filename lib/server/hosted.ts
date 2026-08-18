@@ -3,6 +3,7 @@ import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
+import { analyzeGameOnChain, genlayerKeysAvailable } from "@/lib/server/genlayer";
 import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
@@ -779,7 +780,38 @@ export async function summarizeHostedGame(id: string): Promise<GameState> {
   if (!game) throw new Error("Game not found");
   if (!isGameOver(game.status)) throw new Error("The game is still in progress");
   if (game.summary) return game;
-  const next: GameState = { ...game, summary: buildRuleSummary(game), updatedAt: Date.now() };
+
+  // Try GenLayer LLM analysis first when signing keys are configured.
+  // This deploys a lightweight analyzer contract that uses GenLayer's
+  // validator consensus (Optimistic Democracy) to generate the analysis.
+  let summary = "";
+  if (genlayerKeysAvailable()) {
+    try {
+      console.log(`[hosted] requesting GenLayer analysis for game ${id}...`);
+      summary = await analyzeGameOnChain({
+        moves: game.moves.map((m) => ({
+          san: m.san,
+          side: m.side,
+          number: m.number,
+        })),
+        status: game.status,
+        winner: game.winner,
+      });
+      console.log(`[hosted] GenLayer analysis complete for game ${id} (${summary.length} chars)`);
+    } catch (err) {
+      // GenLayer analysis is best-effort: network issues, key problems, or
+      // consensus failures should never block the game result. Fall through
+      // to the deterministic rule-based summary.
+      console.error(`[hosted] GenLayer analysis failed for game ${id}, using rule-based fallback:`, err);
+    }
+  }
+
+  // Fall back to deterministic rule-based summary if GenLayer didn't produce one.
+  if (!summary) {
+    summary = buildRuleSummary(game);
+  }
+
+  const next: GameState = { ...game, summary, updatedAt: Date.now() };
   await writeGame(next);
   return next;
 }
