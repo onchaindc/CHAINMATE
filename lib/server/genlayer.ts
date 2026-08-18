@@ -249,3 +249,98 @@ export async function generateSummaryOnChain(id: string): Promise<GameState> {
 export function signerAddress(which: 1 | 2): string {
   return getSigner(which).address;
 }
+
+// ── Post-game analysis for hosted games ───────────────────────
+
+const ANALYZER_CONTRACT_PATH = path.join(process.cwd(), "contracts", "analyze.py");
+
+function analyzerContractSource(): string {
+  return readFileSync(ANALYZER_CONTRACT_PATH, "utf8");
+}
+
+/**
+ * Check whether GenLayer signing keys are configured.
+ * Used by the hosted backend to decide whether to call GenLayer for analysis.
+ */
+export function genlayerKeysAvailable(): boolean {
+  return !!process.env.GENLAYER_PRIVATE_KEY;
+}
+
+/**
+ * Deploy a lightweight ChainMateAnalyzer contract, load a finished game's
+ * data into it, and generate LLM-powered analysis via GenLayer validator
+ * consensus (Optimistic Democracy).
+ *
+ * This is the server-side entry point for hosted game post-game analysis.
+ * Returns the analysis text string, or throws on failure.
+ *
+ * Flow:
+ * 1. Deploy contracts/analyze.py on GenLayer testnet Bradbury
+ * 2. Call load_game(movesJson, status, winner) to populate the contract
+ * 3. Call generate_analysis() — triggers gl.nondet.exec_prompt (LLM consensus)
+ * 4. Read the summary back via get_summary()
+ * 5. Return the analysis text
+ */
+export async function analyzeGameOnChain(game: {
+  moves: { san: string; side: string; number: number }[];
+  status: string;
+  winner: string;
+}): Promise<string> {
+  const client = getReadClient();
+  const account = getSigner(1);
+
+  // Step 1: Deploy the analyzer contract
+  console.log("[genlayer:analyze] deploying analyzer contract...");
+  const deployHash = await client.deployContract({
+    account,
+    code: analyzerContractSource(),
+  });
+  const deployReceipt = await waitForWrite(deployHash, "deploy analyzer");
+  const decoded = deployReceipt.txDataDecoded as DecodedDeployData | undefined;
+  const analyzerAddress = decoded?.contractAddress;
+  if (!analyzerAddress || !/^0x[0-9a-fA-F]{40}$/.test(analyzerAddress)) {
+    throw new Error("Could not determine analyzer contract address from deploy receipt");
+  }
+  console.log(`[genlayer:analyze] deployed analyzer at ${analyzerAddress}`);
+
+  // Step 2: Load game data into the analyzer
+  const movesJson = JSON.stringify(
+    game.moves.map((m) => ({ number: m.number, san: m.san, side: m.side })),
+  );
+  console.log(`[genlayer:analyze] loading ${game.moves.length} moves into analyzer...`);
+  const loadHash = await client.writeContract({
+    account,
+    address: analyzerAddress as Address,
+    functionName: "load_game",
+    args: [movesJson, game.status, game.winner],
+    value: BigInt(0),
+  });
+  await waitForWrite(loadHash, "load_game");
+  console.log("[genlayer:analyze] game data loaded, generating analysis...");
+
+  // Step 3: Generate analysis (this is the slow part — GenLayer LLM consensus)
+  const analyzeHash = await client.writeContract({
+    account,
+    address: analyzerAddress as Address,
+    functionName: "generate_analysis",
+    args: [],
+    value: BigInt(0),
+  });
+  await waitForWrite(analyzeHash, "generate_analysis");
+  console.log("[genlayer:analyze] analysis generated, reading summary...");
+
+  // Step 4: Read the summary
+  const summary = (await client.readContract({
+    address: analyzerAddress as Address,
+    functionName: "get_summary",
+    args: [],
+    jsonSafeReturn: true,
+  })) as string;
+
+  if (!summary || typeof summary !== "string" || summary.length < 20) {
+    throw new Error("GenLayer analysis returned empty or invalid summary");
+  }
+
+  console.log(`[genlayer:analyze] analysis complete (${summary.length} chars)`);
+  return summary;
+}
