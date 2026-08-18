@@ -15,38 +15,12 @@ export const runtime = "nodejs";
 
 interface LinkBody {
   username?: string;
-  /** OAuth (Google) sign-in: derive the username server-side and never rename an existing account. */
+  /** OAuth (Google) sign-in. When true and no existing profile, returns needsOnboarding.
+   *  When true AND username is provided, creates the profile with that username (onboarding step 2). */
   google?: boolean;
 }
 
-/** Lowercase alphanumeric/underscore slug, 3–20 chars, matching validateUsername. */
-function slugifyUsername(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .replace(/_+/g, "_")
-    .slice(0, 20);
-}
 
-/** Pick a free username from the Google profile (full name → email local part). */
-async function generateGoogleUsername(authUser: {
-  email?: string | null;
-  user_metadata?: Record<string, unknown>;
-  id: string;
-}): Promise<string> {
-  const meta = authUser.user_metadata ?? {};
-  const fullName = (meta.full_name ?? meta.name ?? "").toString();
-  const emailLocal = (authUser.email ?? "").split("@")[0] ?? "";
-  let base = slugifyUsername(fullName) || slugifyUsername(emailLocal);
-  if (base.length < 3) base = `player_${base}`;
-  base = base.slice(0, 20);
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const candidate = attempt === 0 ? base : `${base.slice(0, 16)}_${attempt + 1}`;
-    if (!(await usernameTaken(candidate, authUser.id))) return candidate;
-  }
-  return `player_${randomHex(3)}`;
-}
 
 /**
  * POST /api/identity/link  { username }
@@ -108,7 +82,8 @@ export async function POST(req: NextRequest) {
 
   const google = body.google === true;
   const username = (body.username ?? "").trim();
-  if (!google) {
+  // Always validate the username when provided (including Google onboarding step 2).
+  if (username) {
     const nameError = validateUsername(username);
     if (nameError) {
       return NextResponse.json({ error: nameError }, { status: 400 });
@@ -128,14 +103,13 @@ export async function POST(req: NextRequest) {
   try {
     const existing = await profileForUserId(userId);
     if (existing) {
-      // OAuth sign-in: return the existing identity untouched — never rename
-      // an established account to an auto-generated name.
+      // Google returning user: return the existing profile. Never rename.
       if (google) {
-        return NextResponse.json({ profile: existing });
+        return NextResponse.json({ profile: existing, playerId: existing.player_id });
       }
       // Account already linked — just sync the identity (e.g. sign-in on a
       // new device). Never overwrite the account's rating or history.
-      if (existing.username !== username) {
+      if (username && existing.username !== username) {
         if (await usernameTaken(username, userId)) {
           return NextResponse.json(
             { error: "That username is already taken." },
@@ -144,24 +118,38 @@ export async function POST(req: NextRequest) {
         }
         await admin!.from("profiles").update({ username }).eq("user_id", userId);
       }
-      return NextResponse.json({ profile: { ...existing, username } });
+      return NextResponse.json({ profile: { ...existing, username: username || existing.username } });
     }
 
-    // OAuth account creation: derive a free username from the Google profile.
-    if (google) {
-      const googleUsername = await generateGoogleUsername(authUser);
+    // Google NEW user: if no username provided yet, trigger onboarding.
+    if (google && !username) {
+      return NextResponse.json({ needsOnboarding: true, userId });
+    }
+
+    // Google onboarding step 2: username provided — create the profile.
+    if (google && username) {
+      if (await usernameTaken(username, userId)) {
+        return NextResponse.json(
+          { error: "That username is already taken. Try another." },
+          { status: 409 },
+        );
+      }
       const freshPlayerId = `acct_${randomHex(8)}`;
       const stats = await getPlayerStats(freshPlayerId); // defaults: 1200 / rd 350
       const profile = await linkProfileToAccount({
         userId,
         playerId: freshPlayerId,
-        username: googleUsername,
+        username,
         stats,
       });
-      await updatePlayerIdentity(freshPlayerId, { username: googleUsername, isGuest: false });
+      await updatePlayerIdentity(freshPlayerId, { username, isGuest: false });
       return NextResponse.json({ profile, playerId: freshPlayerId });
     }
 
+    // Email sign-in: username is required.
+    if (!username) {
+      return NextResponse.json({ error: "Username is required." }, { status: 400 });
+    }
     if (await usernameTaken(username)) {
       return NextResponse.json(
         { error: "That username is already taken. Try another." },

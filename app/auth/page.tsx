@@ -15,7 +15,7 @@ import { getGuestIdentity, setAuthIdentity } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 type Mode = "guest" | "create" | "signin";
-type Step = "form" | "code" | "done";
+type Step = "form" | "code" | "done" | "google-onboarding";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -133,6 +133,7 @@ function AuthContent() {
 
   const [mode, setMode] = useState<Mode>(upgrade ? "create" : supabaseClientConfigured() ? "create" : "guest");
   const [step, setStep] = useState<Step>("form");
+  const [googleOnboardingToken, setGoogleOnboardingToken] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -280,10 +281,18 @@ function AuthContent() {
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
           playerId?: string;
+          needsOnboarding?: boolean;
           profile?: { player_id?: string; username?: string };
         };
         if (!res.ok) {
           throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
+        }
+        // New Google user — needs to choose a username.
+        if (body.needsOnboarding) {
+          setGoogleOnboardingToken(session.access_token);
+          setStep("google-onboarding");
+          setBusy(false);
+          return;
         }
         const profile = body.profile;
         setAuthIdentity({
@@ -308,6 +317,66 @@ function AuthContent() {
     },
     [identity, router, returnTo, friendlyAuthError],
   );
+
+  /** Complete Google onboarding: submit the chosen username. */
+  const completeGoogleOnboarding = useCallback(async () => {
+    setError(null);
+    const trimmed = username.trim();
+    if (trimmed.length < 3) {
+      setError("Choose a username — at least 3 characters.");
+      return;
+    }
+    if (usernameState === "taken") {
+      setError("That username is already taken. Try another.");
+      return;
+    }
+    if (usernameState === "invalid") {
+      setError("Use letters, numbers and underscores only (3–20 characters).");
+      return;
+    }
+    if (!googleOnboardingToken) {
+      setError("Session expired. Please sign in with Google again.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/identity/link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${googleOnboardingToken}`,
+        },
+        body: JSON.stringify({ google: true, username: trimmed }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        playerId?: string;
+        profile?: { player_id?: string; username?: string };
+      };
+      if (!res.ok) {
+        throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
+      }
+      const profile = body.profile;
+      setAuthIdentity({
+        userId: "", // will be resolved by identity refresh
+        playerId: body.playerId ?? profile?.player_id ?? getGuestIdentity().playerId,
+        username: profile?.username ?? trimmed,
+        rating: 0,
+        accessToken: googleOnboardingToken,
+      });
+      clearPendingAuth();
+      window.history.replaceState(null, "", "/auth");
+      setStep("done");
+      setGoogleOnboardingToken(null);
+      await identity.refresh();
+      setTimeout(() => {
+        router.push(returnTo.startsWith("/") ? returnTo : "/profile");
+      }, 350);
+    } catch (err) {
+      setBusy(false);
+      setError(friendlyAuthError(err));
+    }
+  }, [username, usernameState, googleOnboardingToken, identity, router, returnTo, friendlyAuthError]);
 
   const startGoogleOAuth = useCallback(async () => {
     setError(null);
@@ -526,7 +595,13 @@ function AuthContent() {
           Player account
         </p>
         <h1 className="font-display mt-3 text-center text-3xl font-bold tracking-tight">
-          {mode === "create" ? "Create your account" : mode === "signin" ? "Welcome back" : "Play chess."}
+          {step === "google-onboarding"
+            ? "Create your account"
+            : mode === "create"
+              ? "Create your account"
+              : mode === "signin"
+                ? "Welcome back"
+                : "Play chess."}
         </h1>
 
         {upgrade && identity.isGuest && (
@@ -585,6 +660,67 @@ function AuthContent() {
             <Button className="mt-5" onClick={startAsGuest}>
               Play as guest <ArrowRight aria-hidden />
             </Button>
+          </div>
+        ) : step === "google-onboarding" ? (
+          <div className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Choose your username</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Pick a unique display name for ChainMate. This is how other players will see you.
+              </p>
+            </div>
+            <div>
+              <label
+                htmlFor="onboard-username"
+                className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                Username
+              </label>
+              <Input
+                id="onboard-username"
+                autoFocus
+                placeholder="GrandMaster7"
+                value={username}
+                maxLength={20}
+                onChange={(e) => {
+                  setUsername(e.target.value.replace(/[^A-Za-z0-9_]/g, ""));
+                  setUsernameState("idle");
+                }}
+                onKeyDown={(e) => e.key === "Enter" && !busy && void completeGoogleOnboarding()}
+                className="mt-1.5"
+              />
+              {usernameHint && (
+                <p
+                  className={cn(
+                    "mt-1.5 text-[11px]",
+                    usernameState === "ok" && "text-primary",
+                    usernameState === "taken" && "text-destructive",
+                    usernameState === "checking" && "text-muted-foreground",
+                  )}
+                >
+                  {usernameHint}
+                </p>
+              )}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                3–20 characters · letters, numbers, underscores. Your public
+                name — your email stays private.
+              </p>
+            </div>
+            <Button onClick={() => void completeGoogleOnboarding()} disabled={busy || username.trim().length < 3}>
+              {busy ? "Creating account…" : "Continue"}
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setStep("form");
+                setGoogleOnboardingToken(null);
+                setUsername("");
+                setError(null);
+              }}
+              className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" aria-hidden /> Back to sign in
+            </button>
           </div>
         ) : mode === "guest" ? (
           <div className="flex flex-col items-center py-4 text-center">
