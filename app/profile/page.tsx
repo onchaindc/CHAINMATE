@@ -180,6 +180,9 @@ function ProfileContent() {
           playerId={playerId}
           onUpdated={(newName) => {
             setStats((prev) => (prev ? { ...prev, username: newName } : prev));
+            // Sync the identity context so the header and profile display
+            // the new name immediately without requiring a full page refresh.
+            void identity.refresh();
           }}
         />
       )}
