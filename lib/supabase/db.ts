@@ -256,9 +256,40 @@ export async function linkProfileToAccount(input: {
   const admin = getSupabaseAdmin();
   if (!admin) throw new Error("Account creation isn't configured yet.");
   const now = new Date().toISOString();
-  // Only insert columns from the base migration (0001). Columns added by
-  // migration 0003 (rd, last_played_at, country) use their schema defaults
-  // so the insert works even if the user hasn't run migration 0003 yet.
+
+  // Check if a profile already exists for this user_id (e.g. from a
+  // previous session). If so, update it in place — the PK is user_id,
+  // so a second insert would fail with a unique violation.
+  const existing = await profileForUserId(input.userId);
+  if (existing) {
+    const { data, error } = await admin
+      .from("profiles")
+      .update({
+        player_id: input.playerId,
+        username: input.username,
+        is_guest: false,
+        rating: input.stats.rating,
+        peak_rating: input.stats.peakRating,
+        wins: input.stats.wins,
+        losses: input.stats.losses,
+        draws: input.stats.draws,
+        games: input.stats.games,
+        current_streak: input.stats.currentStreak,
+        best_streak: input.stats.bestStreak,
+        updated_at: now,
+      })
+      .eq("user_id", input.userId)
+      .select("*")
+      .maybeSingle();
+    if (error || !data) {
+      throw new Error("We couldn't save your profile. Please try again.");
+    }
+    return data as unknown as ProfileRow;
+  }
+
+  // New profile: insert columns from the base migration (0001). Columns
+  // added by migration 0003 (rd, last_played_at, country) use their
+  // schema defaults so the insert works even without migration 0003.
   const row: Record<string, unknown> = {
     user_id: input.userId,
     player_id: input.playerId,
@@ -275,12 +306,9 @@ export async function linkProfileToAccount(input: {
     created_at: now,
     updated_at: now,
   };
-  // Only add 0003 columns if they appear to exist (best-effort).
-  // If the columns don't exist, Supabase would reject the insert, so we
-  // try inserting without them first and update separately if needed.
   const { data, error } = await admin
     .from("profiles")
-    .upsert(row, { onConflict: "user_id" })
+    .upsert(row, { onConflict: "player_id" })
     .select("*")
     .maybeSingle();
   if (error || !data) {

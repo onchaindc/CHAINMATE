@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseConfigured } from "@/lib/supabase/config";
-import { usernameTaken, profileForUserId } from "@/lib/supabase/db";
+import { usernameTaken, profileForUserId, profileForPlayerId } from "@/lib/supabase/db";
 import { validateUsername } from "@/lib/achievements";
 import { updatePlayerCountry, updatePlayerIdentity, getPlayerStats } from "@/lib/server/hosted";
 
@@ -35,10 +35,19 @@ export async function POST(req: NextRequest) {
       const admin = getSupabaseAdmin();
       const { data } = await admin!.auth.getUser(token);
       if (data.user) {
-        const profile = await profileForUserId(data.user.id);
+        // Primary check: find profile by the playerId the client is trying to edit.
+        const profile = await profileForPlayerId(playerId);
         if (profile) {
-          // Profile exists — verify the caller owns it.
-          if (profile.player_id !== playerId) {
+          // Profile exists — verify it belongs to this Supabase user.
+          if (profile.user_id !== data.user.id) {
+            return NextResponse.json({ error: "You can only edit your own profile." }, { status: 403 });
+          }
+        }
+        // If no profile found for this playerId, fall back to user_id lookup
+        // (handles edge case where client has a stale playerId).
+        else {
+          const byUser = await profileForUserId(data.user.id);
+          if (byUser && byUser.player_id !== playerId) {
             return NextResponse.json({ error: "You can only edit your own profile." }, { status: 403 });
           }
         }
