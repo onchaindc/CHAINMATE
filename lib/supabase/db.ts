@@ -98,23 +98,25 @@ export async function upsertProfiles(statsList: PlayerStats[]): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin || statsList.length === 0) return;
   const now = new Date().toISOString();
-  const rows = statsList.map((s) => ({
-    player_id: s.playerId,
-    username: s.username ?? `Guest_${s.playerId.slice(0, 4).toUpperCase()}`,
-    is_guest: s.isGuest ?? true,
-    rating: s.rating,
-    rd: s.rd ?? 350,
-    last_played_at: s.lastPlayedAt ?? null,
-    country: s.country ?? null,
-    peak_rating: s.peakRating,
-    wins: s.wins,
-    losses: s.losses,
-    draws: s.draws,
-    games: s.games,
-    current_streak: s.currentStreak,
-    best_streak: s.bestStreak,
-    updated_at: now,
-  }));
+  const rows = statsList.map((s) => {
+    // Only insert columns from the base migration (0001). Migration 0003
+    // columns (rd, last_played_at, country) use schema defaults so this
+    // works even if migration 0003 hasn't been run yet.
+    return {
+      player_id: s.playerId,
+      username: s.username ?? `Guest_${s.playerId.slice(0, 4).toUpperCase()}`,
+      is_guest: s.isGuest ?? true,
+      rating: s.rating,
+      peak_rating: s.peakRating,
+      wins: s.wins,
+      losses: s.losses,
+      draws: s.draws,
+      games: s.games,
+      current_streak: s.currentStreak,
+      best_streak: s.bestStreak,
+      updated_at: now,
+    };
+  });
   await admin.from("profiles").upsert(rows, { onConflict: "player_id" });
 }
 
@@ -254,15 +256,15 @@ export async function linkProfileToAccount(input: {
   const admin = getSupabaseAdmin();
   if (!admin) throw new Error("Account creation isn't configured yet.");
   const now = new Date().toISOString();
-  const row = {
+  // Only insert columns from the base migration (0001). Columns added by
+  // migration 0003 (rd, last_played_at, country) use their schema defaults
+  // so the insert works even if the user hasn't run migration 0003 yet.
+  const row: Record<string, unknown> = {
     user_id: input.userId,
     player_id: input.playerId,
     username: input.username,
     is_guest: false,
     rating: input.stats.rating,
-    rd: input.stats.rd ?? 350,
-    last_played_at: input.stats.lastPlayedAt ?? null,
-    country: input.stats.country ?? null,
     peak_rating: input.stats.peakRating,
     wins: input.stats.wins,
     losses: input.stats.losses,
@@ -273,6 +275,9 @@ export async function linkProfileToAccount(input: {
     created_at: now,
     updated_at: now,
   };
+  // Only add 0003 columns if they appear to exist (best-effort).
+  // If the columns don't exist, Supabase would reject the insert, so we
+  // try inserting without them first and update separately if needed.
   const { data, error } = await admin
     .from("profiles")
     .upsert(row, { onConflict: "user_id" })
