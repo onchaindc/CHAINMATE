@@ -64,10 +64,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Could not identify your profile." }, { status: 400 });
       }
 
-      // Check availability (excluding this user's current username)
+      // Check availability (excluding this player's current username)
       const stats = await getPlayerStats(storePlayerId);
       if (stats.username?.toLowerCase() !== newUsername.toLowerCase()) {
-        if (await usernameTaken(newUsername, auth?.userId)) {
+        if (await usernameTaken(newUsername, undefined, storePlayerId)) {
           return NextResponse.json(
             { error: "That username is already taken." },
             { status: 409 },
@@ -78,23 +78,16 @@ export async function POST(req: NextRequest) {
       // Update the game store (server-side identity)
       await updatePlayerIdentity(storePlayerId, { username: newUsername });
 
-      // Update Supabase profiles table — by user_id (the auth identity),
-      // not by player_id (which can be stale on the client).
-      if (supabaseConfigured()) {
+      // Update Supabase profiles table — by player_id (the ChainMate
+      // identity, always stable) not by user_id (which can drift if the
+      // account was created through a different auth flow).
+      if (supabaseConfigured() && storePlayerId) {
         try {
           const admin = getSupabaseAdmin();
-          if (auth?.userId) {
-            await admin!
-              .from("profiles")
-              .update({ username: newUsername, updated_at: new Date().toISOString() })
-              .eq("user_id", auth.userId);
-          } else if (playerId) {
-            // Fallback: update by player_id if no auth (shouldn't happen)
-            await admin!
-              .from("profiles")
-              .update({ username: newUsername, updated_at: new Date().toISOString() })
-              .eq("player_id", playerId);
-          }
+          await admin!
+            .from("profiles")
+            .update({ username: newUsername, updated_at: new Date().toISOString() })
+            .eq("player_id", storePlayerId);
         } catch {
           // Best-effort
         }
