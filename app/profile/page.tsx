@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Globe } from "lucide-react";
 import { RequireProfile } from "@/components/auth/require-profile";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
@@ -16,6 +16,8 @@ import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById, cn } from "@/lib/utils";
+import { getIdentityToken } from "@/lib/identity";
+import { Input } from "@/components/ui/input";
 import type { GameState, PlayerStats } from "@/lib/types";
 
 export default function ProfilePage() {
@@ -171,6 +173,17 @@ function ProfileContent() {
         </select>
       </div>
 
+      {/* Username — editable for authenticated users */}
+      {!identity.isGuest && (
+        <ProfileUsernameEditor
+          currentUsername={identity.username}
+          playerId={playerId}
+          onUpdated={(newName) => {
+            setStats((prev) => (prev ? { ...prev, username: newName } : prev));
+          }}
+        />
+      )}
+
       {error && (
         <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
@@ -286,6 +299,123 @@ function ProfileContent() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProfileUsernameEditor({
+  currentUsername,
+  playerId,
+  onUpdated,
+}: {
+  currentUsername: string;
+  playerId: string;
+  onUpdated: (name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [usernameState, setUsernameState] = useState<"idle" | "checking" | "ok" | "taken">("idle");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (newName.trim().length < 3 || newName.trim().toLowerCase() === currentUsername.toLowerCase()) {
+      setUsernameState("idle");
+      return;
+    }
+    if (checkTimer.current) clearTimeout(checkTimer.current);
+    setUsernameState("checking");
+    checkTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/identity/username?value=${encodeURIComponent(newName.trim())}`);
+        if (!res.ok) { setUsernameState("idle"); return; }
+        const data = (await res.json()) as { available?: boolean };
+        setUsernameState(data.available ? "ok" : "taken");
+      } catch { setUsernameState("idle"); }
+    }, 400);
+    return () => { if (checkTimer.current) clearTimeout(checkTimer.current); };
+  }, [newName, currentUsername]);
+
+  const save = async () => {
+    const trimmed = newName.trim();
+    if (trimmed.length < 3) { setError("Username must be at least 3 characters."); return; }
+    if (trimmed.toLowerCase() === currentUsername.toLowerCase()) { setEditing(false); return; }
+    if (usernameState === "taken") { setError("That username is already taken."); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const token = getIdentityToken();
+      const res = await fetch("/api/players/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ playerId, username: trimmed }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Failed to update username.");
+      onUpdated(trimmed);
+      setSuccess(true);
+      setEditing(false);
+      setTimeout(() => setSuccess(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update username.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="mt-4 flex animate-fade-in-up items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3 [animation-delay:80ms]">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Username</span>
+        <span className="flex-1 font-mono text-sm text-foreground">{currentUsername}</span>
+        {success && (
+          <span className="text-[11px] text-primary">Saved</span>
+        )}
+        <button
+          type="button"
+          onClick={() => { setEditing(true); setNewName(currentUsername); setError(null); setSuccess(false); }}
+          className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Edit
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-border/70 bg-card/50 p-4 animate-fade-in-up [animation-delay:80ms]">
+      <label htmlFor="edit-username" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {currentUsername ? "Edit Username" : "Set Username"}
+      </label>
+      <div className="mt-1.5 flex items-center gap-2">
+        <Input
+          id="edit-username"
+          autoFocus
+          value={newName}
+          maxLength={20}
+          onChange={(e) => { setNewName(e.target.value.replace(/[^A-Za-z0-9_]/g, "")); setUsernameState("idle"); setError(null); }}
+          onKeyDown={(e) => e.key === "Enter" && !saving && void save()}
+          className="flex-1"
+        />
+        <Button size="sm" onClick={() => void save()} disabled={saving || newName.trim().length < 3}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+      </div>
+      {usernameState === "ok" && <p className="mt-1 text-[11px] text-primary">Available</p>}
+      {usernameState === "taken" && <p className="mt-1 text-[11px] text-destructive">That username is taken</p>}
+      {usernameState === "checking" && <p className="mt-1 text-[11px] text-muted-foreground">Checking…</p>}
+      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        3–20 characters · letters, numbers, underscores.
+      </p>
     </div>
   );
 }

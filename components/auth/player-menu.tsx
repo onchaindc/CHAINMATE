@@ -59,7 +59,7 @@ export function PlayerMenu() {
         aria-label={`Account menu — signed in as ${name}`}
         aria-expanded={open}
         className={cn(
-          "flex items-center gap-2 rounded-full border border-border/70 py-1 pl-1 pr-2 transition-colors",
+          "flex items-center gap-2 rounded-full border border-border/70 py-1 pl-1 pr-2 transition-all active:scale-[0.97]",
           "hover:border-border hover:bg-secondary/40",
           open && "border-border bg-secondary/40",
         )}
@@ -106,14 +106,14 @@ export function PlayerMenu() {
             <Link
               href="/profile"
               onClick={close}
-              className="block px-4 py-2 text-sm text-foreground/85 transition-colors hover:bg-secondary/50"
+              className="block px-4 py-2 text-sm text-foreground/85 transition-all hover:bg-secondary/50 active:scale-[0.98]"
             >
               Profile
             </Link>
             <Link
               href="/games"
               onClick={close}
-              className="block px-4 py-2 text-sm text-foreground/85 transition-colors hover:bg-secondary/50"
+              className="block px-4 py-2 text-sm text-foreground/85 transition-all hover:bg-secondary/50 active:scale-[0.98]"
             >
               Games
             </Link>

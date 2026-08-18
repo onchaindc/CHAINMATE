@@ -104,10 +104,10 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
     const sb = getSupabaseBrowser();
     if (!sb) return;
 
-    const { data } = sb.auth.onAuthStateChange((event, session) => {
+    const { data } = sb.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session) {
-        // Placeholder until /api/identity/status resolves the profile —
-        // play under the device guest id in the meantime.
+        // Store the session immediately so the UI can react, then
+        // let refresh() resolve the full profile from the server.
         setAuthIdentity({
           userId: session.user.id,
           playerId: getGuestIdentity().playerId,
@@ -115,10 +115,23 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           rating: 0,
           accessToken: session.access_token,
         });
-        void refresh();
+        await refresh();
       } else if (event === "SIGNED_OUT") {
         clearAuthIdentity();
-        void refresh();
+        await refresh();
+      } else if (event === "INITIAL_SESSION" && session) {
+        // Page load / refresh: restore the session.
+        const existing = getAuthIdentity();
+        if (!existing || existing.accessToken !== session.access_token) {
+          setAuthIdentity({
+            userId: session.user.id,
+            playerId: getGuestIdentity().playerId,
+            username: existing?.username ?? "",
+            rating: existing?.rating ?? 0,
+            accessToken: session.access_token,
+          });
+          await refresh();
+        }
       }
     });
 

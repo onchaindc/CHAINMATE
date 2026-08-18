@@ -1,10 +1,14 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Play } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { HeroPreview } from "@/components/home/hero-preview";
+import { useIdentity } from "@/lib/identity-context";
 import { cn } from "@/lib/utils";
 
 export function Hero() {
+  const identity = useIdentity();
+  const isAuthed = !identity.isGuest && identity.username && identity.username.trim().length > 0;
+
   return (
     <section className="relative">
       <div className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.02fr_0.98fr] lg:py-20">
@@ -24,35 +28,61 @@ export function Hero() {
             clear report on how it was won.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link
-              href="/auth"
-              className={cn(
-                buttonVariants({ size: "lg" }),
-                "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
-              )}
-            >
-              Sign Up
-              <ArrowRight className="h-4 w-4" aria-hidden />
-            </Link>
-            <Link
-              href="/auth?mode=signin"
-              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-            >
-              Sign In
-            </Link>
-            <Link
-              href="/create"
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "lg" }),
-                "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              Play as Guest
-            </Link>
+            {isAuthed ? (
+              <>
+                <Link
+                  href="/create"
+                  className={cn(
+                    buttonVariants({ size: "lg" }),
+                    "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
+                  )}
+                >
+                  <Play className="h-4 w-4" aria-hidden />
+                  Play
+                </Link>
+                <Link
+                  href="/profile"
+                  className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+                >
+                  Profile
+                  <ArrowRight className="h-4 w-4" aria-hidden />
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/auth"
+                  className={cn(
+                    buttonVariants({ size: "lg" }),
+                    "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
+                  )}
+                >
+                  Sign Up
+                  <ArrowRight className="h-4 w-4" aria-hidden />
+                </Link>
+                <Link
+                  href="/auth?mode=signin"
+                  className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/create"
+                  className={cn(
+                    buttonVariants({ variant: "ghost", size: "lg" }),
+                    "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Play as Guest
+                </Link>
+              </>
+            )}
           </div>
-          <p className="mt-3 text-[11px] text-muted-foreground">
-            Sign up to save your rating, history and achievements across devices.
-          </p>
+          {!isAuthed && (
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Sign up to save your rating, history and achievements across devices.
+            </p>
+          )}
         </div>
         <div className="animate-fade-in-up [animation-delay:100ms]">
           <HeroPreview />
