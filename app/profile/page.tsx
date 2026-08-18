@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AlertCircle, Globe } from "lucide-react";
 import { RequireProfile } from "@/components/auth/require-profile";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -302,6 +303,142 @@ function ProfileContent() {
           )}
         </div>
       </div>
+
+      {/* Danger zone — delete account */}
+      {!identity.isGuest && (
+        <div className="mt-10 animate-fade-in-up [animation-delay:180ms]">
+          <DeleteAccountSection />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeleteAccountSection() {
+  const identity = useIdentity();
+  const router = useRouter();
+  const [confirmStep, setConfirmStep] = useState<0 | 1 | 2>(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const token = getIdentityToken();
+      const res = await fetch("/api/players/me", {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Failed to delete account.");
+      }
+      // Clear local identity and redirect
+      await identity.signOut();
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete account.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-destructive">
+        Danger zone
+      </h3>
+      <p className="mt-1.5 text-xs text-muted-foreground">
+        Permanently delete your account, username, rating, game history, achievements, and friend connections. This cannot be undone.
+      </p>
+
+      {confirmStep === 0 && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="mt-3 border-destructive/40 text-destructive hover:bg-destructive/10"
+          onClick={() => setConfirmStep(1)}
+        >
+          Delete account
+        </Button>
+      )}
+
+      {confirmStep === 1 && (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-destructive">
+            Are you sure? This will permanently delete your account ({identity.username || "Player"}) and all associated data.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={() => setConfirmStep(2)}
+              disabled={busy}
+            >
+              Yes, delete everything
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmStep(0)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {confirmStep === 2 && (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-destructive">
+            Type your username to confirm: {identity.username || "Player"}
+          </p>
+          <ConfirmDeleteInput
+            expected={identity.username || "Player"}
+            onConfirm={handleDelete}
+            onCancel={() => setConfirmStep(0)}
+            busy={busy}
+          />
+        </div>
+      )}
+
+      {error && (
+        <p className="mt-2 text-xs text-destructive">{error}</p>
+      )}
+    </div>
+  );
+}
+
+function ConfirmDeleteInput({
+  expected,
+  onConfirm,
+  onCancel,
+  busy,
+}: {
+  expected: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <Input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={expected}
+        className="flex-1"
+        onKeyDown={(e) => e.key === "Enter" && value.toLowerCase() === expected.toLowerCase() && onConfirm()}
+      />
+      <Button
+        size="sm"
+        variant="destructive"
+        onClick={onConfirm}
+        disabled={busy || value.toLowerCase() !== expected.toLowerCase()}
+      >
+        {busy ? "Deleting…" : "Confirm"}
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+        Cancel
+      </Button>
     </div>
   );
 }
