@@ -11,12 +11,18 @@ export function FinalCta() {
           Ready to make your first move?
         </h2>
         <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
-          No account, no wallet, no keys. Create a game and play in seconds.
+          Create an account to track your rating, history and achievements — or jump straight in as a guest.
         </p>
         <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-          <Link href="/create" className={cn(buttonVariants({ size: "lg" }))}>
+          <Link href="/auth" className={cn(buttonVariants({ size: "lg" }))}>
+            Sign Up
+          </Link>
+          <Link
+            href="/create"
+            className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+          >
             <Gamepad2 aria-hidden />
-            Create a game
+            Play as Guest
           </Link>
           <Link
             href="/create?mode=ai"

@@ -25,22 +25,34 @@ export function Hero() {
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link
-              href="/create"
+              href="/auth"
               className={cn(
                 buttonVariants({ size: "lg" }),
                 "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
               )}
             >
-              Play chess
-            </Link>
-            <Link
-              href="/join"
-              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-            >
-              Watch a game
+              Sign Up
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
+            <Link
+              href="/auth?mode=signin"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+            >
+              Sign In
+            </Link>
+            <Link
+              href="/create"
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "lg" }),
+                "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Play as Guest
+            </Link>
           </div>
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Sign up to save your rating, history and achievements across devices.
+          </p>
         </div>
         <div className="animate-fade-in-up [animation-delay:100ms]">
           <HeroPreview />

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Globe } from "lucide-react";
+import { RequireProfile } from "@/components/auth/require-profile";
 import { buttonVariants } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
@@ -18,6 +19,14 @@ import { mergeGamesById, cn } from "@/lib/utils";
 import type { GameState, PlayerStats } from "@/lib/types";
 
 export default function ProfilePage() {
+  return (
+    <RequireProfile>
+      <ProfileContent />
+    </RequireProfile>
+  );
+}
+
+function ProfileContent() {
   const identity = useIdentity();
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [games, setGames] = useState<GameState[] | null>(null);
