@@ -21,6 +21,21 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const PENDING_KEY = "chainmate:pending-auth:v1";
 
+/** Set right before the Google OAuth redirect so the return trip on /auth can
+ * tell a Google sign-in apart from the email-code flow (which never sets it). */
+const OAUTH_FLAG = "chainmate:oauth:v1";
+
+function GoogleGIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4">
+      <path fill="#4285F4" d="M23.5 12.27c0-.85-.08-1.66-.22-2.45H12v4.64h6.45a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.27-2.09 3.57-5.17 3.57-8.81z" />
+      <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.88-3c-1.08.72-2.45 1.15-4.06 1.15-3.13 0-5.78-2.11-6.72-4.95H1.27v3.1A12 12 0 0 0 12 24z" />
+      <path fill="#FBBC05" d="M5.28 14.29a7.2 7.2 0 0 1 0-4.58v-3.1H1.27a12 12 0 0 0 0 10.78l4.01-3.1z" />
+      <path fill="#EA4335" d="M12 4.77c1.76 0 3.34.6 4.58 1.79l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.27 6.61l4.01 3.1C6.22 6.88 8.87 4.77 12 4.77z" />
+    </svg>
+  );
+}
+
 /** The auth intent stored when a code is requested, so a magic link clicked
  * later (from the email) can finish the same flow — including the chosen
  * username for account creation.
@@ -116,7 +131,7 @@ function AuthContent() {
   const effectiveTokenHash = tokenHash ?? hashTokenHash;
   const effectiveTokenType = tokenType ?? hashTokenType ?? "email";
 
-  const [mode, setMode] = useState<Mode>(upgrade ? "create" : "guest");
+  const [mode, setMode] = useState<Mode>(upgrade ? "create" : supabaseClientConfigured() ? "create" : "guest");
   const [step, setStep] = useState<Step>("form");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -246,6 +261,77 @@ function AuthContent() {
     [mode, username, returnTo, identity, router],
   );
 
+  /**
+   * Finish a Google OAuth sign-in: link the Supabase account to a ChainMate
+   * profile. New accounts get a server-generated username from the Google
+   * profile; existing accounts are returned untouched (never renamed).
+   */
+  const completeGoogleAuth = useCallback(
+    async (session: Session) => {
+      try {
+        const res = await fetch("/api/identity/link", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ google: true }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          playerId?: string;
+          profile?: { player_id?: string; username?: string };
+        };
+        if (!res.ok) {
+          throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
+        }
+        const profile = body.profile;
+        setAuthIdentity({
+          userId: session.user.id,
+          playerId: body.playerId ?? profile?.player_id ?? getGuestIdentity().playerId,
+          username: profile?.username ?? "",
+          rating: 0,
+          accessToken: session.access_token,
+        });
+        clearPendingAuth();
+        // Drop the OAuth tokens from the URL so a refresh never re-processes them.
+        window.history.replaceState(null, "", "/auth");
+        setStep("done");
+        await identity.refresh();
+        setTimeout(() => {
+          router.push(returnTo.startsWith("/") ? returnTo : "/profile");
+        }, 350);
+      } catch (err) {
+        setBusy(false);
+        setError(friendlyAuthError(err));
+      }
+    },
+    [identity, router, returnTo, friendlyAuthError],
+  );
+
+  const startGoogleOAuth = useCallback(async () => {
+    setError(null);
+    const sb = getSupabaseBrowser();
+    if (!sb) {
+      setError("Accounts aren't configured on this deployment yet.");
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(OAUTH_FLAG, String(Date.now()));
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth`,
+          queryParams: { access_type: "offline", prompt: "consent" },
+        },
+      });
+      if (error) throw error;
+      // signInWithOAuth navigates to Google; the auth-page effect completes on return.
+    } catch (err) {
+      setError(friendlyAuthError(err));
+    }
+  }, [friendlyAuthError]);
+
   const configured = supabaseClientConfigured();
   const guest = useMemo(() => getGuestIdentity(), []);
 
@@ -285,6 +371,32 @@ function AuthContent() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenHash, tokenType, guest.playerId]);
+
+  // Google OAuth return: when a SIGNED_IN event arrives from the google
+  // provider shortly after we set the OAuth flag, finish the account flow.
+  const oauthHandled = useRef(false);
+  useEffect(() => {
+    const sb = getSupabaseBrowser();
+    if (!sb || oauthHandled.current) return;
+    const { data: subscription } = sb.auth.onAuthStateChange((event, session) => {
+      if (oauthHandled.current) return;
+      if (event !== "SIGNED_IN" && event !== "INITIAL_SESSION") return;
+      if (!session || session.user.app_metadata?.provider !== "google") return;
+      const flag = window.sessionStorage.getItem(OAUTH_FLAG);
+      if (!flag) return;
+      if (Date.now() - Number(flag) > 10 * 60 * 1000) {
+        window.sessionStorage.removeItem(OAUTH_FLAG);
+        return;
+      }
+      oauthHandled.current = true;
+      window.sessionStorage.removeItem(OAUTH_FLAG);
+      setBusy(true);
+      setError(null);
+      void completeGoogleAuth(session);
+    });
+    return () => subscription.subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completeGoogleAuth]);
 
   // Live username availability check (only when accounts are configured).
   useEffect(() => {
@@ -559,6 +671,21 @@ function AuthContent() {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
+            <button
+              type="button"
+              onClick={() => void startGoogleOAuth()}
+              disabled={busy}
+              className="flex w-full items-center justify-center gap-2.5 rounded-md border border-border/70 bg-card px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-card/80 disabled:opacity-60"
+            >
+              <GoogleGIcon /> Continue with Google
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="h-px flex-1 bg-border/70" aria-hidden />
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                or continue with email
+              </span>
+              <span className="h-px flex-1 bg-border/70" aria-hidden />
+            </div>
             {mode === "create" && (
               <div>
                 <label
