@@ -106,13 +106,14 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
 
     const { data } = sb.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session) {
-        // Store the session immediately so the UI can react, then
-        // let refresh() resolve the full profile from the server.
+        // Preserve any existing profile data — don't clobber the playerId
+        // or username that refresh() previously resolved from the server.
+        const existing = getAuthIdentity();
         setAuthIdentity({
           userId: session.user.id,
-          playerId: getGuestIdentity().playerId,
-          username: "",
-          rating: 0,
+          playerId: existing?.playerId ?? getGuestIdentity().playerId,
+          username: existing?.username ?? "",
+          rating: existing?.rating ?? 0,
           accessToken: session.access_token,
         });
         await refresh();
