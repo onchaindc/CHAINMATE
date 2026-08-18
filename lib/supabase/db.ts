@@ -79,11 +79,12 @@ export async function profileForPlayerId(playerId: string): Promise<ProfileRow |
   return data as unknown as ProfileRow;
 }
 
-export async function usernameTaken(username: string, excludeUserId?: string): Promise<boolean> {
+export async function usernameTaken(username: string, excludeUserId?: string, excludePlayerId?: string): Promise<boolean> {
   const admin = getSupabaseAdmin();
   if (!admin) return false;
-  let q = admin.from("profiles").select("user_id").ilike("username", username);
+  let q = admin.from("profiles").select("user_id, player_id").ilike("username", username);
   if (excludeUserId) q = q.neq("user_id", excludeUserId);
+  if (excludePlayerId) q = q.neq("player_id", excludePlayerId);
   const { data, error } = await q.limit(1);
   if (error) {
     // Surface the real problem (missing table, network, permissions) instead
