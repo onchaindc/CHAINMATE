@@ -187,8 +187,14 @@ function AuthContent() {
       };
       if (!res.ok) throw new Error(body.error ?? "We couldn't save your profile. Please try again.");
       const profile = body.profile;
+      // Decode the JWT to extract the Supabase user ID (sub claim).
+      let decodedUserId = "";
+      try {
+        const payload = JSON.parse(atob(googleOnboardingToken.split(".")[1] ?? ""));
+        decodedUserId = payload.sub ?? "";
+      } catch { /* best-effort */ }
       setAuthIdentity({
-        userId: "",
+        userId: decodedUserId,
         playerId: body.playerId ?? profile?.player_id ?? getGuestIdentity().playerId,
         username: profile?.username ?? trimmed,
         rating: 0,
