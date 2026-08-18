@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Gamepad2 } from "lucide-react";
+import { RequireProfile } from "@/components/auth/require-profile";
 import { buttonVariants } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { GuestBanner } from "@/components/auth/guest-banner";
@@ -14,6 +15,14 @@ import { mergeGamesById, cn } from "@/lib/utils";
 import type { GameState } from "@/lib/types";
 
 export default function GamesPage() {
+  return (
+    <RequireProfile>
+      <GamesContent />
+    </RequireProfile>
+  );
+}
+
+function GamesContent() {
   const identity = useIdentity();
   const [games, setGames] = useState<GameState[] | null>(null);
   const [error, setError] = useState<string | null>(null);

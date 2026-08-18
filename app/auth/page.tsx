@@ -111,6 +111,7 @@ function AuthContent() {
 
   const upgrade = params.get("upgrade") === "1";
   const returnTo = params.get("returnTo") ?? "/profile";
+  const modeParam = params.get("mode");
 
   // Present when the user clicked the "Sign in" link from the email (magic
   // link): the app must verify it here, or the click does nothing.
@@ -131,7 +132,12 @@ function AuthContent() {
   const effectiveTokenHash = tokenHash ?? hashTokenHash;
   const effectiveTokenType = tokenType ?? hashTokenType ?? "email";
 
-  const [mode, setMode] = useState<Mode>(upgrade ? "create" : supabaseClientConfigured() ? "create" : "guest");
+  const [mode, setMode] = useState<Mode>(
+    upgrade ? "create"
+    : modeParam === "signin" ? "signin"
+    : supabaseClientConfigured() ? "create"
+    : "guest",
+  );
   const [step, setStep] = useState<Step>("form");
   const [googleOnboardingToken, setGoogleOnboardingToken] = useState<string | null>(null);
   const [username, setUsername] = useState("");
@@ -143,6 +149,14 @@ function AuthContent() {
     "idle" | "checking" | "ok" | "taken" | "invalid"
   >("idle");
   const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // If user is already authenticated with a complete profile, redirect away.
+  useEffect(() => {
+    if (identity.status === "loading") return;
+    if (!identity.isGuest && identity.username && identity.username.trim().length > 0) {
+      router.replace(returnTo.startsWith("/") ? returnTo : "/profile");
+    }
+  }, [identity.status, identity.isGuest, identity.username, router, returnTo]);
 
   /** Set when this environment can't reach Supabase (e.g. a restricted preview). */
   const [connectivityWarning, setConnectivityWarning] = useState<string | null>(null);
