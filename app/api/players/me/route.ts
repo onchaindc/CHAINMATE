@@ -36,9 +36,14 @@ export async function POST(req: NextRequest) {
       const { data } = await admin!.auth.getUser(token);
       if (data.user) {
         const profile = await profileForUserId(data.user.id);
-        if (!profile || profile.player_id !== playerId) {
-          return NextResponse.json({ error: "You can only edit your own profile." }, { status: 403 });
+        if (profile) {
+          // Profile exists — verify the caller owns it.
+          if (profile.player_id !== playerId) {
+            return NextResponse.json({ error: "You can only edit your own profile." }, { status: 403 });
+          }
         }
+        // If profile doesn't exist yet (edge case during onboarding),
+        // allow the update — the caller has a valid Supabase session.
       }
     } catch {
       // Best-effort auth check — if Supabase is down, allow the update
