@@ -288,7 +288,10 @@ def apply_move(board, move, castling, ep):
         new_board[captured_idx] = None
 
     if move.get("promotion"):
-        new_board[to_idx] = move["promotion"] if is_white else move["promotion"].lower()
+        # Promotion codes are always generated lowercase (see _add_move: `for p in
+        # "qrbn"`), but this board encodes white as uppercase. Case must be applied
+        # per side or a white promotion silently hands the piece to black.
+        new_board[to_idx] = move["promotion"].upper() if is_white else move["promotion"].lower()
 
     # update castling rights
     new_castling = castling
