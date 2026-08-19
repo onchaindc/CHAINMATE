@@ -64,13 +64,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Could not identify your profile." }, { status: 400 });
       }
 
-      // Check availability (excluding this player's current username).
-      // Only exclude by player_id: storePlayerId is this profile's own
-      // player_id whenever a row exists, so that already covers the caller's
-      // row. Passing excludeUserId as well would add .neq("user_id", …), which
-      // evaluates to NULL for guest rows (user_id IS NULL) and drops them from
-      // the result — a name held by a guest would look available here and then
-      // collide with profiles_username_lower_idx as a 500 instead of a 409.
+      // Check availability, excluding this player's own row so re-saving the
+      // same name (or a case change) isn't reported as taken. Excluding by
+      // player_id is sufficient: storePlayerId is this profile's own
+      // player_id whenever a row exists, and player_id is `not null`, so the
+      // .neq() is NULL-safe. (usernameTaken's excludeUserId path needed an
+      // explicit NULL guard for exactly that reason — see lib/supabase/db.ts.)
       const stats = await getPlayerStats(storePlayerId);
       if (stats.username?.toLowerCase() !== newUsername.toLowerCase()) {
         if (await usernameTaken(newUsername, undefined, storePlayerId)) {
