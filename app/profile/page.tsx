@@ -78,6 +78,10 @@ function ProfileContent() {
     // playerId drives the fetch — refresh when identity changes.
   }, [playerId]);
 
+  // "Player" is a display placeholder only — never a saveable name. When the
+  // account has no profiles row (identity.linked === false) a rename cannot
+  // persist, so the banner below says so instead of letting this placeholder
+  // look like a name that just refuses to change.
   const name = identity.username || "Player";
   const rating = stats?.rating ?? identity.rating;
   const provisional = stats ? stats.games < 5 : false;
@@ -175,7 +179,17 @@ function ProfileContent() {
       </div>
 
       {/* Username — editable for authenticated users */}
-      {!identity.isGuest && (
+      {!identity.isGuest && !identity.linked && (
+        <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+          <p className="text-sm text-amber-700 dark:text-amber-500">
+            Your account isn&apos;t linked to a player profile yet, so your name can&apos;t be
+            saved. Sign out and back in to finish setting up your account.
+          </p>
+        </div>
+      )}
+
+      {!identity.isGuest && identity.linked && (
         <ProfileUsernameEditor
           currentUsername={identity.username}
           playerId={playerId}

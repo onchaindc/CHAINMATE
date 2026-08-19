@@ -254,6 +254,48 @@ def test_promotion(direct_vm, direct_deploy, direct_alice, direct_bob):
     assert game["moves"][-1]["promotion"] == "q"
 
 
+def test_white_promotion_puts_a_white_piece_on_the_board(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    """Regression: promotion codes are generated lowercase (`for p in "qrbn"`) while
+    the board encodes white as uppercase, so the board write has to re-apply case per
+    side. SAN cannot catch this — it is derived from the move dict, not the board — so
+    this asserts on the FEN instead."""
+    contract = new_game(direct_vm, direct_deploy, direct_alice, direct_bob)
+    play(direct_vm, contract, direct_alice, direct_bob, [
+        ("h2", "h4"), ("g7", "g5"), ("h4", "g5"), ("h7", "h5"),
+        ("g5", "g6"), ("h5", "h4"), ("g6", "g7"), ("h4", "h3"),
+    ])
+    direct_vm.sender = direct_alice
+    game = contract.submit_move("g7", "h8", "q")
+
+    board = game["fen"].split(" ")[0]
+    rank8 = board.split("/")[0]
+    assert rank8.endswith("Q"), f"h8 must hold a white queen, got rank 8 {rank8!r}"
+    assert board.count("Q") == 2, "white keeps its original queen and gains the promoted one"
+    assert board.count("q") == 1, "only black's original queen; none conjured on h8"
+
+
+def test_black_promotion_puts_a_black_piece_on_the_board(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    """Mirror of the white case, so a future 'fix' that uppercases both sides fails."""
+    contract = new_game(direct_vm, direct_deploy, direct_alice, direct_bob)
+    play(direct_vm, contract, direct_alice, direct_bob, [
+        ("a2", "a3"), ("h7", "h5"), ("a3", "a4"), ("h5", "h4"),
+        ("g2", "g3"), ("h4", "g3"), ("a4", "a5"), ("g3", "g2"),
+        ("a5", "a6"),
+    ])
+    direct_vm.sender = direct_bob
+    game = contract.submit_move("g2", "h1", "q")
+
+    board = game["fen"].split(" ")[0]
+    rank1 = board.split("/")[-1]
+    assert rank1.endswith("q"), f"h1 must hold a black queen, got rank 1 {rank1!r}"
+    assert board.count("q") == 2, "black keeps its original queen and gains the promoted one"
+    assert board.count("Q") == 1, "only white's original queen"
+
+
 def test_resignation_awards_opponent(
     direct_vm, direct_deploy, direct_alice, direct_bob
 ):

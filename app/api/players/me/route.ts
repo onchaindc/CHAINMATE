@@ -64,7 +64,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Could not identify your profile." }, { status: 400 });
       }
 
-      // Check availability (excluding this player's current username)
+      // Check availability (excluding this player's current username).
+      // Only exclude by player_id: storePlayerId is this profile's own
+      // player_id whenever a row exists, so that already covers the caller's
+      // row. Passing excludeUserId as well would add .neq("user_id", …), which
+      // evaluates to NULL for guest rows (user_id IS NULL) and drops them from
+      // the result — a name held by a guest would look available here and then
+      // collide with profiles_username_lower_idx as a 500 instead of a 409.
       const stats = await getPlayerStats(storePlayerId);
       if (stats.username?.toLowerCase() !== newUsername.toLowerCase()) {
         if (await usernameTaken(newUsername, undefined, storePlayerId)) {
@@ -75,23 +81,47 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Update the game store (server-side identity)
-      await updatePlayerIdentity(storePlayerId, { username: newUsername });
+      // Update the Supabase profile FIRST, and treat it as authoritative.
+      //
+      // Filter by the same key the read path uses. GET /api/identity/status
+      // resolves the account via profileForUserId() -> .eq("user_id", ...), so
+      // writing by player_id here meant a rename could update zero rows while
+      // still reporting success — the client then re-read by user_id, got the
+      // old value, and fell back to "Player". Guests have no user_id, so they
+      // continue to key off player_id.
+      if (supabaseConfigured()) {
+        const admin = getSupabaseAdmin();
+        const filterColumn = auth?.userId ? "user_id" : "player_id";
+        const filterValue = auth?.userId ?? storePlayerId;
 
-      // Update Supabase profiles table — by player_id (the ChainMate
-      // identity, always stable) not by user_id (which can drift if the
-      // account was created through a different auth flow).
-      if (supabaseConfigured() && storePlayerId) {
-        try {
-          const admin = getSupabaseAdmin();
-          await admin!
-            .from("profiles")
-            .update({ username: newUsername, updated_at: new Date().toISOString() })
-            .eq("player_id", storePlayerId);
-        } catch {
-          // Best-effort
+        // Supabase reports failures on the result object rather than throwing,
+        // and a filter matching nothing is not an error at all — so both have
+        // to be checked explicitly. .select() is what makes the row count
+        // observable.
+        const { data: updated, error: updateError } = await admin!
+          .from("profiles")
+          .update({ username: newUsername, updated_at: new Date().toISOString() })
+          .eq(filterColumn, filterValue)
+          .select("user_id, player_id, username");
+
+        if (updateError) {
+          return NextResponse.json({ error: updateError.message }, { status: 500 });
+        }
+        if (!updated || updated.length === 0) {
+          return NextResponse.json(
+            {
+              error:
+                "No profile is linked to this account yet, so the name could not be saved. Sign out and back in to finish account setup.",
+            },
+            { status: 409 },
+          );
         }
       }
+
+      // Mirror into the game store only after the durable write succeeded.
+      // updatePlayerIdentity() materialises a record for any id it is handed,
+      // so calling it first would fabricate a stats row under a mismatched id.
+      await updatePlayerIdentity(storePlayerId, { username: newUsername });
     }
 
     // Handle country change

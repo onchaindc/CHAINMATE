@@ -25,6 +25,12 @@ export interface IdentityState {
   username: string;
   rating: number | null;
   isGuest: boolean;
+  /**
+   * False when authenticated but no `profiles` row exists for this account.
+   * Profile edits cannot persist in that state, so the UI should prompt the
+   * user to finish setup rather than showing an editable-looking placeholder.
+   */
+  linked: boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -36,6 +42,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   const [playerId, setPlayerId] = useState("");
   const [username, setUsername] = useState("");
   const [rating, setRating] = useState<number | null>(null);
+  const [linked, setLinked] = useState(true);
 
   const refresh = useCallback(async () => {
     const guest = getGuestIdentity();
@@ -56,14 +63,20 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
         });
         const data = (await res.json()) as {
           authenticated?: boolean;
-          username?: string;
-          playerId?: string;
+          linked?: boolean;
+          username?: string | null;
+          playerId?: string | null;
         };
         if (data.authenticated) {
           const nextPlayerId = data.playerId ?? basePlayerId;
-          const nextUsername = data.username ?? (auth.username || "Player");
+          // Never invent a display name. A literal "Player" here masked the
+          // unlinked state as a real username — and because it was persisted
+          // below, it stuck across reloads and looked like a failed rename.
+          const nextUsername = data.username ?? auth.username ?? "";
+          const isLinked = data.linked !== false;
           setPlayerId(nextPlayerId);
           setUsername(nextUsername);
+          setLinked(isLinked);
           setStatus("user");
           setAuthIdentity({
             userId: auth.userId,
@@ -78,6 +91,8 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           setStatus("guest");
           setPlayerId(g.playerId);
           setUsername(g.username);
+          // Guests have no account to link; don't leave the flag false.
+          setLinked(true);
         }
       } catch {
         // Network hiccup — keep the stored identity; nothing to do.
@@ -160,6 +175,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
         username,
         rating,
         isGuest: status === "guest",
+        linked,
         refresh,
         signOut,
       }}
