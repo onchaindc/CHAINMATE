@@ -90,11 +90,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (!(await supabaseSchemaReady())) {
+  // supabaseSchemaReady() resolves to { ok, error? } — an object, which is
+  // always truthy. Testing it with `!` meant this guard never fired, so a
+  // missing schema fell through to the insert below and surfaced as a raw
+  // 500 instead of the actionable message. Check `.ok`, as
+  // /api/identity/status already does.
+  const schema = await supabaseSchemaReady().catch(() => ({
+    ok: false as const,
+    error: "Could not reach Supabase",
+  }));
+  if (!schema.ok) {
     return NextResponse.json(
       {
         error:
           "The ChainMate database isn't initialized yet. Run supabase/migrations/0001_init.sql in your Supabase SQL editor, then try again.",
+        detail: schema.error ?? null,
       },
       { status: 503 },
     );

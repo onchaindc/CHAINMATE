@@ -83,7 +83,26 @@ export async function usernameTaken(username: string, excludeUserId?: string, ex
   const admin = getSupabaseAdmin();
   if (!admin) return false;
   let q = admin.from("profiles").select("user_id, player_id").ilike("username", username);
-  if (excludeUserId) q = q.neq("user_id", excludeUserId);
+  if (excludeUserId) {
+    // NULL-safe exclusion. A plain .neq("user_id", x) compiles to
+    // `user_id <> x`, which evaluates to NULL — not true — for guest rows,
+    // where user_id IS NULL. Postgres drops those rows, so a name already
+    // held by a guest would read as "available" here and then violate
+    // profiles_username_lower_idx (a global unique index on lower(username),
+    // which guests share) on insert: a 500 instead of a clean 409.
+    // Keep a row when it belongs to a guest OR to a different account.
+    //
+    // .or() takes a raw PostgREST filter string, so the value is interpolated
+    // rather than bound. Callers pass a Supabase auth UUID, but this is an
+    // exported helper — validate the shape instead of trusting every future
+    // caller. A non-UUID would be a bug, so fail loudly rather than silently
+    // widening the query.
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(excludeUserId)) {
+      throw new Error("usernameTaken: excludeUserId must be a UUID");
+    }
+    q = q.or(`user_id.is.null,user_id.neq.${excludeUserId}`);
+  }
+  // player_id is `not null` in 0001, so .neq() needs no NULL guard here.
   if (excludePlayerId) q = q.neq("player_id", excludePlayerId);
   const { data, error } = await q.limit(1);
   if (error) {
