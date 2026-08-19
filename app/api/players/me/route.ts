@@ -148,9 +148,13 @@ export async function POST(req: NextRequest) {
  * account and all associated data.
  *
  * Deletes:
- *  - Supabase auth user (cascades to profiles, achievements, friendships)
- *  - Game store profile + stats
- *  - Server-side identity record
+ *  - player_achievements and friendships rows for this player_id
+ *  - Supabase auth user, which cascades to the profiles row
+ *  - Game store record (tombstoned)
+ *
+ * public.games is intentionally left intact: a game is a shared record and
+ * removing it would destroy the opponent's history too. See
+ * supabase/migrations/0005_cascade_player_data.sql.
  */
 export async function DELETE(req: NextRequest) {
   const auth = await resolveAuthUser(req);
@@ -161,32 +165,68 @@ export async function DELETE(req: NextRequest) {
   const playerId = auth.profile?.player_id;
 
   try {
-    // 1. Remove from game store (best-effort)
-    if (playerId) {
-      try {
-        const { updatePlayerIdentity } = await import("@/lib/server/hosted");
-        await updatePlayerIdentity(playerId, { username: `Deleted_${playerId.slice(-4)}`, isGuest: true });
-      } catch {
-        // Game store may not have this player — fine
+    // 1. Delete the player-scoped child rows explicitly.
+    //
+    // Migration 0005 adds ON DELETE CASCADE foreign keys for these, but do
+    // not rely on that here: the constraints only exist once an operator has
+    // run 0005, and this route previously *claimed* the cascade while the
+    // schema had exactly one FK in it (profiles.user_id → auth.users), so
+    // achievements and friendships survived every account deletion and
+    // deleted users kept showing up in other players' friends lists.
+    // Deleting explicitly is correct both before and after the migration.
+    if (supabaseConfigured() && playerId) {
+      const admin = getSupabaseAdmin();
+
+      const { error: achError } = await admin!
+        .from("player_achievements")
+        .delete()
+        .eq("player_id", playerId);
+      if (achError) {
+        return NextResponse.json({ error: achError.message }, { status: 500 });
+      }
+
+      // Friendships reference the player from either side of the pair. Two
+      // .eq() deletes rather than one .or(): .or() takes a raw PostgREST
+      // filter string that the value is interpolated into, and player_id is a
+      // free-form text column. Binding each side separately avoids that
+      // entirely.
+      for (const column of ["requester_player_id", "addressee_player_id"]) {
+        const { error: friendError } = await admin!
+          .from("friendships")
+          .delete()
+          .eq(column, playerId);
+        if (friendError) {
+          return NextResponse.json({ error: friendError.message }, { status: 500 });
+        }
       }
     }
 
-    // 2. Delete Supabase auth user — this cascades to profiles,
-    //    player_achievements, and friendships via FK constraints.
+    // 2. Delete the Supabase auth user. The profiles row goes with it via the
+    //    FK cascade declared in 0001.
+    //
+    //    deleteUser reports failure on the result object rather than throwing,
+    //    so the surrounding try/catch cannot see it. Unchecked, a failed
+    //    deletion returned { ok: true } and the account stayed live while the
+    //    UI reported success.
     if (supabaseConfigured()) {
+      const admin = getSupabaseAdmin();
+      const { error: deleteError } = await admin!.auth.admin.deleteUser(auth.userId);
+      if (deleteError) {
+        return NextResponse.json({ error: deleteError.message }, { status: 500 });
+      }
+    }
+
+    // 3. Tombstone the game store record. Last, because it is the only step
+    //    that cannot be rolled back by a later failure.
+    if (playerId) {
       try {
-        const admin = getSupabaseAdmin();
-        const header = req.headers.get("authorization") ?? "";
-        const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-        if (token) {
-          const { data } = await admin!.auth.getUser(token);
-          if (data.user) {
-            await admin!.auth.admin.deleteUser(data.user.id);
-          }
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to delete account";
-        return NextResponse.json({ error: message }, { status: 500 });
+        await updatePlayerIdentity(playerId, {
+          username: `Deleted_${playerId.slice(-4)}`,
+          isGuest: true,
+        });
+      } catch {
+        // The game store may never have seen this player. The account itself
+        // is already gone, so this is not worth failing the request over.
       }
     }
 
