@@ -88,14 +88,23 @@ export default function PublicPlayerPage() {
     }
   };
 
+  /**
+   * Challenge this player. This used to open an ordinary public game, which
+   * addressed nobody: the person being "challenged" was never told, and anyone
+   * could walk into the board first. Now it sends a real invitation that only
+   * they can accept — it pops up wherever they are in the app
+   * (components/game/challenge-inbox.tsx) — and takes us to the board to wait
+   * for their answer.
+   */
   const challenge = async () => {
+    if (!player) return;
     setChallenging(true);
     setError(null);
     try {
-      const game = await store.createGame({ timeControl: "10 + 0", visibility: "public" });
+      const game = await store.challenge(player.playerId, "10 + 0");
       router.push(`/game/${game.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't create the challenge.");
+      setError(err instanceof Error ? err.message : "Couldn't send the challenge.");
       setChallenging(false);
     }
   };
@@ -140,7 +149,7 @@ export default function PublicPlayerPage() {
         <PlayerAvatar name={player.username} size="lg" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <CountryFlag code={player.country} className="text-xl" />
+            <CountryFlag code={player.country} className="h-4 w-6" />
             <h1 className="font-display truncate text-2xl font-bold tracking-tight">
               {player.username}
             </h1>
@@ -211,7 +220,11 @@ export default function PublicPlayerPage() {
                   Friends
                 </Button>
               )}
-              <Button size="sm" disabled={challenging} onClick={() => void challenge()}>
+              <Button
+                size="sm"
+                disabled={challenging}
+                onClick={() => void challenge()}
+              >
                 {challenging ? (
                   <Loader2 className="animate-spin" aria-hidden />
                 ) : (

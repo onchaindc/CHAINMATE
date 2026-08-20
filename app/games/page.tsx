@@ -59,9 +59,19 @@ function GamesContent() {
         setGames(mergeGamesById([...remote.games, ...localGames]));
         setPlayers(remote.players);
         setDeltas(
-          new Map(
-            profile.stats.ratingHistory.map((h) => [h.gameId, h.change]),
-          ),
+          new Map([
+            // Deltas stamped on the games themselves are durable; the stats
+            // history is per-instance, so it can be missing entries.
+            ...remote.games.flatMap((g) => {
+              const change = g.ratings?.[identity.playerId]?.change;
+              return change === undefined
+                ? []
+                : ([[g.id, change]] as [string, number][]);
+            }),
+            ...profile.stats.ratingHistory.map(
+              (h) => [h.gameId, h.change] as [string, number],
+            ),
+          ]),
         );
       } catch (err) {
         if (cancelled) return;

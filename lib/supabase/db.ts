@@ -1,7 +1,6 @@
 // Server-only module — never import from client components.
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { supabaseConfigured } from "@/lib/supabase/config";
 import type { GameState, GameStatus, PlayerStats } from "@/lib/types";
 
 /**
@@ -113,31 +112,93 @@ export async function usernameTaken(username: string, excludeUserId?: string, ex
   return data !== null && data.length > 0;
 }
 
-/** Mirror player stats into profiles (guests included — all real players). */
+/**
+ * Mirror player stats into profiles (guests included — all real players).
+ *
+ * This is the *durable* record of a rating: the game store's KV is per-instance
+ * fast-path storage, so a rating that only lands there is invisible to any
+ * request served elsewhere. That means `rd` and `last_played_at` have to be
+ * written here too — a rating without its deviation resets to provisional on
+ * the next instance, and every subsequent game swings by a hundred points.
+ *
+ * Those two columns arrived in migration 0003, so if the write is rejected for
+ * an unknown column the row is retried with the 0001 column set instead. That
+ * keeps ratings persisting on an older schema rather than silently dropping
+ * every update.
+ */
 export async function upsertProfiles(statsList: PlayerStats[]): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin || statsList.length === 0) return;
   const now = new Date().toISOString();
-  const rows = statsList.map((s) => {
-    // Only insert columns from the base migration (0001). Migration 0003
-    // columns (rd, last_played_at, country) use schema defaults so this
-    // works even if migration 0003 hasn't been run yet.
-    return {
-      player_id: s.playerId,
-      username: s.username ?? `Guest_${s.playerId.slice(0, 4).toUpperCase()}`,
-      is_guest: s.isGuest ?? true,
-      rating: s.rating,
-      peak_rating: s.peakRating,
-      wins: s.wins,
-      losses: s.losses,
-      draws: s.draws,
-      games: s.games,
-      current_streak: s.currentStreak,
-      best_streak: s.bestStreak,
-      updated_at: now,
-    };
-  });
-  await admin.from("profiles").upsert(rows, { onConflict: "player_id" });
+  const base = statsList.map((s) => ({
+    player_id: s.playerId,
+    username: s.username ?? `Guest_${s.playerId.slice(0, 4).toUpperCase()}`,
+    is_guest: s.isGuest ?? true,
+    rating: s.rating,
+    peak_rating: s.peakRating,
+    wins: s.wins,
+    losses: s.losses,
+    draws: s.draws,
+    games: s.games,
+    current_streak: s.currentStreak,
+    best_streak: s.bestStreak,
+    updated_at: now,
+  }));
+  const rows = base.map((row, i) => ({
+    ...row,
+    rd: statsList[i].rd ?? null,
+    last_played_at: statsList[i].lastPlayedAt ?? null,
+  }));
+
+  const { error } = await admin.from("profiles").upsert(rows, { onConflict: "player_id" });
+  if (!error) return;
+  // Missing column (migration 0003 not applied) — keep the rating itself.
+  const { error: fallbackError } = await admin
+    .from("profiles")
+    .upsert(base, { onConflict: "player_id" });
+  if (fallbackError) throw new Error(fallbackError.message);
+}
+
+/**
+ * The ranked player list, straight from the durable profiles table.
+ *
+ * The game store keeps its own leaderboard blob, but that lives in
+ * per-instance storage — on a multi-instance host it only ever holds the
+ * players whose games happened to finish on the instance answering the
+ * request. Ranking has to come from the database to be the same list for
+ * everyone. Guests are excluded: their games are casual and unrated.
+ */
+export async function leaderboardProfiles(limit: number): Promise<PlayerStats[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return [];
+  const { data, error } = await admin
+    .from("profiles")
+    .select("*")
+    .eq("is_guest", false)
+    .gt("games", 0)
+    .order("rating", { ascending: false })
+    .order("games", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  return (data as unknown as ProfileRow[]).map((row) => ({
+    playerId: row.player_id,
+    username: row.username,
+    isGuest: row.is_guest,
+    country: row.country ?? undefined,
+    rating: row.rating,
+    rd: row.rd ?? undefined,
+    lastPlayedAt: row.last_played_at ?? null,
+    peakRating: row.peak_rating,
+    wins: row.wins,
+    losses: row.losses,
+    draws: row.draws,
+    games: row.games,
+    currentStreak: row.current_streak,
+    bestStreak: row.best_streak,
+    ratingHistory: [],
+    achievements: [],
+    updatedAt: new Date(row.updated_at).getTime() || Date.now(),
+  }));
 }
 
 /** Mirror a completed game into the games history table. */
@@ -190,7 +251,10 @@ export async function upsertGameSnapshot(game: GameState): Promise<void> {
     {
       id: game.id,
       white_player_id: game.creator,
-      black_player_id: game.opponent || "",
+      // A directed challenge names its target here while the game is still
+      // `waiting`, which is how the invited player finds it from any instance.
+      // The moment they accept, `opponent` is set and takes over.
+      black_player_id: game.opponent || game.invited || "",
       time_control: game.timeControl ?? null,
       status: game.status,
       result: resultLabel(game.status),
@@ -249,6 +313,231 @@ export async function recentGameSnapshots(
     if (game) out.push(game);
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Matchmaking pool + direct challenges (durable, cross-instance)      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Both the seek pool and pending challenges live in the `games` table, as real
+ * `waiting` rows. That is deliberate:
+ *
+ *  - The fast store (KV / file store) is per-instance on a serverless host, so
+ *    a seek pool kept there is invisible to the instance answering the *other*
+ *    player's request. That is exactly why two people could hit Search at the
+ *    same moment and both sit there searching forever.
+ *  - A `waiting` row already *is* a joinable game, and PostgREST folds filters
+ *    on an UPDATE into its WHERE clause — so `status = 'waiting'` doubles as the
+ *    lock. Of two players claiming the same row in the same instant, exactly one
+ *    gets a row back and the other gets none and moves on.
+ *  - It needs no new table, so none of this waits on a migration.
+ *
+ * A pool row is told apart from an ordinary open game by its id prefix; a
+ * challenge is told apart by naming the invited player in `black_player_id`
+ * while the row is still `waiting`.
+ */
+export const SEEK_ID_PREFIX = "hosted_s";
+
+/** One player waiting in the pool. */
+export interface SeekRow {
+  id: string;
+  white_player_id: string;
+  time_control: string | null;
+  created_at: number;
+}
+
+/** Every *other* player's live pool row, longest-waiting first. */
+export async function openSeekRows(
+  excludePlayerId: string,
+  since: number,
+  limit = 24,
+): Promise<SeekRow[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return [];
+  const { data, error } = await admin
+    .from("games")
+    .select("id, white_player_id, time_control, created_at")
+    .like("id", `${SEEK_ID_PREFIX}%`)
+    .eq("status", "waiting")
+    .eq("black_player_id", "")
+    .neq("white_player_id", excludePlayerId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error || !data) return [];
+  return data as unknown as SeekRow[];
+}
+
+/** My own live pool row — `status` says whether somebody claimed it. */
+export async function mySeekRow(
+  playerId: string,
+  since: number,
+): Promise<{ id: string; status: string } | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("games")
+    .select("id, status")
+    .like("id", `${SEEK_ID_PREFIX}%`)
+    .eq("white_player_id", playerId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as unknown as { id: string; status: string };
+}
+
+/**
+ * Take a `waiting` row as Black and start the game. Returns the started game,
+ * or null when another player won the race (or the row is gone) — the `.eq`
+ * filters are the lock, so a loser simply gets no rows back.
+ *
+ * `expectBlack` is the value black_player_id must still hold: "" for a pool row
+ * anyone may take, or the invited player's id for a directed challenge, so a
+ * challenge can only ever be accepted by the player it was sent to.
+ */
+export async function claimWaitingRow(
+  id: string,
+  blackPlayerId: string,
+  at: number,
+  expectBlack = "",
+): Promise<GameState | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("games")
+    .update({
+      black_player_id: blackPlayerId,
+      status: "active",
+      result: "active",
+      started_at: at,
+    })
+    .eq("id", id)
+    .eq("status", "waiting")
+    .eq("black_player_id", expectBlack)
+    .select("snapshot");
+  if (error || !data || data.length === 0) return null;
+  const stored = parseSnapshot(data[0].snapshot);
+  if (!stored) return null;
+  // The snapshot column still holds the waiting state — bring it in line with
+  // the row we just won so every instance reads the same started game. Pool and
+  // challenge games are broadcast like any other live match once they begin.
+  const started: GameState = {
+    ...stored,
+    opponent: blackPlayerId,
+    status: "active",
+    visibility: "public",
+    startedAt: at,
+    updatedAt: at,
+  };
+  await upsertGameSnapshot(started);
+  return started;
+}
+
+/** Leave the pool. False when the row is no longer waiting (already claimed). */
+export async function withdrawSeekRow(id: string): Promise<boolean> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return false;
+  const { data, error } = await admin
+    .from("games")
+    .delete()
+    .eq("id", id)
+    .eq("status", "waiting")
+    .eq("black_player_id", "")
+    .select("id");
+  return !error && Array.isArray(data) && data.length > 0;
+}
+
+/** Drop all of my waiting pool rows (cancel, or before re-registering). */
+export async function dropSeekRows(playerId: string): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin || !playerId) return;
+  await admin
+    .from("games")
+    .delete()
+    .like("id", `${SEEK_ID_PREFIX}%`)
+    .eq("white_player_id", playerId)
+    .eq("status", "waiting");
+}
+
+/** Clear pool rows nobody came back for, so the pool never rots. */
+export async function pruneStaleSeekRows(before: number): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  await admin
+    .from("games")
+    .delete()
+    .like("id", `${SEEK_ID_PREFIX}%`)
+    .eq("status", "waiting")
+    .lt("created_at", before);
+}
+
+/** Durable ratings for a set of player ids (players with no row are omitted). */
+export async function ratingsForPlayerIds(
+  ids: string[],
+): Promise<Record<string, number>> {
+  const admin = getSupabaseAdmin();
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!admin || unique.length === 0) return {};
+  const { data, error } = await admin
+    .from("profiles")
+    .select("player_id, rating")
+    .in("player_id", unique);
+  if (error || !data) return {};
+  const out: Record<string, number> = {};
+  for (const row of data as unknown as { player_id: string; rating: number }[]) {
+    out[row.player_id] = row.rating;
+  }
+  return out;
+}
+
+/** Challenges addressed to this player and still awaiting an answer. */
+export async function incomingChallengeSnapshots(
+  playerId: string,
+  since: number,
+  limit = 5,
+): Promise<GameState[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin || !playerId) return [];
+  const { data, error } = await admin
+    .from("games")
+    .select("snapshot")
+    .eq("black_player_id", playerId)
+    .eq("status", "waiting")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  const out: GameState[] = [];
+  for (const row of data) {
+    const game = parseSnapshot(row.snapshot);
+    if (game) out.push(game);
+  }
+  return out;
+}
+
+/** A challenge this player already has outstanding to the same opponent. */
+export async function outgoingChallengeSnapshot(
+  fromPlayerId: string,
+  toPlayerId: string,
+  since: number,
+): Promise<GameState | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("games")
+    .select("snapshot")
+    .eq("white_player_id", fromPlayerId)
+    .eq("black_player_id", toPlayerId)
+    .eq("status", "waiting")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return parseSnapshot(data.snapshot);
 }
 
 /** Persist awarded achievements for a player (trusted server-side records). */

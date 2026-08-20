@@ -97,7 +97,7 @@ function ProfileContent() {
         <PlayerAvatar name={name} size="lg" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <CountryFlag code={country} className="text-xl" />
+            <CountryFlag code={country} className="h-4 w-6" />
             <h1 className="font-display truncate text-2xl font-bold tracking-tight">{name}</h1>
             {identity.isGuest ? (
               <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

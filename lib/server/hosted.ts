@@ -8,21 +8,34 @@ import { analyzeGameOnChain, genlayerKeysAvailable } from "@/lib/server/genlayer
 import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
+  claimWaitingRow,
+  dropSeekRows,
   gameSnapshotById,
+  incomingChallengeSnapshots,
+  leaderboardProfiles,
+  mySeekRow,
+  openSeekRows,
+  outgoingChallengeSnapshot,
   profileForPlayerId,
+  pruneStaleSeekRows,
+  ratingsForPlayerIds,
   recentGameSnapshots,
+  SEEK_ID_PREFIX,
   setPlayerCountry,
   upsertAchievements,
   upsertGameRecord,
   upsertGameSnapshot,
   upsertProfiles,
+  withdrawSeekRow,
 } from "@/lib/supabase/db";
 import {
   AI_PLAYER_ID,
   isGameOver,
+  isStaleGameState,
   type CreateGameOptions,
   type GameIndexEntry,
   type GameState,
+  type GameStatus,
   type LiveGameEntry,
   type LivePlayerInfo,
   type PlayerStats,
@@ -67,8 +80,20 @@ function entryFromGame(game: GameState): GameIndexEntry {
     winner: game.winner,
     timeControl: game.timeControl,
     visibility: game.visibility,
+    invited: game.invited,
     endedAt: game.endedAt,
   };
+}
+
+/**
+ * A row that only exists to hold a player's place in the matchmaking pool, not
+ * a game anybody is playing. Those live in the games table (see
+ * lib/supabase/db.ts) so every instance shares one pool, and they must stay out
+ * of the games index — otherwise hitting Search would put a phantom "active
+ * session" in the searcher's own Games list.
+ */
+function isOpenPoolRow(game: { id: string; status: GameStatus }): boolean {
+  return game.status === "waiting" && game.id.startsWith(SEEK_ID_PREFIX);
 }
 
 async function readIndex(): Promise<GameIndexEntry[]> {
@@ -85,8 +110,9 @@ async function readIndex(): Promise<GameIndexEntry[]> {
   if (supabaseConfigured()) {
     try {
       const games = await recentGameSnapshots(INDEX_MAX);
-      if (games.length > 0) {
-        const entries = games.map(entryFromGame);
+      const real = games.filter((g) => !isOpenPoolRow(g));
+      if (real.length > 0) {
+        const entries = real.map(entryFromGame);
         await getGameStorage().set(INDEX_KEY, JSON.stringify(entries));
         return entries;
       }
@@ -324,9 +350,58 @@ async function writeStats(stats: PlayerStats): Promise<void> {
     JSON.stringify(list.slice(0, LEADERBOARD_MAX)),
   );
 }
-
 export async function getLeaderboard(): Promise<PlayerStats[]> {
+  // Prefer the durable ranking; the local blob is only as complete as this
+  // instance's history (see leaderboardProfiles).
+  if (supabaseConfigured()) {
+    try {
+      const ranked = await leaderboardProfiles(LEADERBOARD_MAX);
+      if (ranked.length > 0) return ranked;
+    } catch {
+      // fall through to the local blob
+    }
+  }
   return readLeaderboard();
+}
+
+/**
+ * The rating to actually play a rated game off.
+ *
+ * The stats blob above is per-instance fast-path storage. On a multi-instance
+ * host that means the copy this request sees may predate a game the player
+ * finished on another instance — rating them off it would undo that result. The
+ * Supabase profile is the durable record, so when it is newer it wins for the
+ * fields ratings depend on. History and achievements only exist in the cached
+ * copy, so those are kept either way.
+ */
+async function ratingBaseline(stats: PlayerStats): Promise<PlayerStats> {
+  if (!supabaseConfigured()) return stats;
+  try {
+    const row = await profileForPlayerId(stats.playerId);
+    if (!row) return stats;
+    const rowAt = new Date(row.updated_at).getTime() || 0;
+    if (rowAt <= stats.updatedAt) return stats;
+    return {
+      ...stats,
+      username: row.username ?? stats.username,
+      isGuest: row.is_guest,
+      rating: row.rating,
+      // rd / last_played_at only exist from migration 0003 onward.
+      rd: row.rd ?? stats.rd,
+      lastPlayedAt: row.last_played_at ?? stats.lastPlayedAt,
+      peakRating: Math.max(stats.peakRating, row.peak_rating),
+      wins: row.wins,
+      losses: row.losses,
+      draws: row.draws,
+      games: row.games,
+      currentStreak: row.current_streak,
+      bestStreak: row.best_streak,
+      updatedAt: rowAt,
+    };
+  } catch {
+    // Supabase trouble must never stop a game from being rated.
+    return stats;
+  }
 }
 
 /**
@@ -350,7 +425,9 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   const p2 = next.opponent;
   if (!p1 || !p2 || p1 === "ai" || p2 === "ai" || p1 === p2) return;
 
-  const [s1, s2] = await Promise.all([getPlayerStats(p1), getPlayerStats(p2)]);
+  const [c1, c2] = await Promise.all([getPlayerStats(p1), getPlayerStats(p2)]);
+  // Rate off the durable record when it is ahead of this instance's cache.
+  const [s1, s2] = await Promise.all([ratingBaseline(c1), ratingBaseline(c2)]);
   // Guests have no persistent record — their games stay casual.
   if (s1.isGuest || s2.isGuest) return;
 
@@ -430,18 +507,38 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   applyStats(s1, score1, ratingBefore1, ratingBefore2, rating1, rd1);
   applyStats(s2, score2, ratingBefore2, ratingBefore1, rating2, rd2);
 
-  await Promise.all([writeStats(s1), writeStats(s2)]);
+  // Stamp both deltas onto the game itself. The caller writes `next` straight
+  // after this, and the game is durable — so the result screen can show
+  // "1200 → 1362 +162" for either player from any instance, instead of relying
+  // on that player's stats cache happening to live on the server that answered.
+  next.ratings = {
+    [p1]: { before: ratingBefore1, after: rating1, change: rating1 - ratingBefore1 },
+    [p2]: { before: ratingBefore2, after: rating2, change: rating2 - ratingBefore2 },
+  };
+
+  // Sequential, not parallel: both writes read-modify-write the same
+  // leaderboard blob, so running them together made the second overwrite the
+  // first and one of the two players vanished from the standings.
+  await writeStats(s1);
+  await writeStats(s2);
 
   if (supabaseConfigured()) {
-    try {
-      await Promise.all([
-        upsertProfiles([s1, s2]),
-        upsertGameRecord(next),
-        upsertAchievements(s1),
-        upsertAchievements(s2),
-      ]);
-    } catch {
-      // Best-effort persistence — chess must never break because of this.
+    // Durable persistence. Best-effort — chess must never break because of
+    // this — but no longer silent: a rejected profile write is exactly how a
+    // rating "doesn't change", so it has to be visible in the logs.
+    const results = await Promise.allSettled([
+      upsertProfiles([s1, s2]),
+      upsertGameRecord(next),
+      upsertAchievements(s1),
+      upsertAchievements(s2),
+    ]);
+    for (const r of results) {
+      if (r.status === "rejected") {
+        console.warn(
+          "[chainmate] rating persistence failed:",
+          r.reason instanceof Error ? r.reason.message : r.reason,
+        );
+      }
     }
   }
 }
@@ -594,6 +691,19 @@ async function resolveTimeout(game: GameState): Promise<GameState> {
   return next;
 }
 
+/**
+ * True when `remote` actually carries something `local` doesn't: another move, a
+ * settled result, an opponent who sat down, or simply a later write. Used to
+ * decide whether the durable copy is worth adopting — writing back an identical
+ * snapshot on every poll would be pure noise.
+ */
+function isNewerGameState(local: GameState, remote: GameState): boolean {
+  if (remote.moves.length > local.moves.length) return true;
+  if (remote.status !== local.status) return true;
+  if (remote.opponent && !local.opponent) return true;
+  return (remote.updatedAt ?? 0) > (local.updatedAt ?? 0);
+}
+
 export async function getHostedGame(id: string): Promise<GameState | null> {
   const raw = await getGameStorage().get(keyFor(id));
   let game: GameState | null = null;
@@ -618,6 +728,22 @@ export async function getHostedGame(id: string): Promise<GameState | null> {
         // Best-effort
       }
     }
+  } else if (supabaseConfigured() && !isGameOver(game.status)) {
+    // We have a copy — but on a host without shared fast storage that copy is
+    // this instance's own, and the other player's moves (or their acceptance of
+    // a challenge) landed on a different one. Supabase is the single version
+    // both sides write to, so for a game still in progress it wins whenever it
+    // is ahead. Finished games are skipped: they never move again, and this
+    // runs on every poll.
+    try {
+      const remote = await gameSnapshotById(id);
+      if (remote && !isStaleGameState(game, remote) && isNewerGameState(game, remote)) {
+        game = remote;
+        await writeGame(remote);
+      }
+    } catch {
+      // Best-effort: the local copy is still playable.
+    }
   }
   if (!game) return null;
   // A flag fall may have happened since the last write — settle it now.
@@ -627,6 +753,11 @@ export async function getHostedGame(id: string): Promise<GameState | null> {
 export async function joinHostedGame(id: string, playerId: string): Promise<GameState> {
   const game = await getHostedGame(id);
   if (!game) throw new Error("Game not found");
+  // A directed challenge is addressed to one player; holding the link is not an
+  // invitation. Ordinary open games leave `invited` unset and are unaffected.
+  if (game.invited && game.invited !== playerId) {
+    throw new Error("This challenge was sent to another player");
+  }
   const res = joinPlayerToGame(game, playerId);
   if (!res.ok) throw new Error(res.error);
   const now = Date.now();
@@ -957,7 +1088,10 @@ export async function getPlayerProfile(playerId: string): Promise<{
   games: GameState[];
   players: Record<string, LivePlayerInfo>;
 }> {
-  const stats = await getPlayerStats(playerId);
+  // The profile page is where a player checks their rating, so it reads the
+  // durable record when it is ahead of this instance's cache — otherwise a win
+  // recorded elsewhere shows up as no change at all.
+  const stats = await ratingBaseline(await getPlayerStats(playerId));
   const entries = await readIndex();
   const mine = entries.filter(
     (e) => e.creator === playerId || e.opponent === playerId,
@@ -1154,20 +1288,153 @@ async function gameForPair(
   return game;
 }
 
+/* ------------------------------------------------------------------ */
+/* The durable pool — one queue shared by every server instance        */
+/* ------------------------------------------------------------------ */
+
+/** Hold this player's place in the pool with a placeholder game row. */
+async function createSeekRow(
+  playerId: string,
+  timeControl: string | undefined,
+  now: number,
+): Promise<void> {
+  const game: GameState = {
+    id: `${SEEK_ID_PREFIX}${randomHex(6)}`,
+    creator: playerId,
+    opponent: "",
+    status: "waiting",
+    winner: "",
+    fen: START_FEN,
+    moves: [],
+    commentary: [],
+    summary: "",
+    backend: "hosted",
+    timeControl,
+    // Not a spectator event until somebody actually takes it. Claiming the row
+    // flips it public (claimWaitingRow in lib/supabase/db.ts).
+    visibility: "private",
+    createdAt: now,
+    updatedAt: now,
+  };
+  // Deliberately NOT writeGame(): the row belongs to the pool, not to this
+  // instance's games index or live feed. It becomes a real local game on the
+  // instance that claims it, and getHostedGame restores it from the snapshot
+  // for the player on the other side.
+  await upsertGameSnapshot(game);
+}
+
 /**
- * Register the player as actively seeking, then try to pair them with the
- * closest compatible seeker. Pairing uses rating proximity: same time
+ * Pair two players through the shared pool.
+ *
+ * Every call is idempotent, which is what lets it serve as both "start
+ * searching" and "still searching?": it collects a pairing if one was made for
+ * us, otherwise tries to take somebody else's placeholder, otherwise makes sure
+ * ours is in the pool and reports that we're still waiting.
+ *
+ * Only the player with the lower id ever does the claiming. Without that rule,
+ * two players who spot each other in the same instant each claim the other's row
+ * and end up in two different games — each sitting alone at a board. The higher
+ * id waits to be claimed instead, so a pairing costs at most one extra poll.
+ */
+async function seekInPool(
+  playerId: string,
+  timeControl: string | undefined,
+  now: number,
+): Promise<SeekResult> {
+  const since = now - SEEKER_TTL_MS;
+
+  // 1. Somebody took the place I was holding — that IS the pairing.
+  const mine = await mySeekRow(playerId, since);
+  let inPool = mine?.status === "waiting";
+  if (mine && !inPool) {
+    const game = await getHostedGame(mine.id);
+    if (game && !isGameOver(game.status)) return { status: "matched", game };
+  }
+
+  // 2. Otherwise, look for someone to pair with.
+  const rows = await openSeekRows(playerId, since);
+  const compatible = rows.filter(
+    (r) =>
+      playerId < r.white_player_id &&
+      (!timeControl || !r.time_control || r.time_control === timeControl),
+  );
+
+  if (compatible.length > 0) {
+    const me = await ratingBaseline(await getPlayerStats(playerId));
+    const ratings = await ratingsForPlayerIds(
+      compatible.map((r) => r.white_player_id),
+    );
+    const maxDiff = (me.rd ?? START_RD) >= 250 ? 500 : 300;
+    const ranked = compatible
+      .map((row) => ({
+        row,
+        diff: Math.abs(
+          (ratings[row.white_player_id] ?? START_RATING) - me.rating,
+        ),
+      }))
+      .filter((c) => c.diff <= maxDiff)
+      .sort((a, b) => a.diff - b.diff);
+
+    // Leave the pool before claiming: while my own row is still open, a third
+    // player could take it at the very moment I take someone else's, and I'd
+    // owe two people a game.
+    if (ranked.length > 0 && mine && inPool) {
+      inPool = false;
+      if (!(await withdrawSeekRow(mine.id))) {
+        // Claimed between the read and the withdrawal — that pairing wins.
+        const game = await getHostedGame(mine.id);
+        if (game && !isGameOver(game.status)) return { status: "matched", game };
+      }
+    }
+
+    for (const candidate of ranked) {
+      const game = await claimWaitingRow(candidate.row.id, playerId, now);
+      if (!game) continue; // someone got there first — try the next candidate
+      await writeGame(game);
+      return { status: "matched", game };
+    }
+  }
+
+  // 3. Nobody to pair with yet: hold a place and let the next poll try again.
+  if (!inPool) {
+    await dropSeekRows(playerId);
+    await pruneStaleSeekRows(since);
+    await createSeekRow(playerId, timeControl, now);
+  }
+  return { status: "waiting" };
+}
+
+/**
+ * Enter the seek pool, pairing immediately with the closest compatible
+ * seeker. Pairing uses rating proximity: same time
  * control preferred, closest rating wins, and the match is only made when
  * the gap is reasonable for the player's confidence (provisional players
  * match almost anyone; established players pair within ~300 points). When a
  * pair is found, a real rated hosted game starts immediately — nothing is
  * faked or staged.
+ *
+ * The pool itself lives in Supabase whenever it is configured (see
+ * seekInPool below); the in-store pool underneath is the fallback for a
+ * single-instance deployment with no database.
  */
 export async function seekMatch(
   playerId: string,
   timeControl?: string,
 ): Promise<SeekResult> {
   const now = Date.now();
+
+  if (supabaseConfigured()) {
+    try {
+      return await seekInPool(playerId, timeControl, now);
+    } catch (err) {
+      // Never leave a player staring at a spinner because of a database
+      // hiccup — say so in the logs and fall through to the local pool.
+      console.warn(
+        "[chainmate] durable matchmaking unavailable, using local pool:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 
   // A pairing may already exist for us — made by the other side's seek, or by
   // our own earlier call whose response never made it back. Always honour it
@@ -1223,6 +1490,12 @@ export async function pollSeek(
   playerId: string,
   timeControl?: string,
 ): Promise<SeekResult> {
+  if (supabaseConfigured()) {
+    // seekMatch is idempotent on the durable pool — polling *is* seeking, so
+    // there is nothing extra to do here.
+    return seekMatch(playerId, timeControl);
+  }
+
   const pending = await takeSeekResult(playerId);
   if (pending) return { status: "matched", game: pending };
 
@@ -1233,7 +1506,162 @@ export async function pollSeek(
 
 /** Leave the seek pool (user cancelled or found an opponent elsewhere). */
 export async function cancelSeek(playerId: string): Promise<void> {
+  if (supabaseConfigured()) {
+    try {
+      await dropSeekRows(playerId);
+    } catch {
+      // Best-effort: an abandoned row ages out of the pool on its own.
+    }
+  }
   const seekers = await readSeekers();
   await writeSeekers(seekers.filter((s) => s.playerId !== playerId));
   await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`).catch(() => {});
+}
+
+/* ------------------------------------------------------------------ */
+/* Direct challenges — "X challenged you", accept or decline           */
+/* ------------------------------------------------------------------ */
+
+/** A challenge nobody answered stops being offered after 10 minutes. */
+const CHALLENGE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Challenge one specific player to a game.
+ *
+ * The result is a real `waiting` game that names its target, so only they can
+ * accept it — unlike an open game, which is whoever-gets-there-first. Sending
+ * the same player a second challenge returns the first one instead of stacking
+ * duplicates in their inbox.
+ */
+export async function createChallenge(
+  fromPlayerId: string,
+  toPlayerId: string,
+  timeControl?: string,
+): Promise<GameState> {
+  if (fromPlayerId === toPlayerId) {
+    throw new Error("You can't challenge yourself.");
+  }
+  const now = Date.now();
+
+  if (supabaseConfigured()) {
+    try {
+      const existing = await outgoingChallengeSnapshot(
+        fromPlayerId,
+        toPlayerId,
+        now - CHALLENGE_TTL_MS,
+      );
+      if (existing) return existing;
+    } catch {
+      // Can't check for a duplicate — sending a second one is the lesser evil.
+    }
+  }
+
+  const game: GameState = {
+    id: `hosted_c${randomHex(6)}`,
+    creator: fromPlayerId,
+    opponent: "",
+    invited: toPlayerId,
+    status: "waiting",
+    winner: "",
+    fen: START_FEN,
+    moves: [],
+    commentary: [],
+    summary: "",
+    backend: "hosted",
+    timeControl,
+    // Private until it starts: a challenge is between two players, and an
+    // unanswered one has no business in the public Watch list.
+    visibility: "private",
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeGame(game);
+  return game;
+}
+
+/** Challenges waiting on this player's answer, with who sent them. */
+export async function listIncomingChallenges(playerId: string): Promise<{
+  challenges: GameState[];
+  players: Record<string, LivePlayerInfo>;
+}> {
+  const since = Date.now() - CHALLENGE_TTL_MS;
+  let challenges: GameState[] = [];
+
+  if (supabaseConfigured()) {
+    challenges = await incomingChallengeSnapshots(playerId, since);
+  } else {
+    // No database: the challenge is only visible on the instance that took it,
+    // which is every instance when there is just the one (local development).
+    const pending = (await readIndex()).filter(
+      (e) =>
+        e.invited === playerId &&
+        e.status === "waiting" &&
+        (e.createdAt ?? 0) >= since,
+    );
+    challenges = await fetchGames(pending, 5);
+  }
+
+  // Anything already answered or started is no longer an invitation.
+  challenges = challenges.filter((g) => g.status === "waiting" && !g.opponent);
+  return {
+    challenges,
+    players: await playerNamesFor(challenges.map((g) => g.creator)),
+  };
+}
+
+/**
+ * Accept a challenge and start the game. Only the invited player can — the
+ * database filter enforces it, so it holds no matter which instance answers.
+ */
+export async function acceptChallenge(
+  id: string,
+  playerId: string,
+): Promise<GameState> {
+  const now = Date.now();
+
+  if (supabaseConfigured()) {
+    try {
+      const started = await claimWaitingRow(id, playerId, now, playerId);
+      if (started) {
+        await writeGame(started);
+        return started;
+      }
+    } catch {
+      // Fall through to the local path and let it report the real problem.
+    }
+  }
+
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("That challenge is no longer available.");
+  // Already accepted (a double click, or a retry after a dropped response).
+  if (game.opponent === playerId) return game;
+  if (game.invited && game.invited !== playerId) {
+    throw new Error("That challenge was sent to another player.");
+  }
+  if (game.status !== "waiting") {
+    throw new Error("That challenge is no longer available.");
+  }
+  return joinHostedGame(id, playerId);
+}
+
+/** Decline a challenge. The game is aborted, so it never affects a rating. */
+export async function declineChallenge(
+  id: string,
+  playerId: string,
+): Promise<void> {
+  const game = await getHostedGame(id);
+  if (!game) return;
+  if (game.invited && game.invited !== playerId) {
+    throw new Error("That challenge was sent to another player.");
+  }
+  // Already answered or started — nothing left to decline.
+  if (game.status !== "waiting") return;
+  const now = Date.now();
+  await writeGame({
+    ...game,
+    status: "aborted",
+    endedAt: now,
+    updatedAt: now,
+    summary: game.summary || "Challenge declined.",
+  });
 }
