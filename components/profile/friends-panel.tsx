@@ -6,7 +6,7 @@ import { AlertCircle, Search, UserPlus, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
-import { flagFor } from "@/lib/countries";
+import { CountryFlag } from "@/components/ui/country-flag";
 import { HostedGameStore, type SearchPlayerResult } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
 
@@ -93,11 +93,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
         <PlayerAvatar name={name} size="sm" />
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-            {p.country && (
-              <span className="shrink-0 text-sm leading-none" aria-hidden>
-                {flagFor(p.country)}
-              </span>
-            )}
+            <CountryFlag code={p.country} />
             {linkable ? (
               <Link
                 href={`/players/${encodeURIComponent(p.username!)}`}
@@ -169,11 +165,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
                 <PlayerAvatar name={r.username} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-                    {r.country && (
-                      <span className="shrink-0 text-sm leading-none" aria-hidden>
-                        {flagFor(r.country)}
-                      </span>
-                    )}
+                    <CountryFlag code={r.country} />
                     <Link
                       href={`/players/${encodeURIComponent(r.username)}`}
                       className="truncate underline-offset-2 hover:underline"

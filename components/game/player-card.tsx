@@ -2,7 +2,7 @@
 
 import { Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { flagFor } from "@/lib/countries";
+import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
 import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
 
@@ -55,22 +55,21 @@ export function PlayerCard({
       <div className="flex min-w-0 items-center gap-3">
         <span
           className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-base",
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
             side === "white"
               ? "border-zinc-400 bg-zinc-100 text-zinc-800"
               : "border-zinc-600 bg-zinc-800 text-zinc-100",
           )}
           aria-hidden
         >
-          {side === "white" ? "♔" : "♚"}
+          {/* A lucide crown, not a Unicode king (♔/♚): the chess glyphs are
+              absent from the default Windows UI fonts, so this disc rendered
+              an empty box on desktop. The disc colour carries the side. */}
+          <Crown className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-            {country && (
-              <span className="shrink-0 text-sm leading-none" title={country}>
-                {flagFor(country)}
-              </span>
-            )}
+            <CountryFlag code={country} />
             <span className="truncate capitalize">{displayName}</span>
             {isYou && (
               <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">

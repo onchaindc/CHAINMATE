@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { describePosition, turnLabel, type PositionInfo } from "@/lib/chess";
 import { getStoreForId } from "@/lib/store";
-import type { GameState, GameStore, PlayerSide } from "@/lib/types";
+import { isStaleGameState, type GameState, type GameStore, type PlayerSide } from "@/lib/types";
 
 export type BusyAction =
   | "join"
@@ -27,17 +27,30 @@ export function useGame(id: string) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
 
+  /**
+   * Every state write goes through here so a late-arriving poll response can
+   * never rewind the game. Compared against the *current* state (functional
+   * update) rather than a captured one, because a move result and a poll can
+   * land in the same tick.
+   */
+  const applyState = useCallback((next: GameState) => {
+    setGame((prev) => (prev && isStaleGameState(prev, next) ? prev : next));
+  }, []);
+
   useEffect(() => {
     const store = storeRef.current!;
     let cancelled = false;
 
     setLoading(true);
     setError(null);
+    // Drop the previous game's state so a rematch (new id, same page) can't
+    // render the finished game — and its result modal — under the new URL.
+    setGame(null);
     store
       .getGame(id)
       .then((state) => {
         if (cancelled) return;
-        setGame(state);
+        if (state) applyState(state);
         setLoading(false);
         if (!state) setError("Game not found");
       })
@@ -48,7 +61,7 @@ export function useGame(id: string) {
       });
 
     const unsubscribe = store.subscribe(id, (state) => {
-      setGame(state);
+      applyState(state);
       setError(null);
     });
 
@@ -56,15 +69,20 @@ export function useGame(id: string) {
       cancelled = true;
       unsubscribe();
     };
-  }, [id]);
+  }, [id, applyState]);
 
   const runAction = useCallback(
-    async (label: Exclude<BusyAction, null>, fn: () => Promise<GameState>) => {
+    async (
+      label: Exclude<BusyAction, null>,
+      fn: () => Promise<GameState>,
+      /** Rematch creates a *different* game, so its result isn't ours to show. */
+      apply = true,
+    ) => {
       setBusy(label);
       setError(null);
       try {
         const next = await fn();
-        setGame(next);
+        if (apply) applyState(next);
         return next;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Something went wrong";
@@ -74,7 +92,7 @@ export function useGame(id: string) {
         setBusy(null);
       }
     },
-    [],
+    [applyState],
   );
 
   const join = useCallback(
@@ -108,20 +126,23 @@ export function useGame(id: string) {
     [id, runAction],
   );
   const rematch = useCallback(
-    () => runAction("rematch", () => storeRef.current!.rematch(id)),
+    // `apply: false` — the server creates a brand-new game, and writing that
+    // into this hook (still bound to the old id) would flash the fresh board
+    // and re-fire the end-game modal before the caller navigates.
+    () => runAction("rematch", () => storeRef.current!.rematch(id), false),
     [id, runAction],
   );
   /** Settle a flag fall right now — silent: failures fall back to polling. */
   const resolveTimeout = useCallback(async () => {
     try {
       const next = await storeRef.current!.resolveTimeout(id);
-      setGame(next);
+      applyState(next);
       return next;
     } catch {
       // the next poll will settle it server-side
       return null;
     }
-  }, [id]);
+  }, [id, applyState]);
   const generateSummary = useCallback(
     () => runAction("summary", () => storeRef.current!.generateSummary(id)),
     [id, runAction],

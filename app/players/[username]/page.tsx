@@ -6,7 +6,7 @@ import { AlertCircle, Loader2, Swords, UserCheck, UserMinus, UserPlus } from "lu
 import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
-import { flagFor } from "@/lib/countries";
+import { CountryFlag } from "@/components/ui/country-flag";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -140,11 +140,7 @@ export default function PublicPlayerPage() {
         <PlayerAvatar name={player.username} size="lg" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            {player.country && (
-              <span className="text-xl leading-none" aria-hidden>
-                {flagFor(player.country)}
-              </span>
-            )}
+            <CountryFlag code={player.country} className="text-xl" />
             <h1 className="font-display truncate text-2xl font-bold tracking-tight">
               {player.username}
             </h1>
@@ -296,7 +292,7 @@ export default function PublicPlayerPage() {
                 className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/50 py-1 pl-1.5 pr-3 text-xs"
               >
                 <PlayerAvatar name={f.username ?? "?"} size="sm" className="!h-5 !w-5 !text-[9px]" />
-                {f.country && <span aria-hidden>{flagFor(f.country)}</span>}
+                <CountryFlag code={f.country} />
                 {!f.isGuest && f.username ? (
                   <a
                     href={`/players/${encodeURIComponent(f.username)}`}

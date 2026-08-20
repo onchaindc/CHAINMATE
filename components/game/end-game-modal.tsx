@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
+import { describeResult } from "@/lib/game-result";
 import { keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
@@ -31,31 +32,15 @@ interface EndGameModalProps {
   onClose: () => void;
 }
 
-const REASON_LABEL: Record<string, string> = {
-  checkmate: "by Checkmate",
-  resigned: "by Resignation",
-  stalemate: "by Stalemate",
-  draw: "by Draw",
-  timeout: "on Timeout",
-  aborted: "before any moves",
-};
-
-function reasonLabel(game: GameState): string {
-  if (game.status === "draw") {
-    // A draw by agreement leaves a real record in the commentary; other
-    // draw paths (stalemate / insufficient material) use the generic label.
-    const agreed = game.commentary.some((c) => /agreed/i.test(c.text));
-    return agreed ? "by Agreement" : "by Draw";
-  }
-  return REASON_LABEL[game.status] ?? game.status;
-}
-
 /**
  * The end-of-match modal. Shown automatically the moment any game ends, on
  * the same /game/[id] URL — the live game transitions to the completed-game
  * experience behind it (board becomes a replay). Every number shown comes
  * from the real game state: the result, the termination reason, per-player
  * rating deltas, achievements actually earned, and the match summary.
+ *
+ * The result wording comes from lib/game-result.ts, shared with the persistent
+ * result banner on the page so the two can never disagree about the same game.
  */
 export function EndGameModal({
   game,
@@ -68,25 +53,7 @@ export function EndGameModal({
   onReplay,
   onClose,
 }: EndGameModalProps) {
-  const winnerId = game.winner;
-  const winnerSide: PlayerSide | null =
-    winnerId === game.creator ? "white" : winnerId === game.opponent ? "black" : null;
-  const isDraw = !winnerSide;
-
-  const verdict =
-    game.status === "aborted"
-      ? "Aborted"
-      : isDraw
-        ? "Draw"
-        : mySide
-          ? winnerSide === mySide
-            ? "You won"
-            : "You lost"
-          : winnerSide === "white"
-            ? "White wins"
-            : "Black wins";
-  const won = !isDraw && mySide === winnerSide;
-  const lost = !isDraw && mySide !== null && mySide !== winnerSide;
+  const { verdict, reason, detail, winnerSide, won } = describeResult(game, mySide);
 
   // Real rating change for a side, from its rating history (server-computed).
   const ratingLine = (playerId: string) => {
@@ -193,7 +160,8 @@ export function EndGameModal({
             >
               {verdict}
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">{reasonLabel(game)}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{reason}</p>
+            <p className="mt-1.5 text-xs leading-snug text-muted-foreground/90">{detail}</p>
           </div>
           <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close result" className="shrink-0">
             <X className="h-4 w-4" aria-hidden />

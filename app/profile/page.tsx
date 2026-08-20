@@ -11,7 +11,8 @@ import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
 import { GuestBanner } from "@/components/auth/guest-banner";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
-import { COUNTRIES, countryName, flagFor } from "@/lib/countries";
+import { COUNTRIES } from "@/lib/countries";
+import { CountryFlag } from "@/components/ui/country-flag";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
@@ -96,15 +97,7 @@ function ProfileContent() {
         <PlayerAvatar name={name} size="lg" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            {country && (
-              <span
-                className="text-xl leading-none"
-                title={countryName(country) ?? undefined}
-                aria-label={countryName(country) ?? undefined}
-              >
-                {flagFor(country)}
-              </span>
-            )}
+            <CountryFlag code={country} className="text-xl" />
             <h1 className="font-display truncate text-2xl font-bold tracking-tight">{name}</h1>
             {identity.isGuest ? (
               <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -172,7 +165,10 @@ function ProfileContent() {
           <option value="">No country</option>
           {COUNTRIES.map((c) => (
             <option key={c.code} value={c.code}>
-              {flagFor(c.code)} {c.name}
+              {/* Native <option> renders text only, so no flag component here.
+                  The name alone reads correctly on every platform — an emoji
+                  flag would degrade to bare letters beside it on Windows. */}
+              {c.name}
             </option>
           ))}
         </select>

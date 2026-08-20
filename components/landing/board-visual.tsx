@@ -1,19 +1,26 @@
+"use client";
+
+import { defaultPieces } from "react-chessboard";
+
+/**
+ * The landing-page board. A real position (Giuoco Piano, move 8) rendered
+ * with the SAME piece artwork as the live game board.
+ *
+ * It used to draw pieces with Unicode chess characters (♜♞♝♛♚♟). Those depend
+ * entirely on system font fallback: Windows has no chess glyphs in its default
+ * UI fonts, so the front page showed empty squares or tofu boxes instead of
+ * pieces. defaultPieces is react-chessboard's inline-SVG piece set — the very
+ * set the game board renders — so the marketing board now matches the product
+ * exactly and cannot depend on the visitor's installed fonts.
+ */
+
 const FEN = "r1bq1rk1/1pp2ppp/p1np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 8";
 
-const GLYPHS: Record<string, string> = {
-  k: "♚",
-  q: "♛",
-  r: "♜",
-  b: "♝",
-  n: "♞",
-  p: "♟",
-  K: "♔",
-  Q: "♕",
-  R: "♖",
-  B: "♗",
-  N: "♘",
-  P: "♙",
-};
+/** FEN letter → react-chessboard piece key ("r" → "bR", "R" → "wR"). */
+function pieceKey(fenChar: string): string {
+  const color = fenChar === fenChar.toUpperCase() ? "w" : "b";
+  return `${color}${fenChar.toUpperCase()}`;
+}
 
 function fenGrid(): (string | null)[][] {
   const rows: (string | null)[][] = [];
@@ -37,30 +44,24 @@ export function BoardVisual() {
 
   return (
     <div className="relative mx-auto w-full max-w-md">
-      <div className="grid aspect-square grid-cols-8 overflow-hidden rounded-lg shadow-2xl shadow-black/60 ring-1 ring-border/60">
+      <div
+        className="grid aspect-square grid-cols-8 overflow-hidden rounded-lg shadow-2xl shadow-black/60 ring-1 ring-border/60"
+        role="img"
+        aria-label="A chess position from a Giuoco Piano opening"
+      >
         {grid.flatMap((row, r) =>
           row.map((piece, c) => {
             const dark = (r + c) % 2 === 1;
-            const isWhite = piece !== null && piece === piece.toUpperCase();
+            // Same square colours as the live board (components/game/chess-board.tsx)
+            // so the landing page and the product read as one surface.
+            const Piece = piece ? defaultPieces[pieceKey(piece)] : undefined;
             return (
               <div
                 key={`${r}-${c}`}
-                className={`flex items-center justify-center text-[clamp(14px,4.2vw,30px)] leading-none select-none ${
-                  dark ? "bg-board-dark" : "bg-board-light"
-                }`}
+                className="flex select-none items-center justify-center"
+                style={{ backgroundColor: dark ? "#6A5D4F" : "#EFE6D2" }}
               >
-                {piece ? (
-                  <span
-                    className={isWhite ? "text-[#F6F2E8]" : "text-[#23262B]"}
-                    style={{
-                      textShadow: isWhite
-                        ? "0 1px 2px rgba(0,0,0,0.65)"
-                        : "0 1px 1px rgba(255,255,255,0.35)",
-                    }}
-                  >
-                    {GLYPHS[piece]}
-                  </span>
-                ) : null}
+                {Piece ? <Piece /> : null}
               </div>
             );
           }),

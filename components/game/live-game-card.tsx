@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { Crown } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { flagFor } from "@/lib/countries";
+import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
 import { type LiveGameEntry } from "@/lib/types";
 
@@ -15,8 +16,12 @@ import { type LiveGameEntry } from "@/lib/types";
 export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
   const white = entry.creator;
   const black = entry.opponent;
-  const whiteName = white.name ?? "Guest";
-  const blackName = black.name ?? (black.isAi ? "ChainMate AI" : "Guest");
+  /** Short-id guest label, matching the rest of the app — a bare "Guest" made
+      every unnamed player look like the same person. */
+  const guestName = (id: string) => `Guest_${id.slice(0, 4).toUpperCase()}`;
+  const whiteName = white.name || guestName(white.id);
+  const blackName =
+    black.name || (black.isAi ? "ChainMate AI" : black.id ? guestName(black.id) : "Waiting…");
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 sm:gap-4">
@@ -36,15 +41,13 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
           <span className="flex min-w-0 items-center gap-2 text-sm">
             <span
               aria-hidden
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-[10px] text-zinc-800"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-zinc-800"
             >
-              ♔
+              {/* Lucide crown, not ♔ — the Unicode chess glyphs have no font
+                  on Windows and rendered as an empty box. */}
+              <Crown className="h-3 w-3" aria-hidden />
             </span>
-            {white.country && (
-              <span className="shrink-0 text-sm leading-none" aria-hidden>
-                {flagFor(white.country)}
-              </span>
-            )}
+            <CountryFlag code={white.country} />
             <span className="truncate font-medium text-foreground/90">{whiteName}</span>
             {typeof white.rating === "number" && (
               <span className="shrink-0 font-mono text-xs tabular-nums text-primary">
@@ -58,15 +61,11 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
           <span className="flex min-w-0 items-center gap-2 text-sm">
             <span
               aria-hidden
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800 text-[10px] text-zinc-100"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800 text-zinc-100"
             >
-              ♚
+              <Crown className="h-3 w-3" aria-hidden />
             </span>
-            {black.country && (
-              <span className="shrink-0 text-sm leading-none" aria-hidden>
-                {flagFor(black.country)}
-              </span>
-            )}
+            <CountryFlag code={black.country} />
             <span className="truncate font-medium text-foreground/90">{blackName}</span>
             {typeof black.rating === "number" && (
               <span className="shrink-0 font-mono text-xs tabular-nums text-primary">

@@ -107,6 +107,24 @@ export function turnLabel(turn: "w" | "b"): "white" | "black" {
   return turn === "w" ? "white" : "black";
 }
 
+/**
+ * Why a drawn position is drawn, phrased for display ("insufficient material").
+ * Threefold repetition cannot be re-derived from a FEN alone — it needs the
+ * move history — so it is the residual case once the others are ruled out.
+ * Returns null for positions that are not drawn, and for stalemate (which
+ * callers name themselves).
+ */
+export function drawReason(fen: string): string | null {
+  const chess = new Chess(fen);
+  if (chess.isStalemate() || !chess.isDraw()) return null;
+  if (chess.isInsufficientMaterial()) return "insufficient material";
+  const halfmoveClock = Number(fen.split(" ")[4] ?? 0);
+  if (Number.isFinite(halfmoveClock) && halfmoveClock >= 100) {
+    return "the fifty-move rule";
+  }
+  return "repetition";
+}
+
 export function opposite(side: "white" | "black"): "white" | "black" {
   return side === "white" ? "black" : "white";
 }

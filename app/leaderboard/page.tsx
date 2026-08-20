@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Trophy } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { flagFor } from "@/lib/countries";
+import { CountryFlag } from "@/components/ui/country-flag";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
@@ -102,11 +102,7 @@ export default function LeaderboardPage() {
                     </td>
                     <td className="px-4 py-2.5">
                       <span className="flex items-center gap-1.5 text-sm font-medium text-foreground/90">
-                        {p.country && (
-                          <span className="shrink-0 text-sm leading-none" aria-hidden>
-                            {flagFor(p.country)}
-                          </span>
-                        )}
+                        <CountryFlag code={p.country} />
                         {!p.isGuest && p.username ? (
                           <Link
                             href={`/players/${encodeURIComponent(p.username)}`}

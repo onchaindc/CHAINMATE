@@ -1,4 +1,5 @@
 import { abortGame, applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
+import { createHash } from "node:crypto";
 import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
@@ -909,20 +910,45 @@ export async function listHostedGames(opts: {
     const open = entries.filter(
       (e) => e.visibility === "public" && e.status === "waiting",
     );
-    const done = entries.filter((e) => isGameOver(e.status));
+    const done = entries
+      .filter((e) => isGameOver(e.status) && e.visibility !== "private")
+      .slice(0, 12);
+    const openTop = open.slice(0, 8);
     return {
       live: live.slice(0, LIVE_MAX),
-      open: open.slice(0, 8),
-      recent: done.slice(0, 12),
+      open: openTop,
+      recent: done,
+      // Names for the open/recent lists — the live feed carries its own
+      // enriched player info, but those two are bare index entries, so
+      // without this map every row falls back to a generic guest label.
+      players: await playerNamesFor([
+        ...openTop.flatMap((e) => [e.creator, e.opponent]),
+        ...done.flatMap((e) => [e.creator, e.opponent]),
+      ]),
     };
   }
 
   if (opts.scope === "recent") {
-    const done = entries.filter((e) => isGameOver(e.status));
-    return { games: await fetchGames(done, 5) };
+    const done = entries.filter(
+      (e) => isGameOver(e.status) && e.visibility !== "private",
+    );
+    const games = await fetchGames(done, 5);
+    return {
+      games,
+      players: await playerNamesFor(games.flatMap((g) => [g.creator, g.opponent])),
+    };
   }
 
-  return { games: await fetchGames(entries, 12) };
+  // Default: the public feed. Private games belong to their participants only —
+  // they are reachable by link, never by listing.
+  const games = await fetchGames(
+    entries.filter((e) => e.visibility !== "private"),
+    12,
+  );
+  return {
+    games,
+    players: await playerNamesFor(games.flatMap((g) => [g.creator, g.opponent])),
+  };
 }
 
 /** The current player's stats + their recent games (for the profile page). */
@@ -963,6 +989,13 @@ export type SeekResult =
   | { status: "matched"; game: GameState }
   | { status: "waiting" };
 
+/** A pairing handed to a player who was waiting when it was made. */
+interface SeekResultRecord {
+  id: string;
+  /** When the pairing was made — results older than the TTL are ignored. */
+  at?: number;
+}
+
 async function readSeekers(): Promise<SeekerEntry[]> {
   const raw = await getGameStorage().get(SEEKERS_KEY);
   if (!raw) return [];
@@ -979,20 +1012,169 @@ async function writeSeekers(entries: SeekerEntry[]): Promise<void> {
   await getGameStorage().set(SEEKERS_KEY, JSON.stringify(entries));
 }
 
+async function setSeekResult(playerId: string, gameId: string, at: number): Promise<void> {
+  const record: SeekResultRecord = { id: gameId, at };
+  await getGameStorage().set(`${SEEK_RESULT_PREFIX}${playerId}`, JSON.stringify(record));
+}
+
+/**
+ * Consume the pairing that was made for this player, if any. Results are
+ * one-shot and short-lived: one older than the seeker TTL, or pointing at a
+ * game that has since finished, is dropped rather than served — hitting Search
+ * must never drop a player into a stale game from a previous session.
+ */
+async function takeSeekResult(playerId: string): Promise<GameState | null> {
+  const key = `${SEEK_RESULT_PREFIX}${playerId}`;
+  const raw = await getGameStorage().get(key);
+  if (!raw) return null;
+  const drop = () => getGameStorage().delete(key).catch(() => {});
+
+  let record: SeekResultRecord | null = null;
+  try {
+    record = JSON.parse(raw) as SeekResultRecord;
+  } catch {
+    record = null;
+  }
+  if (!record?.id) {
+    await drop();
+    return null;
+  }
+  if (record.at && Date.now() - record.at > SEEKER_TTL_MS) {
+    await drop();
+    return null;
+  }
+
+  const game = await getHostedGame(record.id);
+  // Keep the pointer if the game isn't readable yet — the write may still be
+  // settling, and the next poll is only a couple of seconds away.
+  if (!game) return null;
+  await drop();
+  return isGameOver(game.status) ? null : game;
+}
+
+/**
+ * The game id for a pairing between two players, derived from the pair itself.
+ *
+ * This is what makes simultaneous pairing safe. Two clients that start
+ * searching in the same instant each read the pool, each see the other, and
+ * each try to create the game — with a random id they would create two
+ * different games and walk into separate boards (one player sat "searching"
+ * while the other was already paired). Because the id is a pure function of the
+ * two ids, both sides compute the *same* id without needing to coordinate, so
+ * the second write lands on the same game rather than a rival one.
+ *
+ * `generation` lets the same two players be matched again later without
+ * reusing the id of the game they already finished.
+ */
+function pairGameId(a: string, b: string, generation: number): string {
+  const pair = [a, b].sort().join("|");
+  const hash = createHash("sha1").update(pair).digest("hex").slice(0, 12);
+  return generation === 0 ? `hosted_p${hash}` : `hosted_p${hash}_${generation + 1}`;
+}
+
+/** How many times the same two players can be paired before ids go random. */
+const MAX_PAIR_GENERATIONS = 16;
+
+/**
+ * Find, or create, the single game that belongs to this pairing. An existing
+ * game for the pair is adopted rather than overwritten — otherwise the second
+ * caller in a simultaneous pairing would reset a board the first player had
+ * already started moving on. Slots that hold a finished (or long-abandoned)
+ * game are skipped, so a rematched pair always gets a fresh board.
+ */
+async function gameForPair(
+  a: string,
+  b: string,
+  timeControl: string | undefined,
+  now: number,
+): Promise<GameState> {
+  for (let generation = 0; generation < MAX_PAIR_GENERATIONS; generation++) {
+    const id = pairGameId(a, b, generation);
+    const existing = await getHostedGame(id);
+    if (existing) {
+      const samePair =
+        (existing.creator === a && existing.opponent === b) ||
+        (existing.creator === b && existing.opponent === a);
+      const fresh = now - (existing.startedAt ?? existing.createdAt ?? 0) < SEEKER_TTL_MS;
+      // Only adopt this pair's *current* game: a finished one, an abandoned one
+      // from an older session, or (astronomically unlikely) a hash collision
+      // all mean this slot is spent.
+      if (samePair && fresh && !isGameOver(existing.status)) return existing;
+      continue;
+    }
+
+    // Colours are decided by the pair, not by who called first — the two sides
+    // must agree. Alternating on generation keeps a pair that matches
+    // repeatedly from always drawing the same colours.
+    const [firstId, secondId] = [a, b].sort();
+    const white = generation % 2 === 0 ? firstId : secondId;
+    const black = white === firstId ? secondId : firstId;
+    const game: GameState = {
+      id,
+      creator: white,
+      opponent: black,
+      status: "active",
+      winner: "",
+      fen: START_FEN,
+      moves: [],
+      commentary: [],
+      summary: "",
+      backend: "hosted",
+      timeControl,
+      visibility: "public",
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+    };
+    await writeGame(game);
+    return game;
+  }
+
+  // Same two players, 16 pairings deep: fall back to a unique id. Both sides
+  // may create one here, which is the old behaviour — vanishingly rare, and
+  // still a real game either way.
+  const game: GameState = {
+    id: `hosted_${randomHex(6)}`,
+    creator: a,
+    opponent: b,
+    status: "active",
+    winner: "",
+    fen: START_FEN,
+    moves: [],
+    commentary: [],
+    summary: "",
+    backend: "hosted",
+    timeControl,
+    visibility: "public",
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+  };
+  await writeGame(game);
+  return game;
+}
+
 /**
  * Register the player as actively seeking, then try to pair them with the
  * closest compatible seeker. Pairing uses rating proximity: same time
  * control preferred, closest rating wins, and the match is only made when
  * the gap is reasonable for the player's confidence (provisional players
- * match almost anyone; established players pair within ~300 points). The
- * player who waited longer plays White. When a pair is found, a real rated
- * hosted game starts immediately — nothing is faked or staged.
+ * match almost anyone; established players pair within ~300 points). When a
+ * pair is found, a real rated hosted game starts immediately — nothing is
+ * faked or staged.
  */
 export async function seekMatch(
   playerId: string,
   timeControl?: string,
 ): Promise<SeekResult> {
   const now = Date.now();
+
+  // A pairing may already exist for us — made by the other side's seek, or by
+  // our own earlier call whose response never made it back. Always honour it
+  // instead of starting a second game.
+  const pending = await takeSeekResult(playerId);
+  if (pending) return { status: "matched", game: pending };
+
   const seekers = await readSeekers();
   const others = seekers.filter((s) => s.playerId !== playerId);
   const me = await getPlayerStats(playerId);
@@ -1012,31 +1194,17 @@ export async function seekMatch(
   const maxDiff = (me.rd ?? START_RD) >= 250 ? 500 : 300;
 
   if (best && bestDiff <= maxDiff) {
-    const game: GameState = {
-      id: `hosted_${randomHex(6)}`,
-      creator: best.playerId, // White — waited longer
-      opponent: playerId, // Black
-      status: "active",
-      winner: "",
-      fen: START_FEN,
-      moves: [],
-      commentary: [],
-      summary: "",
-      backend: "hosted",
-      timeControl: best.timeControl ?? timeControl,
-      visibility: "public",
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-    };
-    await writeGame(game);
-    // Both players leave the pool; the earlier seeker picks the game up
-    // through pollSeek (their seek call already returned "waiting").
-    await writeSeekers(others.filter((s) => s.playerId !== best!.playerId));
-    await getGameStorage().set(
-      `${SEEK_RESULT_PREFIX}${best.playerId}`,
-      JSON.stringify({ id: game.id }),
+    const game = await gameForPair(
+      best.playerId,
+      playerId,
+      best.timeControl ?? timeControl,
+      now,
     );
+    // Both players leave the pool.
+    await writeSeekers(others.filter((s) => s.playerId !== best!.playerId));
+    // Hand the same game id to the other side, whose seek call already
+    // returned "waiting" — their next poll picks it up.
+    await setSeekResult(best.playerId, game.id, now);
     return { status: "matched", game };
   }
 
@@ -1045,32 +1213,22 @@ export async function seekMatch(
 }
 
 /**
- * Check whether a pairing was created for this player (the other side's
- * seek call may have matched while this player's poll was in flight), and
- * recover from the two-simultaneous-seek race by re-entering the pool and
- * trying to pair again — so two players who started searching at the same
- * instant still get matched on the next poll.
+ * Poll for a pairing. Beyond collecting a result the other side left for us,
+ * this re-enters the pool every time: the seek pool is a single JSON blob, so
+ * two players registering at the same instant can clobber each other's entry —
+ * and a player who silently fell out of the pool would otherwise sit
+ * "Searching…" forever waiting for a pairing that can never be made.
  */
-export async function pollSeek(playerId: string): Promise<SeekResult> {
-  const raw = await getGameStorage().get(`${SEEK_RESULT_PREFIX}${playerId}`);
-  if (raw) {
-    try {
-      const { id } = JSON.parse(raw) as { id: string };
-      const game = await getHostedGame(id);
-      if (game) {
-        await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`);
-        return { status: "matched", game };
-      }
-    } catch {
-      // corrupted result — treat as still waiting
-    }
-  }
-  // Still registered? Re-seek with the same time control (re-entering the
-  // pool is idempotent) so a simultaneous-seek race still ends in a match.
+export async function pollSeek(
+  playerId: string,
+  timeControl?: string,
+): Promise<SeekResult> {
+  const pending = await takeSeekResult(playerId);
+  if (pending) return { status: "matched", game: pending };
+
   const seekers = await readSeekers();
   const mine = seekers.find((s) => s.playerId === playerId);
-  if (mine) return seekMatch(playerId, mine.timeControl);
-  return { status: "waiting" };
+  return seekMatch(playerId, mine?.timeControl ?? timeControl);
 }
 
 /** Leave the seek pool (user cancelled or found an opponent elsewhere). */

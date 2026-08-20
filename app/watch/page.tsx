@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Radio, Trophy, Users } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { GameRow } from "@/components/game/game-row";
 import { LiveGameCard } from "@/components/game/live-game-card";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
-import { HostedGameStore } from "@/lib/store/hosted-store";
+import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { isGameOver, type GameIndexEntry, type LiveGameEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -26,8 +26,23 @@ export default function WatchPage() {
   const [live, setLive] = useState<LiveGameEntry[]>([]);
   const [open, setOpen] = useState<GameIndexEntry[]>([]);
   const [recent, setRecent] = useState<GameIndexEntry[]>([]);
+  const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hostedMe = useMemo(() => getStore("hosted").getMyPlayerId(), []);
+  const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
+
+  /** Player id → username, for the rows that only carry ids. */
+  const names = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const info of Object.values(players)) {
+      if (info.name) map[info.id] = info.name;
+    }
+    return map;
+  }, [players]);
+
+  /** Local (offline) games use the local identity, not the hosted one. */
+  const [localIds, setLocalIds] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async () => {
     const hosted = getStore("hosted") as HostedGameStore;
@@ -52,6 +67,8 @@ export default function WatchPage() {
       }));
     setLive(remote.live);
     setOpen(remote.open);
+    setPlayers(remote.players);
+    setLocalIds(new Set(localRecent.map((e) => e.id)));
     setRecent(mergeEntries([...remote.recent, ...localRecent]));
     setError(null);
     setLoading(false);
@@ -157,7 +174,7 @@ export default function WatchPage() {
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {open.map((entry) => (
-                <GameRow key={entry.id} game={entry} />
+                <GameRow key={entry.id} game={entry} me={hostedMe} names={names} />
               ))}
             </div>
           )}
@@ -192,7 +209,14 @@ export default function WatchPage() {
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {recent.map((entry) => (
-                <GameRow key={entry.id} game={entry} />
+                <GameRow
+                  key={entry.id}
+                  game={entry}
+                  /* Offline games were played under the local identity, so
+                     "You" only lines up when matched against that one. */
+                  me={localIds.has(entry.id) ? localMe : hostedMe}
+                  names={localIds.has(entry.id) ? undefined : names}
+                />
               ))}
             </div>
           )}

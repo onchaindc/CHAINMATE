@@ -15,6 +15,7 @@ import {
   RefreshCw,
   SkipBack,
   SkipForward,
+  Trophy,
   Users,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
+import { describeResult } from "@/lib/game-result";
 import { AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -142,12 +144,25 @@ export default function GamePage() {
   }, [game?.fen]);
 
   /* ------------------------------------------------------------------ */
-  /* Post-game modal: appears automatically when the game ends.          */
+  /* Post-game modal: appears automatically when the game ends — once.    */
   /* ------------------------------------------------------------------ */
   const [resultOpen, setResultOpen] = useState(false);
+  /**
+   * Which result this page has already announced ("<game id>:<status>").
+   * Without it the modal re-opened on every render where `gameOver` had just
+   * become true again, so a player who dismissed it got it back seconds later
+   * — and a late poll landing an older snapshot made it flicker between
+   * results. The result banner below stays put regardless, so closing the
+   * modal never loses the information.
+   */
+  const announcedResult = useRef<string | null>(null);
   useEffect(() => {
-    if (gameOver) setResultOpen(true);
-  }, [gameOver, id]);
+    if (!game || !gameOver) return;
+    const key = `${game.id}:${game.status}`;
+    if (announcedResult.current === key) return;
+    announcedResult.current = key;
+    setResultOpen(true);
+  }, [game, gameOver]);
 
   /* ------------------------------------------------------------------ */
   /* Mobile: the match console shows one section at a time.              */
@@ -325,6 +340,37 @@ export default function GamePage() {
 
   const inCheck = pos?.inCheck ?? false;
 
+  /* The result, described once and reused by the banner below and by the
+     end-game modal — so the page always says how the game ended even after
+     the modal is dismissed. */
+  const result = gameOver ? describeResult(game, mySide) : null;
+
+  /**
+   * One player card, addressed by chess colour rather than screen position, so
+   * the caller can place it above or below the board according to the current
+   * board orientation.
+   */
+  const playerCardFor = (side: "white" | "black") => {
+    const isWhite = side === "white";
+    const playerId = isWhite ? game.creator : game.opponent;
+    return (
+      <PlayerCard
+        side={side}
+        playerId={playerId}
+        name={playerName(playerId)}
+        country={profiles[playerId]?.country}
+        rating={playerRating(playerId)}
+        clock={isWhite ? whiteClock : blackClock}
+        clockLow={isWhite ? whiteLow : blackLow}
+        isYou={mySide === side}
+        isWinner={winnerSide === side}
+        isTurn={!replayMode && turnSide === side && !gameOver && !waiting}
+        inCheck={inCheck && turnSide === side}
+        waiting={waiting && !game.opponent}
+      />
+    );
+  };
+
   const currentPly = replayMode ? (ply ?? 0) - 1 : game.moves.length - 1;
   const movesSection = (
     <MoveHistory moves={game.moves} currentPly={currentPly} />
@@ -422,23 +468,61 @@ export default function GamePage() {
         </div>
       )}
 
+      {/* Persistent result — the modal is dismissible, this is not. It is the
+          page's own record of how the match ended, and it can bring the full
+          report back at any time. */}
+      {result && (
+        <div
+          className={cn(
+            "animate-fade-in-up mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-4 py-3",
+            result.won
+              ? "border-primary/40 bg-primary/10"
+              : result.lost
+                ? "border-[#E07A5F]/40 bg-[#E07A5F]/10"
+                : "border-border/70 bg-secondary/30",
+          )}
+        >
+          <Trophy
+            className={cn(
+              "h-4 w-4 shrink-0",
+              result.won ? "text-primary" : "text-muted-foreground",
+            )}
+            aria-hidden
+          />
+          <p className="text-sm font-semibold tracking-tight">
+            {result.verdict}
+            <span className="ml-1.5 font-normal text-muted-foreground">{result.reason}</span>
+          </p>
+          <p className="min-w-0 basis-full text-xs leading-snug text-muted-foreground sm:basis-auto">
+            {result.detail}
+          </p>
+          {!resultOpen && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto shrink-0 text-xs"
+              onClick={() => setResultOpen(true)}
+            >
+              Full report
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         {/* Board column — the visual anchor */}
         <div className="mx-auto w-full max-w-[640px] space-y-3" ref={boardRef}>
-          <PlayerCard
-            side="black"
-            playerId={game.opponent}
-            name={playerName(game.opponent)}
-            country={profiles[game.opponent]?.country}
-            rating={playerRating(game.opponent)}
-            clock={blackClock}
-            clockLow={blackLow}
-            isYou={mySide === "black"}
-            isWinner={winnerSide === "black"}
-            isTurn={!replayMode && turnSide === "black" && !gameOver && !waiting}
-            inCheck={inCheck && turnSide === "black"}
-            waiting={waiting && !game.opponent}
-          />
+          {/* Player cards follow the board, always. The side shown at the
+              BOTTOM of the board is `orientation` (react-chessboard puts that
+              colour's home rank nearest the viewer), so its card belongs
+              below the board and the opponent's above.
+
+              These used to be hardcoded black-on-top / white-on-bottom. The
+              board itself flipped correctly for Black, so a Black player saw
+              their own pieces at the bottom but their own name card at the
+              top — the two halves of the screen disagreed about who was who,
+              which reads as the whole board being the wrong way round. */}
+          {playerCardFor(orientation === "white" ? "black" : "white")}
           <div className="overflow-hidden rounded-md ring-1 ring-border/40">
             <ChessBoard
               fen={boardFen ?? game.fen}
@@ -455,20 +539,7 @@ export default function GamePage() {
               busy={busy === "move"}
             />
           </div>
-          <PlayerCard
-            side="white"
-            playerId={game.creator}
-            name={playerName(game.creator)}
-            country={profiles[game.creator]?.country}
-            rating={playerRating(game.creator)}
-            clock={whiteClock}
-            clockLow={whiteLow}
-            isYou={mySide === "white"}
-            isWinner={winnerSide === "white"}
-            isTurn={!replayMode && turnSide === "white" && !gameOver && !waiting}
-            inCheck={inCheck && turnSide === "white"}
-            waiting={waiting && !game.opponent}
-          />
+          {playerCardFor(orientation)}
 
           {/* Board controls / replay controls — flip the board anytime */}
           {replayMode && game && (

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveActingPlayer } from "@/lib/server/auth";
 import {
   abortHostedGame,
   getHostedGame,
@@ -56,13 +57,16 @@ export async function POST(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const playerId = typeof body.playerId === "string" ? body.playerId.trim() : "";
-  if (!playerId) {
-    return NextResponse.json(
-      { error: "playerId is required — send your browser's player identity" },
-      { status: 400 },
-    );
+  // Never trust the body's playerId on its own: every action below is a write
+  // on someone's game, and a bare id is public knowledge. A session token, when
+  // present, decides who this is; without one the id must not belong to an
+  // account. (lib/server/auth.ts)
+  const claimed = typeof body.playerId === "string" ? body.playerId.trim() : "";
+  const acting = await resolveActingPlayer(req, claimed);
+  if (!acting.ok) {
+    return NextResponse.json({ error: acting.error }, { status: acting.status });
   }
+  const playerId = acting.playerId;
 
   try {
     switch (body.action) {
