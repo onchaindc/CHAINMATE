@@ -1,8 +1,10 @@
 /**
  * Optional country selection for player profiles. Country is never required;
- * when a player sets one, a small flag renders next to their username.
- * Flags are plain Unicode regional-indicator emoji derived from the ISO
- * 3166-1 alpha-2 code — no image assets or libraries needed.
+ * when a player sets one, a small marker renders next to their username.
+ *
+ * Rendering lives in components/ui/country-flag.tsx, NOT here: emoji flags
+ * only draw as flags on platforms that ship flag glyphs (Windows does not),
+ * so the UI has to choose between the emoji and an ISO-code chip at runtime.
  */
 
 /** A curated list of common countries (code → English name). */

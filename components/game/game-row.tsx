@@ -25,8 +25,15 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
   const opponent = game.opponent || "";
   const isCreatorMe = Boolean(me && creator === me);
   const isOpponentMe = Boolean(me && opponent === me);
+  /**
+   * Real username when the server sent one, otherwise the app-wide short-id
+   * guest label — a bare "Guest" made every unnamed player look like the same
+   * person, which is what made history rows read "Guest vs Guest".
+   */
   const nameFor = (id: string) =>
-    id === AI_PLAYER_ID ? "Computer" : names?.[id] ?? "Guest";
+    id === AI_PLAYER_ID
+      ? "Computer"
+      : names?.[id] || `Guest_${id.slice(0, 4).toUpperCase()}`;
   const opponentLabel = opponent ? nameFor(opponent) : "Waiting…";
   const creatorLabel = nameFor(creator);
   const title = isCreatorMe

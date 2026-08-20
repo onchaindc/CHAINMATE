@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveActingPlayer } from "@/lib/server/auth";
 import { createHostedGame, listHostedGames } from "@/lib/server/hosted";
 
 export const runtime = "nodejs";
@@ -18,13 +19,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const playerId = typeof body.playerId === "string" ? body.playerId.trim() : "";
-  if (!playerId) {
-    return NextResponse.json(
-      { error: "playerId is required — send your browser's player identity" },
-      { status: 400 },
-    );
+  // Same rule as the action route: creating a game in someone else's name would
+  // put a rated match on their record.
+  const claimed = typeof body.playerId === "string" ? body.playerId.trim() : "";
+  const acting = await resolveActingPlayer(req, claimed);
+  if (!acting.ok) {
+    return NextResponse.json({ error: acting.error }, { status: acting.status });
   }
+  const playerId = acting.playerId;
 
   try {
     const game = await createHostedGame(playerId, {
@@ -54,27 +56,30 @@ export async function GET(req: NextRequest) {
       if (!playerId) {
         return NextResponse.json({ error: "playerId is required" }, { status: 400 });
       }
-      const { games } = await listHostedGames({
+      const { games, players } = await listHostedGames({
         playerId,
         accountPlayerId,
         scope: "mine",
       });
-      return NextResponse.json({ games: games ?? [] });
+      // `players` carries the usernames for these games' participants. Dropping
+      // it here is what made every row render a generic guest label.
+      return NextResponse.json({ games: games ?? [], players: players ?? {} });
     }
     if (scope === "watch") {
-      const { live, open, recent } = await listHostedGames({ scope: "watch" });
+      const { live, open, recent, players } = await listHostedGames({ scope: "watch" });
       return NextResponse.json({
         live: live ?? [],
         open: open ?? [],
         recent: recent ?? [],
+        players: players ?? {},
       });
     }
     if (scope === "recent") {
-      const { games } = await listHostedGames({ scope: "recent" });
-      return NextResponse.json({ games: games ?? [] });
+      const { games, players } = await listHostedGames({ scope: "recent" });
+      return NextResponse.json({ games: games ?? [], players: players ?? {} });
     }
-    const { games } = await listHostedGames({ playerId });
-    return NextResponse.json({ games: games ?? [] });
+    const { games, players } = await listHostedGames({ playerId });
+    return NextResponse.json({ games: games ?? [], players: players ?? {} });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to list games";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -37,11 +37,13 @@ export function HeroPreview() {
         ]);
         if (cancelled) return;
         const localGames = local.listMyGames();
-        setPlayers(mine.players);
+        // Merge both name maps — the analysed game may involve players who
+        // never appear in my own games.
+        setPlayers({ ...recentGames.players, ...mine.players });
         const merged = mergeGamesById([...mine.games, ...localGames]);
         setRecent(merged.slice(0, 3));
 
-        const analyzed = [...recentGames, ...localGames]
+        const analyzed = [...recentGames.games, ...localGames]
           .filter((g) => g.summary && isGameOver(g.status))
           .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
         setLatest(analyzed[0] ?? null);

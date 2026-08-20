@@ -4,6 +4,11 @@ import type { PlayerStats } from "@/lib/types";
  * Achievement definitions. Awarding happens server-side (lib/server/hosted.ts)
  * from trusted game data — never from frontend-only state. Criteria are
  * evaluated against the player's real stats after every completed rated game.
+ *
+ * Icons are emoji, deliberately. Plain Unicode chess characters (♞ ♛ ♔) and
+ * dingbats (⚔ without a variation selector) are not present in the default
+ * Windows UI fonts, so half the badge set rendered as empty tofu boxes on
+ * desktop while looking fine on phones. Emoji ship with the OS everywhere.
  */
 
 export interface AchievementDef {
@@ -18,7 +23,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     code: "FIRST_GAME",
     name: "First Game",
     description: "Complete your first match.",
-    icon: "♟",
+    icon: "🌱",
   },
   {
     code: "FIRST_VICTORY",
@@ -30,7 +35,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     code: "TEN_GAMES",
     name: "10 Games",
     description: "Complete ten matches.",
-    icon: "♞",
+    icon: "🧩",
   },
   {
     code: "TEN_WINS",
@@ -42,7 +47,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     code: "HUNDRED_GAMES",
     name: "100 Games",
     description: "Complete one hundred matches.",
-    icon: "♛",
+    icon: "💯",
   },
   {
     code: "FIVE_WIN_STREAK",
@@ -54,13 +59,13 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     code: "REACH_1200",
     name: "Club Standard",
     description: "Reach a 1200 rating.",
-    icon: "♔",
+    icon: "🛡️",
   },
   {
     code: "REACH_1400",
     name: "Class A",
     description: "Reach a 1400 rating.",
-    icon: "♕",
+    icon: "⭐",
   },
   {
     code: "REACH_1600",
@@ -72,7 +77,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     code: "WIN_AGAINST_HIGHER_RATED",
     name: "Upset",
     description: "Defeat an opponent rated above you.",
-    icon: "⚔",
+    icon: "⚔️",
   },
 ];
 

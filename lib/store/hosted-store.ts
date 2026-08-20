@@ -1,6 +1,7 @@
 "use client";
 
 import { getAuthIdentity, getGuestIdentity, getIdentityToken } from "@/lib/identity";
+import { isStaleGameState } from "@/lib/types";
 import type {
   AiDifficulty,
   CreateGameOptions,
@@ -112,6 +113,8 @@ export class HostedGameStore implements GameStore {
   private listeners = new Map<string, Set<(state: GameState) => void>>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private lastState = new Map<string, string>();
+  /** Last snapshot handed to subscribers, so stale poll results can be dropped. */
+  private lastGame = new Map<string, GameState>();
 
   async createGame(options?: CreateGameOptions): Promise<GameState> {
     const data = await api("/api/hosted/games", {
@@ -241,9 +244,16 @@ export class HostedGameStore implements GameStore {
       try {
         const game = await this.getGame(id);
         if (!game) return;
+        // Two polls can be in flight at once, so a slow response can land after
+        // a fast one. Dropping the older snapshot here keeps the dedup key
+        // moving forwards — otherwise it would rewind and then re-fire the
+        // current state as if it were news.
+        const previous = this.lastGame.get(id);
+        if (previous && isStaleGameState(previous, game)) return;
         const key = JSON.stringify(game);
         if (this.lastState.get(id) !== key) {
           this.lastState.set(id, key);
+          this.lastGame.set(id, game);
           for (const cb of this.listeners.get(id) ?? []) cb(game);
         }
       } catch {
@@ -265,6 +275,7 @@ export class HostedGameStore implements GameStore {
           this.timers.delete(id);
         }
         this.lastState.delete(id);
+        this.lastGame.delete(id);
       }
     };
   }
@@ -296,18 +307,28 @@ export class HostedGameStore implements GameStore {
     live: LiveGameEntry[];
     open: GameIndexEntry[];
     recent: GameIndexEntry[];
+    players: Record<string, PlayerInfo>;
   }> {
     const data = await api("/api/hosted/games?scope=watch");
     return {
       live: data.live ?? [],
       open: data.open ?? [],
       recent: data.recent ?? [],
+      // `open` and `recent` are bare index entries (player ids, no names), so
+      // the caller needs this map to show real usernames on those rows.
+      players: (data.players ?? {}) as Record<string, PlayerInfo>,
     };
   }
 
-  async listRecent(): Promise<GameState[]> {
+  async listRecent(): Promise<{
+    games: GameState[];
+    players: Record<string, PlayerInfo>;
+  }> {
     const data = await api("/api/hosted/games?scope=recent");
-    return data.games ?? [];
+    return {
+      games: data.games ?? [],
+      players: (data.players ?? {}) as Record<string, PlayerInfo>,
+    };
   }
 
   async leaderboard(): Promise<PlayerStats[]> {
@@ -360,10 +381,12 @@ export class HostedGameStore implements GameStore {
   }
 
   /** Check whether a pairing appeared since the last seek call. */
-  async pollSeek(): Promise<SeekResult> {
-    const data = await api(
-      `/api/matchmaking/status?playerId=${encodeURIComponent(getMyPlayerId())}`,
-    );
+  async pollSeek(timeControl?: string): Promise<SeekResult> {
+    const params = new URLSearchParams({ playerId: getMyPlayerId() });
+    // Sent so the server can put the player back in the pool if they dropped
+    // out of it — otherwise they'd poll forever against an empty registration.
+    if (timeControl) params.set("timeControl", timeControl);
+    const data = await api(`/api/matchmaking/status?${params.toString()}`);
     return data as SeekResult;
   }
 

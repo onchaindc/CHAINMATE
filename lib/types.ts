@@ -242,6 +242,33 @@ export function isGameOver(status: GameStatus): boolean {
   return GAME_OVER_STATUSES.includes(status);
 }
 
+/**
+ * True when `next` is an *older* snapshot of the same game than `prev`.
+ *
+ * Clients learn about the opponent's moves by polling, so two requests can be
+ * in flight at once and a slow response can land after a fast one. Applying it
+ * blindly rewinds the board mid-game, or un-finishes a game that just ended —
+ * which is what makes the end-game modal flicker between results. A game only
+ * ever moves forwards, so any snapshot that goes backwards is stale and safe to
+ * drop: the next poll carries the current state anyway.
+ */
+export function isStaleGameState(prev: GameState, next: GameState): boolean {
+  // A different game entirely (e.g. a rematch) — not a stale version of this one.
+  if (prev.id !== next.id) return false;
+  // A finished game never reopens.
+  if (isGameOver(prev.status) && !isGameOver(next.status)) return true;
+  // Moves are only ever appended.
+  if (next.moves.length !== prev.moves.length) {
+    return next.moves.length < prev.moves.length;
+  }
+  // An opponent never un-joins.
+  if (prev.opponent && !next.opponent) return true;
+  // Same move count: fall back to the server's own write timestamp.
+  const prevAt = prev.updatedAt ?? 0;
+  const nextAt = next.updatedAt ?? 0;
+  return prevAt > 0 && nextAt > 0 && nextAt < prevAt;
+}
+
 export function shortId(id: string): string {
   if (id.length <= 14) return id;
   return `${id.slice(0, 8)}…${id.slice(-4)}`;

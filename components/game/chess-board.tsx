@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Chessboard } from "react-chessboard";
+import { Chessboard, defaultPieces } from "react-chessboard";
 import { Chess, type Square } from "chess.js";
 import { cn } from "@/lib/utils";
 import { START_FEN } from "@/lib/types";
@@ -17,6 +17,14 @@ interface ChessBoardProps {
 }
 
 const PROMOTION_PIECES = ["q", "r", "b", "n"] as const;
+
+/** Spoken piece names — "Promote to n" told a screen reader nothing. */
+const PROMOTION_NAMES: Record<(typeof PROMOTION_PIECES)[number], string> = {
+  q: "Queen",
+  r: "Rook",
+  b: "Bishop",
+  n: "Knight",
+};
 
 export function ChessBoard({
   fen,
@@ -194,20 +202,27 @@ export function ChessBoard({
               Promote to
             </span>
             <div className="flex gap-2">
-              {PROMOTION_PIECES.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => attemptMove(pending.from, pending.to, p)}
-                  className={cn(
-                    "flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-secondary text-2xl transition-colors hover:border-primary hover:bg-primary/20",
-                  )}
-                  aria-label={`Promote to ${p}`}
-                >
-                  {orientation === "white" || pending.to[1] === "8"
-                    ? { q: "♕", r: "♖", b: "♗", n: "♘" }[p]
-                    : { q: "♛", r: "♜", b: "♝", n: "♞" }[p]}
-                </button>
-              ))}
+              {PROMOTION_PIECES.map((p) => {
+                /* The promoting side is decided by the rank being reached —
+                   rank 8 is White's, rank 1 is Black's — never by which way
+                   the board happens to be facing. Drawn with the board's own
+                   inline-SVG piece set, because Unicode chess glyphs render as
+                   empty boxes on systems without a font that carries them. */
+                const white = pending.to[1] === "8";
+                const Piece = defaultPieces[`${white ? "w" : "b"}${p.toUpperCase()}`];
+                return (
+                  <button
+                    key={p}
+                    onClick={() => attemptMove(pending.from, pending.to, p)}
+                    className={cn(
+                      "flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-secondary p-1 transition-colors hover:border-primary hover:bg-primary/20",
+                    )}
+                    aria-label={`Promote to ${PROMOTION_NAMES[p]}`}
+                  >
+                    {Piece ? <Piece /> : PROMOTION_NAMES[p]}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

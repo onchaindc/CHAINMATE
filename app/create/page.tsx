@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, Bot, Loader2, Search, ShieldCheck, Swords, Users } from "lucide-react";
+import { AlertCircle, ArrowRight, Bot, Crown, Loader2, Search, ShieldCheck, Swords, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getGameBackend } from "@/lib/config";
@@ -80,7 +80,7 @@ export default function CreateGamePage() {
             return;
           }
           try {
-            const result = await (getStore("hosted") as HostedGameStore).pollSeek();
+            const result = await (getStore("hosted") as HostedGameStore).pollSeek(timeControl);
             if (result.status === "matched") {
               setSeeking(false);
               router.push(`/game/${result.game.id}`);
@@ -357,8 +357,10 @@ export default function CreateGamePage() {
 
           {/* Side info */}
           <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2.5">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-base text-zinc-900">
-              ♔
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-zinc-900">
+              {/* Lucide crown, not ♔ — Windows has no font for the Unicode
+                  chess glyphs, so this disc showed an empty box. */}
+              <Crown className="h-4 w-4" aria-hidden />
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">
