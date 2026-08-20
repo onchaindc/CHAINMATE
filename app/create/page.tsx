@@ -26,6 +26,16 @@ const MODES: { id: GameMode; label: string; icon: typeof Users }[] = [
 
 const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
 
+/** Poll interval while waiting in the seek pool. */
+const SEEK_POLL_MS = 2500;
+/**
+ * How long to keep searching before giving up and showing the manual options.
+ * ~90s: long enough that two people who agreed to play at the same moment
+ * actually find each other (the old ~15s cap ran out while they were still
+ * getting to the page), short enough that nobody stares at a dead spinner.
+ */
+const MAX_SEEK_ATTEMPTS = Math.round(90_000 / SEEK_POLL_MS);
+
 export default function CreateGamePage() {
   const router = useRouter();
   const backend = getGameBackend();
@@ -73,8 +83,7 @@ export default function CreateGamePage() {
         pollTimer.current = setTimeout(async () => {
           if (!mountedRef.current) return;
           attemptsRef.current += 1;
-          // Give it ~15s, then fall back to the normal options.
-          if (attemptsRef.current >= 6) {
+          if (attemptsRef.current >= MAX_SEEK_ATTEMPTS) {
             setSeeking(false);
             void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
             return;
@@ -90,7 +99,7 @@ export default function CreateGamePage() {
             // transient — keep polling
           }
           poll();
-        }, 2500);
+        }, SEEK_POLL_MS);
       };
       poll();
     } catch (err) {

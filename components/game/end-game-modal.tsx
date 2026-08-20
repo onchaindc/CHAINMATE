@@ -55,8 +55,15 @@ export function EndGameModal({
 }: EndGameModalProps) {
   const { verdict, reason, detail, winnerSide, won } = describeResult(game, mySide);
 
-  // Real rating change for a side, from its rating history (server-computed).
+  // Real rating change for a side. The game itself carries both deltas (written
+  // server-side when it ended), so this works for whichever player is looking
+  // and from any server instance; the stats history is only a fallback for
+  // games that finished before deltas were recorded there.
   const ratingLine = (playerId: string) => {
+    const stamped = game.ratings?.[playerId];
+    if (stamped) {
+      return { before: stamped.before, after: stamped.after, change: stamped.change };
+    }
     const s = stats[playerId];
     if (!s) return null;
     const entry = s.ratingHistory.find((h) => h.gameId === game.id);

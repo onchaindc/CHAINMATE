@@ -2,9 +2,10 @@
  * Optional country selection for player profiles. Country is never required;
  * when a player sets one, a small marker renders next to their username.
  *
- * Rendering lives in components/ui/country-flag.tsx, NOT here: emoji flags
- * only draw as flags on platforms that ship flag glyphs (Windows does not),
- * so the UI has to choose between the emoji and an ISO-code chip at runtime.
+ * Rendering lives in components/ui/country-flag.tsx, NOT here: the flags are
+ * SVG files served from /public/flags (one per code below), because emoji flags
+ * only draw as flags on platforms that ship flag glyphs — Windows does not.
+ * Adding a country here means adding public/flags/<CODE>.svg alongside it.
  */
 
 /** A curated list of common countries (code → English name). */
@@ -74,15 +75,6 @@ export const COUNTRIES: { code: string; name: string }[] = [
 ];
 
 const COUNTRY_NAMES = new Map(COUNTRIES.map((c) => [c.code, c.name]));
-
-/** Emoji flag for an ISO alpha-2 code ("" when unknown). */
-export function flagFor(code?: string | null): string {
-  if (!code || !/^[A-Za-z]{2}$/.test(code)) return "";
-  const upper = code.toUpperCase();
-  return String.fromCodePoint(
-    ...[...upper].map((ch) => 0x1f1e6 + (ch.charCodeAt(0) - 65)),
-  );
-}
 
 export function countryName(code?: string | null): string | null {
   if (!code) return null;

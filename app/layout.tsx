@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { ChallengeInbox } from "@/components/game/challenge-inbox";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteNav } from "@/components/site-nav";
 import { IdentityProvider } from "@/lib/identity-context";
@@ -38,6 +39,9 @@ export default function RootLayout({
           <SiteNav />
           <main className="flex-1">{children}</main>
           <SiteFooter />
+          {/* App-wide: a challenge is a live invitation, so it has to reach the
+              player on whatever page they're on. */}
+          <ChallengeInbox />
         </IdentityProvider>
       </body>
     </html>

@@ -94,9 +94,24 @@ export interface GameState {
   timeControl?: string;
   /** Whether the game shows up in the public Watch list. Defaults to private. */
   visibility?: "public" | "private";
+  /**
+   * The player this game was *sent* to, on a direct challenge — set while the
+   * game is still `waiting`, cleared in effect the moment they accept (at which
+   * point they are the `opponent`). Only the invited player may accept, which is
+   * what separates a challenge from an open game anyone can join.
+   */
+  invited?: string;
   /** Pending draw offer: the player id who offered, and when. Cleared on
    *  accept, decline or the next move. */
   drawOffer?: { by: string; at: number };
+  /**
+   * Rating change this game produced, per player id — written once, by the
+   * server, at the moment the game ended. It lives on the game (not only in
+   * each player's stats) so the result screen can show both sides' deltas from
+   * the game alone: player stats are cached per server instance, so a client
+   * whose request lands elsewhere would otherwise see no change at all.
+   */
+  ratings?: Record<string, { before: number; after: number; change: number }>;
   /** Unix ms timestamps, set by the stores that persist games. */
   createdAt?: number;
   updatedAt?: number;
@@ -192,6 +207,8 @@ export interface GameIndexEntry {
   winner: string;
   timeControl?: string;
   visibility?: "public" | "private";
+  /** Target of a pending direct challenge (see GameState.invited). */
+  invited?: string;
   endedAt?: number;
 }
 

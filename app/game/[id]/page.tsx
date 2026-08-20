@@ -297,6 +297,15 @@ export default function GamePage() {
   }
 
   const waiting = game.status === "waiting";
+  /**
+   * A directed challenge belongs to the player it was sent to — holding the link
+   * doesn't make you the opponent (the server enforces this too). So a stranger
+   * looking at one is a spectator, not someone we invite to "Join as Black".
+   */
+  const challengeToSomeoneElse =
+    waiting && Boolean(game.invited) && game.invited !== myId;
+  /** Waiting, and this viewer really can sit down as Black. */
+  const canJoinAsBlack = waiting && mySide === null && !challengeToSomeoneElse;
   const interactive = !waiting && !gameOver && mySide !== null && myTurn && busy !== "move";
   const baseOrientation: "white" | "black" = mySide === "black" ? "black" : "white";
   const orientation: "white" | "black" = flipped
@@ -652,7 +661,7 @@ export default function GamePage() {
                       Resign
                     </Button>
                   )}
-                  {waiting && mySide === null && (
+                  {canJoinAsBlack && (
                     <Button size="sm" disabled={busy !== null} onClick={() => void join()}>
                       {busy === "join" ? (
                         <Loader2 className="animate-spin" aria-hidden />
@@ -670,9 +679,11 @@ export default function GamePage() {
                   game.status === "active" && !interactive && mySide && !busy && "animate-pulse-soft",
                 )}
               >
-                {waiting && mySide === null
+                {canJoinAsBlack
                   ? "You'll play Black once you join."
-                  : game.status === "active" && mySide === null
+                  : challengeToSomeoneElse
+                    ? "This is a private challenge between two players."
+                    : game.status === "active" && mySide === null
                     ? "Spectating — the game updates live."
                     : game.status === "active" && drawSupported && drawOfferFromMe
                       ? "Draw offered — waiting for your opponent's reply."
@@ -693,9 +704,13 @@ export default function GamePage() {
         {/* Match console */}
         <div className="space-y-4 lg:max-h-[calc(100vh-8.5rem)] lg:min-w-0 lg:overflow-y-auto lg:pr-1">
           {waiting && mySide === "white" && (
-            <WaitingPanel gameId={game.id} local={isLocalGameId(game.id)} />
+            <WaitingPanel
+              gameId={game.id}
+              local={isLocalGameId(game.id)}
+              challenge={Boolean(game.invited)}
+            />
           )}
-          {waiting && mySide === null && (
+          {canJoinAsBlack && (
             <div className="rounded-lg border border-border/60 bg-card/40 px-4 py-3 text-sm text-muted-foreground">
               The creator of this game hasn&rsquo;t been matched yet. Join as Black
               to start playing.

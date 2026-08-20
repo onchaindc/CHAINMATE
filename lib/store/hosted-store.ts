@@ -25,6 +25,8 @@ const POLL_MS = 2000;
 interface ApiResponse {
   game?: GameState;
   games?: GameState[];
+  /** Challenges waiting on my answer (/api/challenges). */
+  challenges?: GameState[];
   live?: LiveGameEntry[];
   open?: GameIndexEntry[];
   recent?: GameIndexEntry[];
@@ -395,6 +397,57 @@ export class HostedGameStore implements GameStore {
     await api("/api/matchmaking/cancel", {
       method: "POST",
       body: JSON.stringify({ playerId: getMyPlayerId() }),
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Direct challenges — invite one specific player                       */
+  /* ------------------------------------------------------------------ */
+
+  /** Challenge a specific player. Returns the pending game to wait in. */
+  async challenge(opponentId: string, timeControl?: string): Promise<GameState> {
+    const data = await api("/api/challenges", {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: getMyPlayerId(),
+        opponentId,
+        timeControl,
+        action: "create",
+      }),
+    });
+    if (!data.game) throw new Error("Could not send the challenge");
+    return data.game;
+  }
+
+  /** Challenges waiting on my answer, with the challenger's display info. */
+  async listChallenges(): Promise<{
+    challenges: GameState[];
+    players: Record<string, PlayerInfo>;
+  }> {
+    const data = await api(
+      `/api/challenges?playerId=${encodeURIComponent(getMyPlayerId())}`,
+    );
+    return {
+      challenges: data.challenges ?? [],
+      players: (data.players ?? {}) as Record<string, PlayerInfo>,
+    };
+  }
+
+  /** Accept a challenge — the game starts immediately. */
+  async acceptChallenge(gameId: string): Promise<GameState> {
+    const data = await api("/api/challenges", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId(), gameId, action: "accept" }),
+    });
+    if (!data.game) throw new Error("Could not accept the challenge");
+    return data.game;
+  }
+
+  /** Decline a challenge — the game is aborted, nothing is rated. */
+  async declineChallenge(gameId: string): Promise<void> {
+    await api("/api/challenges", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId(), gameId, action: "decline" }),
     });
   }
 
