@@ -45,7 +45,7 @@ export function BoardVisual() {
   return (
     <div className="relative mx-auto w-full max-w-md">
       <div
-        className="grid aspect-square grid-cols-8 overflow-hidden rounded-lg shadow-2xl shadow-black/60 ring-1 ring-border/60"
+        className="grid aspect-square grid-cols-8 overflow-hidden rounded-lg shadow-elevation-3 ring-1 ring-border/60"
         role="img"
         aria-label="A chess position from a Giuoco Piano opening"
       >
@@ -59,7 +59,11 @@ export function BoardVisual() {
               <div
                 key={`${r}-${c}`}
                 className="flex select-none items-center justify-center"
-                style={{ backgroundColor: dark ? "#6A5D4F" : "#EFE6D2" }}
+                style={{
+                  backgroundColor: dark
+                    ? "hsl(var(--board-dark))"
+                    : "hsl(var(--board-light))",
+                }}
               >
                 {Piece ? <Piece /> : null}
               </div>

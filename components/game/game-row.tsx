@@ -95,7 +95,7 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
             className={cn(
               "font-mono text-xs tabular-nums",
               delta > 0 && "text-primary",
-              delta < 0 && "text-[#E07A5F]",
+              delta < 0 && "text-negative",
               delta === 0 && "text-muted-foreground",
             )}
             title="Rating change"

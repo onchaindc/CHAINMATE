@@ -100,7 +100,7 @@ export function PlayerCard({
               <span className="flex shrink-0 items-center gap-1.5 font-medium text-primary">
                 <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
                 {side === "white" ? "White" : "Black"} to move
-                {inCheck && <span className="text-[#E07A5F]">· check</span>}
+                {inCheck && <span className="text-negative">· check</span>}
               </span>
             )}
           </p>
@@ -112,7 +112,7 @@ export function PlayerCard({
           className={cn(
             "min-w-[4.75rem] shrink-0 rounded-md border px-3 py-1.5 text-center font-mono text-xl font-semibold leading-none tabular-nums transition-colors duration-300 sm:text-2xl",
             clockLow
-              ? "border-[#E07A5F]/45 bg-[#E07A5F]/10 text-[#E07A5F]"
+              ? "border-negative/45 bg-negative/10 text-negative"
               : active
                 ? "border-primary/45 bg-primary/[0.08] text-foreground"
                 : "border-border/70 bg-secondary/30 text-foreground/85",

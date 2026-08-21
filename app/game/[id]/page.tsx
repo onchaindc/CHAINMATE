@@ -487,7 +487,7 @@ export default function GamePage() {
             result.won
               ? "border-primary/40 bg-primary/10"
               : result.lost
-                ? "border-[#E07A5F]/40 bg-[#E07A5F]/10"
+                ? "border-negative/40 bg-negative/10"
                 : "border-border/70 bg-secondary/30",
           )}
         >

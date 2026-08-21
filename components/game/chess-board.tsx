@@ -18,6 +18,23 @@ interface ChessBoardProps {
 
 const PROMOTION_PIECES = ["q", "r", "b", "n"] as const;
 
+/**
+ * Board square colours, composed from the CSS variables in globals.css so the
+ * board follows the theme (and, from Phase 2, a chosen board theme) instead of
+ * being frozen to one palette. react-chessboard takes inline styles rather
+ * than classes, so these have to be `hsl(var(…))` strings and not Tailwind
+ * `bg-board-*` utilities.
+ */
+const BOARD = {
+  lightSquare: "hsl(var(--board-light))",
+  darkSquare: "hsl(var(--board-dark))",
+  lastMove: "hsl(var(--board-accent) / 0.30)",
+  selected: "hsl(var(--board-accent) / 0.45)",
+  check: "hsl(var(--board-check) / 0.50)",
+  legal:
+    "radial-gradient(circle, hsl(var(--board-accent) / 0.65) 0 20%, hsl(var(--board-accent) / 0.15) 38%, transparent 42%)",
+} as const;
+
 /** Spoken piece names — "Promote to n" told a screen reader nothing. */
 const PROMOTION_NAMES: Record<(typeof PROMOTION_PIECES)[number], string> = {
   q: "Queen",
@@ -137,11 +154,11 @@ export function ChessBoard({
   const squareStyles = useMemo(() => {
     const styles: Record<string, React.CSSProperties> = {};
     if (lastMove) {
-      styles[lastMove.from] = { backgroundColor: "rgba(201, 168, 106, 0.30)" };
-      styles[lastMove.to] = { backgroundColor: "rgba(201, 168, 106, 0.30)" };
+      styles[lastMove.from] = { backgroundColor: BOARD.lastMove };
+      styles[lastMove.to] = { backgroundColor: BOARD.lastMove };
     }
     if (selected) {
-      styles[selected] = { backgroundColor: "rgba(201, 168, 106, 0.45)" };
+      styles[selected] = { backgroundColor: BOARD.selected };
     }
     if (inCheck) {
       try {
@@ -151,7 +168,7 @@ export function ChessBoard({
           const square = `${"abcdefgh"[i % 8]}${Math.floor(i / 8) + 1}`;
           const piece = chess.get(square as Square);
           if (piece && piece.type === "k" && piece.color === turn) {
-            styles[square] = { backgroundColor: "rgba(190, 66, 56, 0.5)" };
+            styles[square] = { backgroundColor: BOARD.check };
           }
         }
       } catch {
@@ -160,9 +177,7 @@ export function ChessBoard({
     }
     for (const target of legalTargets) {
       if (target !== selected) {
-        styles[target] = {
-          background: "radial-gradient(circle, rgba(201, 168, 106, 0.65) 0 20%, rgba(201, 168, 106, 0.15) 38%, transparent 42%)",
-        };
+        styles[target] = { background: BOARD.legal };
       }
     }
     return styles;
@@ -190,14 +205,14 @@ export function ChessBoard({
           },
           onSquareClick: handleSquareClick,
           onPieceDrop: handlePieceDrop,
-          darkSquareStyle: { backgroundColor: "#6A5D4F" },
-          lightSquareStyle: { backgroundColor: "#EFE6D2" },
+          darkSquareStyle: { backgroundColor: BOARD.darkSquare },
+          lightSquareStyle: { backgroundColor: BOARD.lightSquare },
         }}
       />
 
       {pending && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-md bg-black/50 backdrop-blur-[2px]">
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-border bg-card p-4 shadow-2xl">
+        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-md bg-scrim backdrop-blur-[2px]">
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-border bg-card p-4 shadow-elevation-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Promote to
             </span>

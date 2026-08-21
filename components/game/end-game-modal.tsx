@@ -123,7 +123,7 @@ export function EndGameModal({
               <span
                 className={cn(
                   "font-semibold",
-                  line.change > 0 ? "text-primary" : line.change < 0 ? "text-[#E07A5F]" : "text-muted-foreground",
+                  line.change > 0 ? "text-primary" : line.change < 0 ? "text-negative" : "text-muted-foreground",
                 )}
               >
                 {line.change > 0 ? `+${line.change}` : line.change}
@@ -147,10 +147,10 @@ export function EndGameModal({
       role="dialog"
       aria-modal="true"
       aria-label="Match result"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-scrim backdrop-blur-sm sm:items-center sm:p-4"
     >
       <div
-        className="animate-fade-in-up max-h-[92vh] w-full overflow-y-auto rounded-t-xl border border-border/70 bg-card p-5 shadow-2xl sm:max-w-md sm:rounded-xl sm:p-6"
+        className="animate-fade-in-up max-h-[92vh] w-full overflow-y-auto rounded-t-xl border border-border/70 bg-card p-5 shadow-elevation-3 sm:max-w-md sm:rounded-xl sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

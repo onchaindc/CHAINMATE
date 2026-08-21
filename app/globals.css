@@ -3,7 +3,74 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light is the default palette; `.dark` below overrides it. The pairing is
+     deliberate: warm paper against cool ink, with a deeper gold than the dark
+     theme uses, because the dark theme's gold is unreadable on white. */
   :root {
+    color-scheme: light;
+
+    --background: 44 30% 97%;
+    --foreground: 220 15% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 15% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 15% 12%;
+    --primary: 38 58% 38%;
+    --primary-foreground: 44 40% 98%;
+    --secondary: 44 20% 93%;
+    --secondary-foreground: 220 15% 20%;
+    --muted: 44 20% 94%;
+    --muted-foreground: 220 8% 42%;
+    --accent: 38 52% 44%;
+    --accent-foreground: 44 40% 98%;
+    --destructive: 0 62% 44%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 42 16% 87%;
+    --input: 42 16% 87%;
+    --ring: 38 58% 38%;
+    --radius: 0.5rem;
+
+    /* Loss / check / negative rating delta. Was a hardcoded #E07A5F, which is
+       a dark-theme coral — too pale to read on paper, so light goes deeper.
+       Distinct from --destructive, which means "this action is dangerous". */
+    --negative: 14 68% 44%;
+    /* Win / positive delta. Gold carries this in dark; on light a gold "+12"
+       is nearly invisible, so light uses a green instead. */
+    --positive: 152 55% 32%;
+
+    /* Modal scrim. Light mode dims toward ink rather than pure black. */
+    --scrim: 220 25% 20%;
+    --scrim-alpha: 0.45;
+
+    /* Height of the sticky nav. The game screen sizes itself off this, so it
+       lives here rather than being repeated as a magic number. */
+    --nav-h: 3.5rem;
+
+    /* Elevation. Light mode reads depth from cast shadow alone. */
+    --elevation-1: 0 1px 2px -1px hsl(220 20% 15% / 0.10),
+      0 1px 3px 0 hsl(220 20% 15% / 0.06);
+    --elevation-2: 0 2px 4px -2px hsl(220 20% 15% / 0.12),
+      0 4px 12px -2px hsl(220 20% 15% / 0.08);
+    --elevation-3: 0 8px 16px -6px hsl(220 20% 15% / 0.16),
+      0 16px 40px -8px hsl(220 20% 15% / 0.12);
+
+    /* The ambient glow behind the page. */
+    --page-glow: 38 58% 38%;
+    --page-glow-alpha: 0.05;
+
+    /* Board colours. Kept as HSL triplets so overlays can compose alpha off the
+       same accent, and so a board theme is a handful of variable overrides. */
+    --board-light: 41 48% 88%;
+    --board-dark: 31 15% 36%;
+    --board-accent: 42 45% 55%;
+    --board-check: 3 62% 48%;
+
+    --scrollbar-thumb: 42 12% 78%;
+  }
+
+  .dark {
+    color-scheme: dark;
+
     --background: 220 10% 5%;
     --foreground: 45 18% 90%;
     --card: 220 9% 7%;
@@ -23,7 +90,28 @@
     --border: 220 8% 15%;
     --input: 220 8% 15%;
     --ring: 42 45% 60%;
-    --radius: 0.5rem;
+
+    /* The original hardcoded coral, now a token. */
+    --negative: 14 68% 63%;
+    /* Dark theme reads gold as the win colour — keep it. */
+    --positive: 42 45% 60%;
+
+    --scrim: 0 0% 0%;
+    --scrim-alpha: 0.6;
+
+    /* Cast shadow alone is invisible on near-black, so each level also gets a
+       hairline top highlight to read as lifted. */
+    --elevation-1: inset 0 1px 0 0 hsl(45 20% 90% / 0.04),
+      0 1px 2px 0 hsl(0 0% 0% / 0.60);
+    --elevation-2: inset 0 1px 0 0 hsl(45 20% 90% / 0.05),
+      0 4px 12px -2px hsl(0 0% 0% / 0.70);
+    --elevation-3: inset 0 1px 0 0 hsl(45 20% 90% / 0.06),
+      0 16px 40px -8px hsl(0 0% 0% / 0.80);
+
+    --page-glow: 42 45% 60%;
+    --page-glow-alpha: 0.06;
+
+    --scrollbar-thumb: 220 8% 20%;
   }
 
   * {
@@ -40,7 +128,7 @@
   }
 
   ::selection {
-    background: hsl(42 45% 60% / 0.28);
+    background: hsl(var(--primary) / 0.28);
   }
 }
 
@@ -52,7 +140,7 @@
   /* Subtle, theme-aware scrollbars */
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(220 8% 20%) transparent;
+    scrollbar-color: hsl(var(--scrollbar-thumb)) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -61,7 +149,7 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background: hsl(220 8% 20%);
+    background: hsl(var(--scrollbar-thumb));
     border-radius: 8px;
   }
 

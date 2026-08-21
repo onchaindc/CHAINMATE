@@ -19,7 +19,9 @@ export function PlayerAvatar({ name, size = "sm", className }: PlayerAvatarProps
     <span
       aria-hidden
       className={cn(
-        "inline-flex select-none items-center justify-center rounded-full border border-border/70 bg-gradient-to-b from-zinc-700 to-zinc-800 font-semibold text-[#EDE7DA] shadow-sm",
+        /* Theme-following surface: the previous zinc gradient and #EDE7DA text
+           were dark-theme values, and turned into a dark blob on light paper. */
+        "inline-flex select-none items-center justify-center rounded-full border border-border/70 bg-gradient-to-b from-secondary to-muted font-semibold text-secondary-foreground shadow-elevation-1",
         SIZES[size],
         className,
       )}

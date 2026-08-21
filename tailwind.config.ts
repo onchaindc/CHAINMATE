@@ -51,13 +51,19 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        /* Result colours — a loss or a negative rating delta is information,
+           not a dangerous action, so these are separate from `destructive`. */
+        negative: "hsl(var(--negative) / <alpha-value>)",
+        positive: "hsl(var(--positive) / <alpha-value>)",
+        /* Modal backdrop. */
+        scrim: "hsl(var(--scrim) / var(--scrim-alpha))",
+        /* Board colours read from CSS variables so a board theme is a variable
+           swap, not a rebuild. `<alpha-value>` lets `bg-board-accent/30` work. */
         board: {
-          light: "#EFE6D2",
-          dark: "#6A5D4F",
-          selected: "rgba(201, 168, 106, 0.45)",
-          legal: "rgba(201, 168, 106, 0.7)",
-          lastmove: "rgba(201, 168, 106, 0.30)",
-          check: "rgba(190, 66, 56, 0.5)",
+          light: "hsl(var(--board-light) / <alpha-value>)",
+          dark: "hsl(var(--board-dark) / <alpha-value>)",
+          accent: "hsl(var(--board-accent) / <alpha-value>)",
+          check: "hsl(var(--board-check) / <alpha-value>)",
         },
       },
       borderRadius: {
@@ -65,10 +71,39 @@ const config: Config = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      boxShadow: {
+        "elevation-1": "var(--elevation-1)",
+        "elevation-2": "var(--elevation-2)",
+        "elevation-3": "var(--elevation-3)",
+      },
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
-        display: ["var(--font-inter)", "system-ui", "sans-serif"],
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        display: ["var(--font-fraunces)", "Georgia", "serif"],
+        mono: ["var(--font-jetbrains-mono)", "ui-monospace", "monospace"],
+      },
+      fontSize: {
+        /* A real scale, so pages stop inventing `text-[10px]` one-offs.
+           Line heights and tracking are baked in per step. */
+        "2xs": ["0.6875rem", { lineHeight: "1rem", letterSpacing: "0.02em" }],
+        xs: ["0.75rem", { lineHeight: "1.125rem" }],
+        sm: ["0.8125rem", { lineHeight: "1.25rem" }],
+        base: ["0.9375rem", { lineHeight: "1.5rem" }],
+        lg: ["1.0625rem", { lineHeight: "1.625rem" }],
+        xl: ["1.25rem", { lineHeight: "1.75rem", letterSpacing: "-0.01em" }],
+        "2xl": ["1.5rem", { lineHeight: "2rem", letterSpacing: "-0.015em" }],
+        "3xl": ["1.875rem", { lineHeight: "2.25rem", letterSpacing: "-0.02em" }],
+        "4xl": ["2.375rem", { lineHeight: "2.625rem", letterSpacing: "-0.025em" }],
+        "5xl": ["3rem", { lineHeight: "3.125rem", letterSpacing: "-0.03em" }],
+        "6xl": ["3.75rem", { lineHeight: "1", letterSpacing: "-0.035em" }],
+      },
+      spacing: {
+        /* Named rhythm steps for page furniture — the values pages were
+           previously hardcoding as arbitrary padding. */
+        gutter: "1.25rem",
+        "gutter-lg": "2rem",
+        section: "4rem",
+        "section-lg": "6rem",
+        nav: "var(--nav-h)",
       },
       keyframes: {
         "fade-in-up": {
