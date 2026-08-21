@@ -65,6 +65,14 @@ const config: Config = {
           accent: "hsl(var(--board-accent) / <alpha-value>)",
           check: "hsl(var(--board-check) / <alpha-value>)",
         },
+        /* The two tones the pieces are drawn in. A white piece is white in
+           either UI theme, so anything standing in for a side — the player
+           card's disc, a capture tray — uses these rather than greys. */
+        piece: {
+          light: "hsl(var(--piece-light) / <alpha-value>)",
+          dark: "hsl(var(--piece-dark) / <alpha-value>)",
+          outline: "hsl(var(--piece-outline) / <alpha-value>)",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

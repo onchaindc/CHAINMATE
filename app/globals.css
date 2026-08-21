@@ -65,7 +65,53 @@
     --board-accent: 42 45% 55%;
     --board-check: 3 62% 48%;
 
+    /* Piece colours. A white piece is white in either UI theme — chess pieces
+       don't invert — so these are defined once and not overridden by .dark. */
+    --piece-light: 44 30% 96%;
+    --piece-dark: 220 14% 13%;
+    --piece-outline: 220 20% 8%;
+
+    /* Vertical space the game screen spends on everything that is not the
+       board: page padding, the match header, the two player cards, the board
+       controls and the gaps between them. The board is sized as
+       `100dvh - nav - this`, so it always fits the viewport without the page
+       scrolling. Adjusting the chrome above or below the board means adjusting
+       this number — it is the one place that budget is written down. A floor of
+       18rem is applied at the use site, so a very short window gets a small
+       board and a scrollbar rather than no board at all.
+
+       Current budget: 2.5rem page padding + 3.25rem match header + 1.9rem
+       column gaps + 7.6rem for the two player cards + 3.5rem of controls. */
+    --board-chrome: 18.75rem;
+
     --scrollbar-thumb: 42 12% 78%;
+  }
+
+  /* Board themes. The default board lives in :root above; a named theme is only
+     an override of the same variables, so everything drawn from --board-*
+     (the game board, the landing board, the capture trays) follows the
+     player's choice without having to know the themes exist. Set as
+     data-board on <html> before first paint — see lib/board-prefs.ts.
+
+     `:root[data-board]` is two specificity steps above `.dark`, so a board
+     theme keeps winning even if the dark palette ever starts setting board
+     colours of its own. */
+  :root[data-board="walnut"] {
+    --board-light: 33 44% 82%;
+    --board-dark: 24 28% 33%;
+    --board-accent: 28 55% 54%;
+  }
+
+  :root[data-board="slate"] {
+    --board-light: 210 14% 85%;
+    --board-dark: 214 16% 33%;
+    --board-accent: 205 55% 56%;
+  }
+
+  :root[data-board="forest"] {
+    --board-light: 68 20% 85%;
+    --board-dark: 148 16% 28%;
+    --board-accent: 84 38% 50%;
   }
 
   .dark {

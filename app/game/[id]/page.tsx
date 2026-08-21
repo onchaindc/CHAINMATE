@@ -21,6 +21,8 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { BoardSettings } from "@/components/game/board-settings";
+import { CaptureTray } from "@/components/game/capture-tray";
 import { ChessBoard } from "@/components/game/chess-board";
 import { CommentaryPanel } from "@/components/game/commentary-panel";
 import { EndGameModal } from "@/components/game/end-game-modal";
@@ -30,6 +32,7 @@ import { StatusBar } from "@/components/game/status-bar";
 import { WaitingPanel } from "@/components/game/waiting-panel";
 import { useAiCommentary } from "@/hooks/use-ai-commentary";
 import { useAiOpponent } from "@/hooks/use-ai-opponent";
+import { useBoardPrefs } from "@/hooks/use-board-prefs";
 import { useClocks } from "@/hooks/use-clocks";
 import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
@@ -179,6 +182,9 @@ export default function GamePage() {
     setFlipped(false);
   }, [id]);
 
+  /* Board colours and piece artwork, remembered across sessions per player. */
+  const { boardTheme, pieceSet, setBoardTheme, setPieceSet } = useBoardPrefs();
+
   const boardFen = useMemo(() => {
     if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
     return game?.fen ?? null;
@@ -251,12 +257,12 @@ export default function GamePage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-          <div className="space-y-3">
-            <Skeleton className="h-12 w-full" />
+      <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 lg:py-5">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
+            <Skeleton className="h-14 w-full" />
             <Skeleton className="aspect-square w-full" />
-            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-14 w-full" />
           </div>
           <div className="space-y-3">
             <Skeleton className="h-64 w-full" />
@@ -376,13 +382,29 @@ export default function GamePage() {
         isTurn={!replayMode && turnSide === side && !gameOver && !waiting}
         inCheck={inCheck && turnSide === side}
         waiting={waiting && !game.opponent}
+        /* Read off the position on screen, so the trays rewind with the board
+           during a replay instead of always showing the final material. */
+        captures={
+          <CaptureTray
+            fen={boardFen ?? game.fen}
+            side={side}
+            pieceSet={pieceSet}
+          />
+        }
       />
     );
   };
 
   const currentPly = replayMode ? (ply ?? 0) - 1 : game.moves.length - 1;
   const movesSection = (
-    <MoveHistory moves={game.moves} currentPly={currentPly} />
+    <MoveHistory
+      moves={game.moves}
+      currentPly={currentPly}
+      /* Jumping the board is only offered once the game is over. Mid-game the
+         board has to show the position the players are actually playing —
+         anything else invites a move from a position that no longer exists. */
+      onSelectPly={gameOver ? (p) => setPly(p) : undefined}
+    />
   );
   const analysisSection = (
     <CommentaryPanel
@@ -443,15 +465,21 @@ export default function GamePage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
+    /* The game screen is an app shell, not a document. On desktop it is exactly
+       one viewport tall — the board is sized off the viewport height (see
+       --board-chrome in globals.css) and the match console scrolls inside
+       itself — so a live game never scrolls the page out from under a player
+       mid-move. Below `lg` it falls back to normal document flow, because a
+       phone cannot fit a usable board and a readable console at once. */
+    <div className="mx-auto flex w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-5">
       {/* Header */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      <div className="mb-3 flex shrink-0 flex-wrap items-center gap-3">
         <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
         <div>
           <h1 className="font-display text-lg font-bold tracking-tight">
             {gameOver ? "Match report" : "Chess match"}
           </h1>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             {game.backend === "genlayer"
               ? "On-chain match"
               : game.backend === "local"
@@ -468,7 +496,7 @@ export default function GamePage() {
 
       {/* Action error banner */}
       {error && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+        <div className="mb-3 flex shrink-0 items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
           <div className="min-w-0">
             <p className="text-sm font-medium text-destructive">Something went wrong</p>
@@ -483,7 +511,7 @@ export default function GamePage() {
       {result && (
         <div
           className={cn(
-            "animate-fade-in-up mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-4 py-3",
+            "animate-fade-in-up mb-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-4 py-2.5",
             result.won
               ? "border-primary/40 bg-primary/10"
               : result.lost
@@ -518,9 +546,14 @@ export default function GamePage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-        {/* Board column — the visual anchor */}
-        <div className="mx-auto w-full max-w-[640px] space-y-3" ref={boardRef}>
+      <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_400px]">
+        {/* Board column — the visual anchor. Its width is capped by the space
+            left over vertically, which is what keeps the whole column inside
+            one viewport at any window size. */}
+        <div
+          className="mx-auto flex w-full min-w-0 max-w-[640px] flex-col gap-2.5 lg:max-w-[min(100%,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]"
+          ref={boardRef}
+        >
           {/* Player cards follow the board, always. The side shown at the
               BOTTOM of the board is `orientation` (react-chessboard puts that
               colour's home rank nearest the viewer), so its card belongs
@@ -539,6 +572,7 @@ export default function GamePage() {
               interactive={!replayMode && interactive}
               inCheck={inCheck}
               lastMove={replayMode ? replayLastMove : lastMove}
+              pieceSet={pieceSet}
               onMove={(from, to, promotion) => {
                 if (touchDeviceRef.current) {
                   pendingScrollRef.current = window.scrollY;
@@ -552,10 +586,13 @@ export default function GamePage() {
 
           {/* Board controls / replay controls — flip the board anytime */}
           {replayMode && game && (
-            <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/40 px-2 py-2">
-              <Button size="icon" variant="ghost" onClick={() => setFlipped((f) => !f)} aria-label="Flip board" title="Flip board">
-                <RefreshCw aria-hidden />
-              </Button>
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-card/40 px-2 py-1.5">
+              <BoardSettings
+                boardTheme={boardTheme}
+                pieceSet={pieceSet}
+                onBoardTheme={setBoardTheme}
+                onPieceSet={setPieceSet}
+              />
               <div className="mx-auto flex items-center gap-1">
                 <Button size="icon" variant="ghost" onClick={() => setPly(0)} disabled={ply === 0} aria-label="First move">
                   <SkipBack aria-hidden />
@@ -573,24 +610,34 @@ export default function GamePage() {
                   <SkipForward aria-hidden />
                 </Button>
               </div>
-              <span className="w-9 shrink-0" aria-hidden />
+              <Button size="icon" variant="ghost" onClick={() => setFlipped((f) => !f)} aria-label="Flip board" title="Flip board">
+                <RefreshCw aria-hidden />
+              </Button>
             </div>
           )}
 
           {/* Live actions */}
           {!replayMode && (
-            <div className="space-y-1.5 pt-1">
+            <div className="shrink-0 space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setFlipped((f) => !f)}
-                  className="gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-                  aria-label="Flip board"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-                  Flip board
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setFlipped((f) => !f)}
+                    className="gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    aria-label="Flip board"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                    Flip
+                  </Button>
+                  <BoardSettings
+                    boardTheme={boardTheme}
+                    pieceSet={pieceSet}
+                    onBoardTheme={setBoardTheme}
+                    onPieceSet={setPieceSet}
+                  />
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {game.moves.length === 0 && mySide && (game.status === "waiting" || game.status === "active") && (
                     <Button
@@ -675,7 +722,10 @@ export default function GamePage() {
               </div>
               <p
                 className={cn(
-                  "text-xs text-muted-foreground",
+                  /* One line, always: this sits directly under the board in a
+                     height-budgeted column, so a wrap here would push the
+                     board smaller as the text changed. */
+                  "truncate text-xs text-muted-foreground",
                   game.status === "active" && !interactive && mySide && !busy && "animate-pulse-soft",
                 )}
               >
@@ -702,7 +752,7 @@ export default function GamePage() {
         </div>
 
         {/* Match console */}
-        <div className="space-y-4 lg:max-h-[calc(100vh-8.5rem)] lg:min-w-0 lg:overflow-y-auto lg:pr-1">
+        <div className="flex min-h-0 min-w-0 flex-col gap-3 lg:overflow-y-auto lg:pr-1">
           {waiting && mySide === "white" && (
             <WaitingPanel
               gameId={game.id}
@@ -719,7 +769,7 @@ export default function GamePage() {
 
           <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
             <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
-              <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {!gameOver && game.status === "active" && (
                   <span className="relative flex h-1.5 w-1.5" aria-hidden>
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />

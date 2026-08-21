@@ -1,6 +1,17 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 export function SiteFooter() {
+  const pathname = usePathname();
+
+  /* The game screen is an app, not a document: it sizes itself to exactly one
+     viewport so a live game never scrolls, and a site footer hanging below the
+     fold would put a scrollbar back on the page it was removed from. Every
+     other route keeps it. */
+  if (pathname?.startsWith("/game/")) return null;
+
   return (
     <footer className="border-t border-border/60">
       <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 sm:flex-row sm:px-6">
