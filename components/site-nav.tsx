@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Plus } from "lucide-react";
 import { PlayerMenu } from "@/components/auth/player-menu";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +52,7 @@ export function SiteNav() {
               </Link>
             );
           })}
+          <ThemeToggle className="hidden sm:inline-flex" />
           <PlayerMenu />
           <Link
             href="/create"

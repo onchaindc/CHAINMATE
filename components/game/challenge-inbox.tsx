@@ -107,7 +107,7 @@ export function ChallengeInbox() {
         return (
           <div
             key={game.id}
-            className="animate-fade-in-up rounded-lg border border-primary/30 bg-card/95 p-3.5 shadow-2xl backdrop-blur"
+            className="animate-fade-in-up rounded-lg border border-primary/30 bg-card/95 p-3.5 shadow-elevation-3 backdrop-blur"
           >
             <div className="flex items-start justify-between gap-2">
               <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">

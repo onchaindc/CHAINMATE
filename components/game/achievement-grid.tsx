@@ -32,7 +32,7 @@ export function AchievementGrid({ stats }: { stats: PlayerStats }) {
             )}
             title={a.description}
           >
-            <span className={cn("text-lg leading-none", isEarned && "drop-shadow-[0_0_6px_rgba(201,168,106,0.35)]")}>
+            <span className={cn("text-lg leading-none", isEarned && "drop-shadow-[0_0_6px_hsl(var(--primary)/0.35)]")}>
               {a.icon}
             </span>
             <p className={cn("text-xs font-semibold", isEarned && "text-primary")}>{a.name}</p>
