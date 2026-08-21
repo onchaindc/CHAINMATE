@@ -7,9 +7,16 @@ import type { MoveRecord } from "@/lib/types";
 interface MoveHistoryProps {
   moves: MoveRecord[];
   currentPly?: number;
+  /**
+   * Jump the board to the position after a move. Receives the 1-based ply count
+   * *after* that move (the same number MoveRecord carries), so 1 is "after
+   * White's first move". Omitted while a game is live — the board has to show
+   * the position the players are actually playing.
+   */
+  onSelectPly?: (ply: number) => void;
 }
 
-export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
+export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -29,14 +36,40 @@ export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
     });
   }
 
+  /** One move, as a button when the board can be moved to it and text when not. */
+  const moveCell = (move: MoveRecord | undefined, ply: number) => {
+    if (!move) return null;
+    const current = ply === currentPly;
+    const className = cn(
+      "inline-block w-full rounded px-1.5 py-0.5 text-left font-mono tabular-nums transition-colors",
+      current && "bg-primary/15 font-semibold text-primary",
+      onSelectPly && !current && "hover:bg-secondary hover:text-foreground",
+    );
+
+    if (!onSelectPly) {
+      return <span className={className}>{move.san}</span>;
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => onSelectPly(move.number)}
+        aria-current={current ? "true" : undefined}
+        aria-label={`Go to move ${move.number}, ${move.san}`}
+        className={className}
+      >
+        {move.san}
+      </button>
+    );
+  };
+
   return (
     <div className="border-t border-border/60">
       <div className="flex items-center justify-between px-4 py-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           Move history
         </span>
-        <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-          {moves.length} ply
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+          {onSelectPly && moves.length > 0 ? "click to review" : `${moves.length} ply`}
         </span>
       </div>
 
@@ -45,7 +78,10 @@ export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
           No moves yet — White opens the game.
         </p>
       ) : (
-        <div ref={containerRef} className="max-h-56 overflow-y-auto px-2 pb-2">
+        <div
+          ref={containerRef}
+          className="max-h-56 overflow-y-auto px-2 pb-2 lg:max-h-72"
+        >
           <table className="w-full text-[13px]">
             <tbody>
               {pairs.map((pair, idx) => {
@@ -53,35 +89,17 @@ export function MoveHistory({ moves, currentPly }: MoveHistoryProps) {
                 const blackPly = pair.black ? pair.black.number - 1 : -1;
                 return (
                   <tr key={pair.number} className={cn(idx % 2 === 1 && "bg-secondary/30")}>
-                    <td className="w-9 py-1 pl-3 pr-1 font-mono text-xs tabular-nums text-muted-foreground">
+                    <td className="w-9 py-0.5 pl-3 pr-1 font-mono text-xs tabular-nums text-muted-foreground">
                       {pair.number}.
                     </td>
-                    <td className="py-1">
+                    <td className="w-[42%] py-0.5">
                       {pair.white ? (
-                        <span
-                          className={cn(
-                            "inline-block rounded px-1.5 py-0.5 font-mono tabular-nums",
-                            whitePly === currentPly && "bg-primary/15 text-primary",
-                          )}
-                        >
-                          {pair.white.san}
-                        </span>
+                        moveCell(pair.white, whitePly)
                       ) : (
                         <span className="text-muted-foreground/40">—</span>
                       )}
                     </td>
-                    <td className="py-1">
-                      {pair.black ? (
-                        <span
-                          className={cn(
-                            "inline-block rounded px-1.5 py-0.5 font-mono tabular-nums",
-                            blackPly === currentPly && "bg-primary/15 text-primary",
-                          )}
-                        >
-                          {pair.black.san}
-                        </span>
-                      ) : null}
-                    </td>
+                    <td className="w-[42%] py-0.5">{moveCell(pair.black, blackPly)}</td>
                   </tr>
                 );
               })}

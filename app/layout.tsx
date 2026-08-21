@@ -6,6 +6,7 @@ import { SiteNav } from "@/components/site-nav";
 import { IdentityProvider } from "@/lib/identity-context";
 import { ThemeProvider } from "@/lib/theme-context";
 import { THEME_SCRIPT } from "@/lib/theme";
+import { BOARD_SCRIPT } from "@/lib/board-prefs";
 import "./globals.css";
 
 /* next/font downloads and self-hosts these at build time — no CDN request at
@@ -53,6 +54,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* Same reason, for the chosen board colours — a player who picked
+            Walnut should never watch the default board repaint under them. */}
+        <script dangerouslySetInnerHTML={{ __html: BOARD_SCRIPT }} />
       </head>
       <body
         className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} font-sans min-h-screen flex flex-col bg-background text-foreground`}
