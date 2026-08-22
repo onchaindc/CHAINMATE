@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Globe } from "lucide-react";
 import { RequireProfile } from "@/components/auth/require-profile";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
@@ -13,11 +12,13 @@ import { GuestBanner } from "@/components/auth/guest-banner";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { COUNTRIES } from "@/lib/countries";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { SectionLabel } from "@/components/ui/page-header";
+import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
-import { mergeGamesById, cn } from "@/lib/utils";
+import { mergeGamesById } from "@/lib/utils";
 import { getIdentityToken } from "@/lib/identity";
 import { Input } from "@/components/ui/input";
 import type { GameState, PlayerStats } from "@/lib/types";
@@ -203,12 +204,7 @@ function ProfileContent() {
         />
       )}
 
-      {error && (
-        <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <ErrorNote message={error} className="mt-6" />}
 
       {/* Stats */}
       <div className="mt-8 grid animate-fade-in-up grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 sm:grid-cols-5">
@@ -256,23 +252,20 @@ function ProfileContent() {
 
       {/* Achievements */}
       <div className="mt-10 animate-fade-in-up [animation-delay:120ms]">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <SectionLabel
+          aside={
+            stats && stats.achievements.length > 0
+              ? `${stats.achievements.length}/10 unlocked`
+              : undefined
+          }
+        >
           Achievements
-          {stats && stats.achievements.length > 0 && (
-            <span className="ml-2 font-mono text-primary">
-              {stats.achievements.length}/{10}
-            </span>
-          )}
-        </h2>
+        </SectionLabel>
         <div className="mt-3">
           {stats ? (
             <AchievementGrid stats={stats} />
           ) : (
-            <div className="space-y-2">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="h-16 animate-pulse rounded-lg bg-secondary/60" />
-              ))}
-            </div>
+            <LoadingRows className="px-0 py-0" rowClassName="h-16 rounded-lg" />
           )}
         </div>
       </div>
@@ -284,26 +277,17 @@ function ProfileContent() {
 
       {/* Recent games */}
       <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Recent games
-        </h2>
+        <SectionLabel>Recent games</SectionLabel>
         <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
           {games === null ? (
-            <div className="space-y-1 px-2 py-3">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="h-11 animate-pulse rounded-md bg-secondary/60" />
-              ))}
-            </div>
+            <LoadingRows />
           ) : games.length === 0 ? (
-            <div className="flex flex-col items-center px-6 py-14 text-center">
-              <p className="text-sm font-medium text-foreground/85">No games yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Play your first match to start building a record.
-              </p>
-              <Link href="/create" className={cn(buttonVariants({ size: "sm" }), "mt-5")}>
-                Create a game
-              </Link>
-            </div>
+            <EmptyState
+              title="No games yet"
+              description="Play your first match to start building a record."
+              action={{ href: "/create", label: "Create a game" }}
+              className="py-14"
+            />
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {games.slice(0, 10).map((game) => (

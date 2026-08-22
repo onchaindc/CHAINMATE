@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, Bot, Crown, Loader2, Search, ShieldCheck, Swords, Users } from "lucide-react";
+import { ArrowRight, Bot, Crown, Loader2, Search, ShieldCheck, Swords, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
+import { ErrorNote } from "@/components/ui/states";
 import { getGameBackend } from "@/lib/config";
 import { getStore } from "@/lib/store";
-import { HostedGameStore } from "@/lib/store/hosted-store";
+import { useMatchmaking } from "@/lib/use-matchmaking";
 import { AI_LEVELS, type AiDifficulty } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -26,19 +28,10 @@ const MODES: { id: GameMode; label: string; icon: typeof Users }[] = [
 
 const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
 
-/** Poll interval while waiting in the seek pool. */
-const SEEK_POLL_MS = 2500;
-/**
- * How long to keep searching before giving up and showing the manual options.
- * ~90s: long enough that two people who agreed to play at the same moment
- * actually find each other (the old ~15s cap ran out while they were still
- * getting to the page), short enough that nobody stares at a dead spinner.
- */
-const MAX_SEEK_ATTEMPTS = Math.round(90_000 / SEEK_POLL_MS);
-
 export default function CreateGamePage() {
   const router = useRouter();
   const backend = getGameBackend();
+  const match = useMatchmaking();
   const [mode, setMode] = useState<GameMode>(initialMode);
   const [difficulty, setDifficulty] = useState<AiDifficulty>("casual");
   const [timeControl, setTimeControl] = useState<string>("10 + 0");
@@ -48,72 +41,9 @@ export default function CreateGamePage() {
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** True while matchmaking: registered in the seek pool, polling for a pair. */
-  const [seeking, setSeeking] = useState(false);
-  const mountedRef = useRef(true);
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const attemptsRef = useRef(0);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (pollTimer.current) clearTimeout(pollTimer.current);
-      // Leaving the page cancels a pending search so the pool never rots.
-      if (seeking) void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
-    };
-  }, [seeking]);
-
-  /** Register in the seek pool, then poll for a compatible partner. */
-  const findOpponent = useCallback(async () => {
-    setError(null);
-    setBusy(true);
-    attemptsRef.current = 0;
-    try {
-      const store = getStore("hosted") as HostedGameStore;
-      const first = await store.seekMatch(timeControl);
-      if (!mountedRef.current) return;
-      if (first.status === "matched") {
-        router.push(`/game/${first.game.id}`);
-        return;
-      }
-      setBusy(false);
-      setSeeking(true);
-      const poll = () => {
-        pollTimer.current = setTimeout(async () => {
-          if (!mountedRef.current) return;
-          attemptsRef.current += 1;
-          if (attemptsRef.current >= MAX_SEEK_ATTEMPTS) {
-            setSeeking(false);
-            void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
-            return;
-          }
-          try {
-            const result = await (getStore("hosted") as HostedGameStore).pollSeek(timeControl);
-            if (result.status === "matched") {
-              setSeeking(false);
-              router.push(`/game/${result.game.id}`);
-              return;
-            }
-          } catch {
-            // transient — keep polling
-          }
-          poll();
-        }, SEEK_POLL_MS);
-      };
-      poll();
-    } catch (err) {
-      setBusy(false);
-      setError(err instanceof Error ? err.message : "Failed to find an opponent");
-    }
-  }, [router, timeControl]);
-
-  const cancelSearch = useCallback(() => {
-    setSeeking(false);
-    setBusy(false);
-    if (pollTimer.current) clearTimeout(pollTimer.current);
-    void (getStore("hosted") as HostedGameStore).cancelSeek().catch(() => {});
-  }, []);
+  /** Nothing else should start while a search or a creation is in flight. */
+  const locked = busy || match.starting || match.seeking;
 
   const create = useCallback(async () => {
     setBusy(true);
@@ -134,38 +64,36 @@ export default function CreateGamePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 py-14 sm:px-6 lg:py-20">
-      <div className="animate-fade-in-up w-full text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-          New match
-        </p>
-        <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">
-          Create a game
-        </h1>
-        <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">
-          {backend === "genlayer"
+      <PageHeader
+        align="center"
+        eyebrow="New match"
+        title="Create a game"
+        description={
+          backend === "genlayer"
             ? "A fresh ChainMate contract is deployed and you play White. Share the game link to invite Black."
-            : "You play White. Share the link — your opponent joins as Black from any device."}
-        </p>
-      </div>
+            : "You play White. Share the link — your opponent joins as Black from any device."
+        }
+        className="w-full"
+      />
 
       <Card className="mt-8 animate-fade-in-up [animation-delay:80ms]">
         <CardContent className="space-y-5 p-5">
           {/* Play online — live matchmaking with real players */}
           <div className="flex flex-col gap-2">
             <Button
-              onClick={() => void findOpponent()}
-              disabled={busy || seeking}
+              onClick={() => void match.start(timeControl)}
+              disabled={locked}
               className="w-full"
               size="lg"
             >
-              {busy && !seeking ? (
+              {match.starting ? (
                 <Loader2 className="animate-spin" aria-hidden />
               ) : (
                 <Swords aria-hidden />
               )}
-              {seeking
+              {match.seeking
                 ? "Searching…"
-                : busy
+                : match.starting
                   ? "Finding opponent…"
                   : "Play online — find a match"}
             </Button>
@@ -176,7 +104,9 @@ export default function CreateGamePage() {
             </p>
           </div>
 
-          {seeking && (
+          {match.error && <ErrorNote message={match.error} />}
+
+          {match.seeking && (
             <div className="animate-fade-in-up flex flex-col items-center gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-4 py-5 text-center">
               <Search className="h-5 w-5 animate-pulse-soft text-primary" aria-hidden />
               <div>
@@ -189,7 +119,7 @@ export default function CreateGamePage() {
                   this page takes you straight to it.
                 </p>
               </div>
-              <Button variant="outline" size="sm" onClick={cancelSearch}>
+              <Button variant="outline" size="sm" onClick={match.cancel}>
                 Cancel search
               </Button>
             </div>
@@ -251,9 +181,13 @@ export default function CreateGamePage() {
                     type="button"
                     role="radio"
                     aria-checked={timeControl === tc}
+                    /* Changing this mid-search would leave the pool
+                       registration on the old control while the label above
+                       claimed the new one. */
+                    disabled={locked}
                     onClick={() => setTimeControl(tc)}
                     className={cn(
-                      "rounded-md px-2 py-2 font-mono text-sm tabular-nums transition-all",
+                      "rounded-md px-2 py-2 font-mono text-sm tabular-nums transition-all disabled:opacity-60",
                       timeControl === tc
                         ? "bg-card text-foreground shadow-sm ring-1 ring-primary/30"
                         : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
@@ -392,19 +326,9 @@ export default function CreateGamePage() {
             Challenge a specific player <ArrowRight className="h-3.5 w-3.5" aria-hidden />
           </Link>
 
-          {error && (
-            <div className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-destructive">
-                  Could not create the game
-                </p>
-                <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
-              </div>
-            </div>
-          )}
+          {error && <ErrorNote title="Could not create the game" message={error} />}
 
-          <Button onClick={create} disabled={busy} className="w-full" size="lg">
+          <Button onClick={create} disabled={locked} className="w-full" size="lg">
             {busy ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden />

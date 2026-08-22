@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, Trophy } from "lucide-react";
-import { buttonVariants } from "@/components/ui/button";
+import { Trophy } from "lucide-react";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { PageHeader } from "@/components/ui/page-header";
+import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
@@ -37,43 +38,24 @@ export default function LeaderboardPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
-      <div className="animate-fade-in-up">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-          Rankings
-        </p>
-        <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Leaderboard</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Real ELO ratings from completed online matches. Every player starts
-          at 1200; every rating here came from an actual game.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Rankings"
+        title="Leaderboard"
+        description="Real ELO ratings from completed online matches. Every player starts at 1200; every rating here came from an actual game."
+      />
 
-      {error && (
-        <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <ErrorNote message={error} className="mt-6" />}
 
       <div className="mt-8 animate-fade-in-up [animation-delay:80ms] overflow-hidden rounded-lg border border-border/70 bg-card/50">
         {players === null ? (
-          <div className="space-y-1 px-2 py-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-11 animate-pulse rounded-md bg-secondary/60" />
-            ))}
-          </div>
+          <LoadingRows />
         ) : players.length === 0 ? (
-          <div className="flex flex-col items-center px-6 py-16 text-center">
-            <Trophy className="h-8 w-8 text-muted-foreground/50" aria-hidden />
-            <p className="mt-3 text-sm font-medium text-foreground/85">No rated games yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Finish an online multiplayer match and the winner&rsquo;s rating is
-              updated.
-            </p>
-            <Link href="/create" className={cn(buttonVariants({ size: "sm" }), "mt-5")}>
-              Play a rated game
-            </Link>
-          </div>
+          <EmptyState
+            icon={Trophy}
+            title="No rated games yet"
+            description="Finish an online multiplayer match and the winner’s rating is updated."
+            action={{ href: "/create", label: "Play a rated game" }}
+          />
         ) : (
           <table className="w-full text-sm">
             <thead>

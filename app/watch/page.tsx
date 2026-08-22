@@ -1,16 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { AlertCircle, Radio, Trophy, Users } from "lucide-react";
-import { buttonVariants } from "@/components/ui/button";
+import { Radio, Trophy, Users } from "lucide-react";
 import { GameRow } from "@/components/game/game-row";
 import { LiveGameCard } from "@/components/game/live-game-card";
+import { PageHeader, SectionLabel } from "@/components/ui/page-header";
+import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { isGameOver, type GameIndexEntry, type LiveGameEntry } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 /**
  * Watch — the live broadcast feed.
@@ -95,51 +94,30 @@ export default function WatchPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
-      <div className="animate-fade-in-up">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-          Watch
-        </p>
-        <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Watch chess</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Every active match is broadcast here automatically — follow live
-          games, join open ones, or replay a finished game move by move.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Watch"
+        title="Watch chess"
+        description="Every active match is broadcast here automatically — follow live games, join open ones, or replay a finished game move by move."
+      />
 
-      {error && (
-        <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <ErrorNote message={error} className="mt-6" />}
 
       {/* Live now — real active games from the live registry */}
       <section className="mt-8 animate-fade-in-up [animation-delay:80ms]">
-        <div className="flex items-center gap-2">
-          <Radio className="h-4 w-4 text-primary" aria-hidden />
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Live now
-          </h2>
-          {!loading && live.length > 0 && (
-            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-primary">
-              <span className="relative flex h-1.5 w-1.5">
-                <span
-                  aria-hidden
-                  className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60"
-                />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-              </span>
-              {live.length} active
-            </span>
+        <SectionLabel
+          live={!loading && live.length > 0}
+          aside={!loading && live.length > 0 ? `${live.length} active` : undefined}
+        >
+          {/* The pulsing dot is the liveness cue when there is something live,
+              so the radio icon only earns its place when there isn't. */}
+          {(loading || live.length === 0) && (
+            <Radio className="h-3.5 w-3.5" aria-hidden />
           )}
-        </div>
+          Live now
+        </SectionLabel>
         <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
           {loading ? (
-            <div className="space-y-1 px-2 py-3">
-              {[0, 1].map((i) => (
-                <div key={i} className="h-16 animate-pulse rounded-md bg-secondary/60" />
-              ))}
-            </div>
+            <LoadingRows rows={2} rowClassName="h-16" />
           ) : live.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-muted-foreground">
               No live games right now — every active match appears here automatically.
@@ -156,17 +134,13 @@ export default function WatchPage() {
 
       {/* Open games — public matches waiting for an opponent */}
       <section className="mt-8 animate-fade-in-up [animation-delay:140ms]">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-primary" aria-hidden />
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Open games
-          </h2>
-        </div>
+        <SectionLabel>
+          <Users className="h-3.5 w-3.5" aria-hidden />
+          Open games
+        </SectionLabel>
         <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
           {loading ? (
-            <div className="space-y-1 px-2 py-3">
-              <div className="h-11 animate-pulse rounded-md bg-secondary/60" />
-            </div>
+            <LoadingRows rows={1} />
           ) : open.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-muted-foreground">
               No public games waiting for an opponent right now.
@@ -183,29 +157,20 @@ export default function WatchPage() {
 
       {/* Recent completed matches */}
       <section className="mt-8 animate-fade-in-up [animation-delay:200ms]">
-        <div className="flex items-center gap-2">
-          <Trophy className="h-4 w-4 text-primary" aria-hidden />
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Recent matches
-          </h2>
-        </div>
+        <SectionLabel>
+          <Trophy className="h-3.5 w-3.5" aria-hidden />
+          Recent matches
+        </SectionLabel>
         <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
           {loading ? (
-            <div className="space-y-1 px-2 py-3">
-              {[0, 1].map((i) => (
-                <div key={i} className="h-11 animate-pulse rounded-md bg-secondary/60" />
-              ))}
-            </div>
+            <LoadingRows rows={2} />
           ) : recent.length === 0 ? (
-            <div className="px-4 py-8 text-center">
-              <p className="text-xs text-muted-foreground">No finished matches yet.</p>
-              <Link
-                href="/create"
-                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-4")}
-              >
-                Play the first one
-              </Link>
-            </div>
+            <EmptyState
+              title="No finished matches yet"
+              description="Every completed game is archived here with a full replay."
+              action={{ href: "/create", label: "Play the first one" }}
+              className="py-10"
+            />
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {recent.map((entry) => (
