@@ -3,11 +3,13 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ui/page-header";
+import { ErrorNote } from "@/components/ui/states";
 import { getGameBackend } from "@/lib/config";
 import { getStoreForId } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -49,16 +51,13 @@ export default function JoinGamePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 py-14 sm:px-6 lg:py-20">
-      <div className="animate-fade-in-up w-full text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-          Invite
-        </p>
-        <h1 className="font-display mt-3 text-3xl font-bold tracking-tight">Join a game</h1>
-        <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">
-          Enter the game id or paste the invite link your opponent shared.
-          You&rsquo;ll play Black.
-        </p>
-      </div>
+      <PageHeader
+        align="center"
+        eyebrow="Invite"
+        title="Join a game"
+        description="Enter the game id or paste the invite link your opponent shared. You’ll play Black."
+        className="w-full"
+      />
 
       <Card className="mt-8 animate-fade-in-up [animation-delay:80ms]">
         <CardContent className="p-5">
@@ -81,15 +80,7 @@ export default function JoinGamePage() {
               />
             </div>
 
-            {error && (
-              <div className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-destructive">Could not join</p>
-                  <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
-                </div>
-              </div>
-            )}
+            {error && <ErrorNote title="Could not join" message={error} />}
 
             <Button type="submit" disabled={busy || !value.trim()} className="w-full" size="lg">
               {busy ? (
