@@ -6,7 +6,7 @@ import { Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
 import { describeResult } from "@/lib/game-result";
-import { keyMoments } from "@/lib/summary";
+import { analysisPending, displaySummary, isFallbackSummary, keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
   AI_PLAYER_ID,
@@ -24,7 +24,8 @@ interface EndGameModalProps {
   myPlayerId: string;
   /** The viewing player's side — null when spectating. */
   mySide: PlayerSide | null;
-  busy?: boolean;
+  /** True while a match-analysis request is in flight (automatic or retried). */
+  analyzing?: boolean;
   onGenerateSummary: () => void;
   /** One-click rematch against the same opponent (hosted human games). */
   onRematch?: () => Promise<void>;
@@ -47,13 +48,13 @@ export function EndGameModal({
   stats,
   myPlayerId,
   mySide,
-  busy,
+  analyzing,
   onGenerateSummary,
   onRematch,
   onReplay,
   onClose,
 }: EndGameModalProps) {
-  const { verdict, reason, detail, winnerSide, won } = describeResult(game, mySide);
+  const { verdict, reason, detail, won } = describeResult(game, mySide);
 
   // Real rating change for a side. The game itself carries both deltas (written
   // server-side when it ended), so this works for whichever player is looking
@@ -85,6 +86,20 @@ export function EndGameModal({
   const moments = useMemo(() => keyMoments(game), [game]);
   const isAiGame = game.opponent === AI_PLAYER_ID;
   const [rematching, setRematching] = useState(false);
+
+  /* The match report, and how much of it is real. `report` is the analysis once
+     it exists and the deterministic fallback until then, so the text on screen
+     upgrades in place with no separate empty state to design. */
+  const report = displaySummary(game);
+  const showingFallback = isFallbackSummary(game);
+  const analysisDone = !!game.analysis;
+  const isHostedGame = game.backend === "hosted";
+  /* A missing analysis is worth retrying unless something already reported it
+     as impossible on this deployment — no signing key, no AI key. Retrying
+     those would fail identically every time. */
+  const retryable =
+    analysisPending(game) ||
+    !!(game.analysisError && !/isn't configured|not configured/i.test(game.analysisError));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -217,60 +232,72 @@ export function EndGameModal({
           </div>
         )}
 
-        {/* Summary */}
+        {/* Match report. The deterministic report is written the moment a game
+            ends, so there is always something here; the LLM analysis replaces
+            it in place when it lands. */}
         <div className="mt-4 border-t border-border/60 pt-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             What changed the game?
           </p>
-          {game.summary ? (
-            <p className="mt-2 text-sm leading-relaxed text-foreground/90">{game.summary}</p>
-          ) : (
-            <>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                {winnerSide
-                  ? `${winnerSide === "white" ? "White" : "Black"} won the game. Want the full breakdown of how it unfolded?`
-                  : "The game is over. Want to see how it unfolded?"}
+          {report && (
+            <p className="mt-2 text-sm leading-relaxed text-foreground/90">{report}</p>
+          )}
+
+          {/* Where that report came from, and what is still coming. Saying so
+              matters: the fallback and the analysis read alike, and a player
+              should be able to tell whether the validators have spoken. */}
+          {analysisDone ? (
+            <p className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-primary">
+              <Sparkles className="h-3 w-3" aria-hidden />
+              {isHostedGame ? "Analysed on GenLayer by validator consensus" : "AI analysis"}
+            </p>
+          ) : analyzing ? (
+            <p className="mt-2.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              {isHostedGame
+                ? "Running deeper analysis on GenLayer…"
+                : "Writing a deeper analysis…"}
+            </p>
+          ) : showingFallback ? (
+            <div className="mt-2.5">
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                {game.analysisError
+                  ? `Automatic match report. ${
+                      isHostedGame ? "On-chain analysis" : "AI analysis"
+                    } didn't complete: ${game.analysisError}`
+                  : "Automatic match report."}
               </p>
-              <Button
-                onClick={onGenerateSummary}
-                disabled={busy}
-                className="mt-3"
-                variant="outline"
-                size="sm"
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="animate-spin" aria-hidden />
-                    Writing analysis…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles aria-hidden />
-                    Generate analysis
-                  </>
-                )}
-              </Button>
-            </>
-          )}
-          {game.summary && (
-            <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-foreground/80">
-              <li>
-                <span className="font-mono text-primary">Opening</span>
-                <span className="text-muted-foreground"> — </span>
-                {moments.opening}
-              </li>
-              <li>
-                <span className="font-mono text-primary">Turning point</span>
-                <span className="text-muted-foreground"> — </span>
-                {moments.turningPoint}
-              </li>
-              <li>
-                <span className="font-mono text-primary">Final</span>
-                <span className="text-muted-foreground"> — </span>
-                {moments.finalTactic}
-              </li>
-            </ul>
-          )}
+              {retryable && (
+                <Button
+                  onClick={onGenerateSummary}
+                  className="mt-2"
+                  variant="outline"
+                  size="sm"
+                >
+                  <Sparkles aria-hidden />
+                  {isHostedGame ? "Retry on-chain analysis" : "Retry analysis"}
+                </Button>
+              )}
+            </div>
+          ) : null}
+
+          <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-foreground/80">
+            <li>
+              <span className="font-mono text-primary">Opening</span>
+              <span className="text-muted-foreground"> — </span>
+              {moments.opening}
+            </li>
+            <li>
+              <span className="font-mono text-primary">Turning point</span>
+              <span className="text-muted-foreground"> — </span>
+              {moments.turningPoint}
+            </li>
+            <li>
+              <span className="font-mono text-primary">Final</span>
+              <span className="text-muted-foreground"> — </span>
+              {moments.finalTactic}
+            </li>
+          </ul>
         </div>
 
         {/* Actions */}

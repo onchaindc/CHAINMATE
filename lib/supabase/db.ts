@@ -1,6 +1,7 @@
 // Server-only module — never import from client components.
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { displaySummary } from "@/lib/summary";
 import type { GameState, GameStatus, PlayerStats } from "@/lib/types";
 
 /**
@@ -218,7 +219,7 @@ export async function upsertGameRecord(game: GameState): Promise<void> {
       started_at: game.startedAt ?? null,
       ended_at: game.endedAt ?? null,
       moves: JSON.stringify(game.moves),
-      summary: game.summary || "",
+      summary: displaySummary(game),
     },
     { onConflict: "id" },
   );
@@ -263,7 +264,7 @@ export async function upsertGameSnapshot(game: GameState): Promise<void> {
       started_at: game.startedAt ?? null,
       ended_at: game.endedAt ?? null,
       moves: JSON.stringify(game.moves),
-      summary: game.summary || "",
+      summary: displaySummary(game),
       snapshot: JSON.stringify(game),
     },
     { onConflict: "id" },

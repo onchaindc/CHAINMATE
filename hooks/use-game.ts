@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { describePosition, turnLabel, type PositionInfo } from "@/lib/chess";
 import { getStoreForId } from "@/lib/store";
-import { isStaleGameState, type GameState, type GameStore, type PlayerSide } from "@/lib/types";
+import { analysisPending } from "@/lib/summary";
+import {
+  isGameOver,
+  isStaleGameState,
+  type GameState,
+  type GameStore,
+  type PlayerSide,
+} from "@/lib/types";
 
 export type BusyAction =
   | "join"
@@ -148,6 +155,53 @@ export function useGame(id: string) {
     [id, runAction],
   );
 
+  /* ------------------------------------------------------------------ */
+  /* Post-game analysis                                                  */
+  /* ------------------------------------------------------------------ */
+
+  const [analyzing, setAnalyzing] = useState(false);
+
+  /**
+   * Ask the backend for the real match analysis. Deliberately silent, unlike
+   * `generateSummary`: this runs on its own when a game ends, so a failure
+   * must not raise a page-level error over a game that finished perfectly
+   * well. The reason comes back on the game itself as `analysisError`, which is
+   * where the result screen reads it from.
+   */
+  const requestAnalysis = useCallback(async () => {
+    setAnalyzing(true);
+    try {
+      applyState(await storeRef.current!.generateSummary(id));
+    } catch {
+      /* Hosted analysis can outlast the serverless request that asked for it.
+         Nothing is lost: the fallback report is already on screen, polling
+         picks up the analysis if it lands late, and the result screen offers a
+         retry. */
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [id, applyState]);
+
+  /**
+   * Request the analysis automatically the moment a game ends.
+   *
+   * This is the half of the fix that makes the analyzer reachable at all:
+   * nothing else in the app asks for it, so the on-chain analysis previously
+   * depended on a player noticing a button — and that button was itself hidden
+   * whenever a fallback summary existed, which was always.
+   *
+   * Fires once per game id. `analysisPending` turns false as soon as either the
+   * analysis or a failure lands, and the ref covers the window before that.
+   */
+  const analysisRequested = useRef<string | null>(null);
+  useEffect(() => {
+    if (!game || !isGameOver(game.status)) return;
+    if (!analysisPending(game)) return;
+    if (analysisRequested.current === game.id) return;
+    analysisRequested.current = game.id;
+    void requestAnalysis();
+  }, [game, requestAnalysis]);
+
   const pos: PositionInfo | null = useMemo(
     () => (game ? describePosition(game.fen) : null),
     [game?.fen, game],
@@ -193,5 +247,7 @@ export function useGame(id: string) {
     rematch,
     resolveTimeout,
     generateSummary,
+    /** True while a match analysis request is in flight (auto or retried). */
+    analyzing,
   };
 }

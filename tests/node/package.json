@@ -1,0 +1,4 @@
+{
+  "//": "Scopes ESM semantics to the Node test files only — the root package.json must stay typeless so Next.js keeps treating .js as CommonJS.",
+  "type": "module"
+}

@@ -4,7 +4,7 @@ import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
-import { analyzeGameOnChain, genlayerKeysAvailable } from "@/lib/server/genlayer";
+import { genlayerAnalyzer, type GameAnalyzer } from "@/lib/server/genlayer";
 import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
@@ -907,43 +907,95 @@ export async function rematchHostedGame(prevId: string, playerId: string): Promi
   return game;
 }
 
-export async function summarizeHostedGame(id: string): Promise<GameState> {
+/**
+ * In-flight analysis requests, keyed by game id.
+ *
+ * A single analysis deploys a contract and waits on validator consensus, so it
+ * is slow enough that both players' result screens will ask for it at once.
+ * Sharing one promise means one deployment per game per instance instead of
+ * one per viewer. (Across instances the `analysis` gate below still prevents a
+ * second run once the first has landed.)
+ */
+const analysisInFlight = new Map<string, Promise<GameState>>();
+
+/**
+ * Produce the post-game report for a finished game.
+ *
+ * The deterministic rule-based report is the floor: every end-game path writes
+ * it immediately so the result screen is never blank. The GenLayer analysis is
+ * the goal, and it lands in its own field.
+ *
+ * That separation is the whole point. This function used to return early on
+ * `if (game.summary)` — and because resign / checkmate / timeout / draw all
+ * store a rule-based summary the moment they end the game, that condition was
+ * always true and `analyzeGameOnChain` was unreachable in the default hosted
+ * flow. The gate is now `game.analysis`, which only the analyzer itself ever
+ * sets, so a fallback report no longer blocks the real one.
+ *
+ * `analyzer` is injected (defaulting to the real GenLayer binding) so this
+ * path can be tested end to end without a testnet round trip.
+ */
+export async function summarizeHostedGame(
+  id: string,
+  analyzer: GameAnalyzer = genlayerAnalyzer,
+): Promise<GameState> {
+  const existing = analysisInFlight.get(id);
+  if (existing) return existing;
+  const run = runAnalysis(id, analyzer).finally(() => analysisInFlight.delete(id));
+  analysisInFlight.set(id, run);
+  return run;
+}
+
+async function runAnalysis(id: string, analyzer: GameAnalyzer): Promise<GameState> {
   const game = await getHostedGame(id);
   if (!game) throw new Error("Game not found");
   if (!isGameOver(game.status)) throw new Error("The game is still in progress");
-  if (game.summary) return game;
+  // Analysis has already been produced on chain. That is the terminal state —
+  // it is expensive and deterministic enough not to redo.
+  if (game.analysis) return game;
 
-  // Try GenLayer LLM analysis first when signing keys are configured.
-  // This deploys a lightweight analyzer contract that uses GenLayer's
-  // validator consensus (Optimistic Democracy) to generate the analysis.
-  let summary = "";
-  if (genlayerKeysAvailable()) {
-    try {
-      console.log(`[hosted] requesting GenLayer analysis for game ${id}...`);
-      summary = await analyzeGameOnChain({
-        moves: game.moves.map((m) => ({
-          san: m.san,
-          side: m.side,
-          number: m.number,
-        })),
-        status: game.status,
-        winner: game.winner,
-      });
-      console.log(`[hosted] GenLayer analysis complete for game ${id} (${summary.length} chars)`);
-    } catch (err) {
-      // GenLayer analysis is best-effort: network issues, key problems, or
-      // consensus failures should never block the game result. Fall through
-      // to the deterministic rule-based summary.
-      console.error(`[hosted] GenLayer analysis failed for game ${id}, using rule-based fallback:`, err);
-    }
+  // Guarantee the fallback exists before attempting anything slow, so a failure
+  // below still leaves a readable report.
+  let next: GameState = {
+    ...game,
+    summary: game.summary || buildRuleSummary(game),
+  };
+
+  if (!analyzer.available()) {
+    next = {
+      ...next,
+      analysisError:
+        "On-chain analysis isn't configured on this deployment (no GenLayer signing key).",
+      updatedAt: Date.now(),
+    };
+    await writeGame(next);
+    return next;
   }
 
-  // Fall back to deterministic rule-based summary if GenLayer didn't produce one.
-  if (!summary) {
-    summary = buildRuleSummary(game);
+  try {
+    console.log(`[hosted] requesting GenLayer analysis for game ${id}...`);
+    const analysis = await analyzer.analyze({
+      moves: game.moves.map((m) => ({
+        san: m.san,
+        side: m.side,
+        number: m.number,
+      })),
+      status: game.status,
+      winner: game.winner,
+    });
+    console.log(
+      `[hosted] GenLayer analysis complete for game ${id} (${analysis.length} chars)`,
+    );
+    next = { ...next, analysis, analysisError: undefined, updatedAt: Date.now() };
+  } catch (err) {
+    // Analysis is best-effort: network issues, key problems or consensus
+    // failures must never invalidate the game result. Record why, keep the
+    // fallback on screen, and leave the door open for a retry.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[hosted] GenLayer analysis failed for game ${id}:`, err);
+    next = { ...next, analysisError: message, updatedAt: Date.now() };
   }
 
-  const next: GameState = { ...game, summary, updatedAt: Date.now() };
   await writeGame(next);
   return next;
 }

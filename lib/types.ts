@@ -86,7 +86,31 @@ export interface GameState {
   fen: string;
   moves: MoveRecord[];
   commentary: CommentaryEntry[];
+  /**
+   * Deterministic, rule-derived match report (lib/summary.ts). Written the
+   * instant a game ends so the result screen always has something to show.
+   *
+   * This is the FALLBACK and is never the GenLayer analysis. The two used to
+   * share this one field, which made the on-chain analyzer unreachable: every
+   * end-game path filled `summary` first, and the analyzer skipped any game
+   * that already had one. They are separate state now — see `analysis`.
+   */
   summary: string;
+  /**
+   * The completed LLM match analysis — the real thing, not the fallback. For
+   * hosted games that means the GenLayer on-chain analysis, produced by
+   * deploying contracts/analyze.py and running it through validator consensus;
+   * for local games it is the /api/ai response. Present only once that has
+   * actually finished, which is what makes it safe to use as the "analysis is
+   * done" gate.
+   */
+  analysis?: string;
+  /**
+   * Why `analysis` is still absent — keys unconfigured, network, consensus
+   * failure. Absent `analysis` with no error means it was never requested;
+   * with an error it may be retried.
+   */
+  analysisError?: string;
   backend: GameBackend;
   /** Only set on single-player games — how strong the AI opponent plays. */
   aiDifficulty?: AiDifficulty;

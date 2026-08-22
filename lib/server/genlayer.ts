@@ -121,7 +121,12 @@ function normalizeGame(raw: unknown, id: string): GameState {
     commentary: Array.isArray(r.commentary)
       ? (r.commentary as GameState["commentary"])
       : [],
-    summary: String(r.summary ?? ""),
+    // The contract's `summary` is produced by generate_match_summary — an
+    // on-chain LLM call under validator consensus. That is completed analysis,
+    // not the deterministic fallback, so it belongs in `analysis`; `summary` is
+    // reserved for rule-derived text and this backend never produces any.
+    summary: "",
+    analysis: String(r.summary ?? "") || undefined,
     backend: "genlayer",
   };
 }
@@ -344,3 +349,32 @@ export async function analyzeGameOnChain(game: {
   console.log(`[genlayer:analyze] analysis complete (${summary.length} chars)`);
   return summary;
 }
+
+/** The moves/result an analysis request needs. */
+export interface AnalyzableGame {
+  moves: { san: string; side: string; number: number }[];
+  status: string;
+  winner: string;
+}
+
+/**
+ * The post-game analysis dependency, as the hosted backend sees it.
+ *
+ * `summarizeHostedGame` takes one of these rather than calling GenLayer
+ * directly, so the decision to analyse can be exercised end to end without a
+ * testnet round trip (tests/node/hosted-analysis.test.ts). `genlayerAnalyzer`
+ * below is the production binding and the default at every call site.
+ */
+export interface GameAnalyzer {
+  /** Whether analysis can be attempted at all on this deployment. */
+  available(): boolean;
+  /** Produce the analysis text, or throw. */
+  analyze(game: AnalyzableGame): Promise<string>;
+}
+
+/** Production binding: real signing keys, real on-chain analyzer contract. */
+export const genlayerAnalyzer: GameAnalyzer = {
+  available: genlayerKeysAvailable,
+  analyze: analyzeGameOnChain,
+};
+
