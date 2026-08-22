@@ -48,6 +48,12 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
     const guest = getGuestIdentity();
     const auth = getAuthIdentity();
     const basePlayerId = auth?.playerId ?? guest.playerId;
+    /* The id the rating is actually read for. Starts at the stored one and is
+       replaced the moment /api/identity/status names the account's real player
+       id — reading the rating off `basePlayerId` instead meant a signed-in
+       player whose stored record still held their device guest id saw the
+       guest's unrated 1200 and no amount of playing changed it. */
+    let ratedPlayerId = basePlayerId;
 
     setPlayerId(basePlayerId);
     setUsername(auth?.username ?? guest.username);
@@ -74,6 +80,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           // below, it stuck across reloads and looked like a failed rename.
           const nextUsername = data.username ?? auth.username ?? "";
           const isLinked = data.linked !== false;
+          ratedPlayerId = nextPlayerId;
           setPlayerId(nextPlayerId);
           setUsername(nextUsername);
           setLinked(isLinked);
@@ -91,6 +98,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           setStatus("guest");
           setPlayerId(g.playerId);
           setUsername(g.username);
+          ratedPlayerId = g.playerId;
           // Guests have no account to link; don't leave the flag false.
           setLinked(true);
         }
@@ -102,7 +110,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
     // Live rating from the server store (real ELO, server-computed).
     try {
       const res = await fetch(
-        `/api/hosted/players/me?playerId=${encodeURIComponent(basePlayerId)}`,
+        `/api/hosted/players/me?playerId=${encodeURIComponent(ratedPlayerId)}`,
       );
       const data = (await res.json()) as { stats?: { rating: number } };
       if (data.stats) setRating(data.stats.rating);
@@ -137,11 +145,19 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
         await refresh();
       } else if (event === "INITIAL_SESSION" && session) {
         // Page load / refresh: restore the session.
+        //
+        // Only the token is new here. Keep the account's player id — writing
+        // the device guest id in its place made a signed-in player play, and
+        // be rated, as a guest: Supabase rotates the access token on roughly
+        // every load, so this branch ran constantly, the hosted store reads
+        // this record for the id it plays under, and every game created before
+        // refresh() finished belonged to the guest. Guest games are casual by
+        // design, so the account's rating simply never moved.
         const existing = getAuthIdentity();
         if (!existing || existing.accessToken !== session.access_token) {
           setAuthIdentity({
             userId: session.user.id,
-            playerId: getGuestIdentity().playerId,
+            playerId: existing?.playerId ?? getGuestIdentity().playerId,
             username: existing?.username ?? "",
             rating: existing?.rating ?? 0,
             accessToken: session.access_token,

@@ -54,13 +54,18 @@ function ProfileContent() {
   const [savingCountry, setSavingCountry] = useState(false);
 
   useEffect(() => {
+    // Wait for the real identity. Fetching on the interim id served the device
+    // guest's empty record to a signed-in player, and because the effect only
+    // re-ran on `playerId` the correct stats never replaced it if the id was
+    // resolved before this component mounted.
+    if (identity.status === "loading" || !playerId) return;
     let cancelled = false;
     (async () => {
       try {
         const hosted = getStore("hosted") as HostedGameStore;
         const local = getStore("local") as LocalGameStore;
         const [profile, localGames] = await Promise.all([
-          hosted.myProfile(),
+          hosted.myProfile(playerId),
           Promise.resolve(local.listMyGames()),
         ]);
         if (cancelled) return;
@@ -77,7 +82,7 @@ function ProfileContent() {
       cancelled = true;
     };
     // playerId drives the fetch — refresh when identity changes.
-  }, [playerId]);
+  }, [playerId, identity.status]);
 
   // "Player" is a display placeholder only — never a saveable name. When the
   // account has no profiles row (identity.linked === false) a rename cannot

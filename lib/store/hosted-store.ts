@@ -338,20 +338,28 @@ export class HostedGameStore implements GameStore {
     return (data.players as PlayerStats[] | undefined) ?? [];
   }
 
-  async myProfile(): Promise<{
+  /**
+   * My stats + recent games.
+   *
+   * Takes the player id explicitly so the caller can pass the identity it
+   * actually resolved. Reading it from localStorage in here meant the profile
+   * page could render one player's stats while its own header showed another's.
+   */
+  async myProfile(playerId?: string): Promise<{
     stats: PlayerStats;
     games: GameState[];
     players: Record<string, PlayerInfo>;
   }> {
+    const me = playerId || getMyPlayerId();
     const data = await api(
-      `/api/hosted/players/me?playerId=${encodeURIComponent(getMyPlayerId())}`,
+      `/api/hosted/players/me?playerId=${encodeURIComponent(me)}`,
     );
     const players = (data.players ?? {}) as Record<string, PlayerInfo>;
     return {
       stats:
         data.stats ??
         {
-          playerId: getMyPlayerId(),
+          playerId: me,
           rating: 1200,
           peakRating: 1200,
           wins: 0,
