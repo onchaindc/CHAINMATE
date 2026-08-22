@@ -45,6 +45,10 @@ function GamesContent() {
   const completedGames = games?.filter((g) => !(g.status === "waiting" || g.status === "active")) ?? null;
 
   useEffect(() => {
+    // Wait for the real identity, like the profile page does — fetching on the
+    // empty interim id returns an empty record, and the effect would not re-run
+    // if the id resolved before this component mounted.
+    if (identity.status === "loading" || !identity.playerId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -53,7 +57,10 @@ function GamesContent() {
         const [remote, localGames, profile] = await Promise.all([
           hosted.listMine(),
           Promise.resolve(local.listMyGames()),
-          hosted.myProfile(),
+          // Pass the resolved id: the deltas below are keyed to
+          // identity.playerId, so reading history for a different id would
+          // silently pair one player's games with another's rating changes.
+          hosted.myProfile(identity.playerId),
         ]);
         if (cancelled) return;
         setGames(mergeGamesById([...remote.games, ...localGames]));
@@ -82,7 +89,7 @@ function GamesContent() {
     return () => {
       cancelled = true;
     };
-  }, [identity.playerId]);
+  }, [identity.playerId, identity.status]);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
