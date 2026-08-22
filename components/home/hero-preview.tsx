@@ -8,6 +8,7 @@ import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById } from "@/lib/utils";
+import { displaySummary } from "@/lib/summary";
 import { isGameOver, type GameState } from "@/lib/types";
 
 export function HeroPreview() {
@@ -43,9 +44,17 @@ export function HeroPreview() {
         const merged = mergeGamesById([...mine.games, ...localGames]);
         setRecent(merged.slice(0, 3));
 
+        // Prefer a game with a real LLM analysis over one that only carries the
+        // deterministic fallback — the panel is headed "Latest analysis", so a
+        // genuine one should win even if a plainer report is more recent. The
+        // fallback still qualifies, otherwise a fresh deployment shows nothing.
         const analyzed = [...recentGames.games, ...localGames]
-          .filter((g) => g.summary && isGameOver(g.status))
-          .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+          .filter((g) => isGameOver(g.status) && displaySummary(g))
+          .sort(
+            (a, b) =>
+              Number(!!b.analysis) - Number(!!a.analysis) ||
+              (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+          );
         setLatest(analyzed[0] ?? null);
       } catch {
         if (!cancelled) setRecent([]);
@@ -86,7 +95,7 @@ export function HeroPreview() {
                 </span>
               </div>
               <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-foreground/85">
-                {latest.summary}
+                {displaySummary(latest)}
               </p>
               <span className="mt-2 inline-block text-xs font-medium text-primary">
                 View game →

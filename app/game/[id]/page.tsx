@@ -77,6 +77,7 @@ export default function GamePage() {
     rematch,
     resolveTimeout,
     generateSummary,
+    analyzing,
   } = useGame(id);
 
   const { insight, status: aiStatus, retry: retryAnalysis, enabled: aiEnabled } = useAiCommentary(game);
@@ -826,7 +827,7 @@ export default function GamePage() {
           stats={profiles}
           myPlayerId={myId}
           mySide={mySide}
-          busy={busy === "summary"}
+          analyzing={analyzing || busy === "summary"}
           onGenerateSummary={generateSummary}
           onRematch={
             game.backend === "hosted" && !isAiGame

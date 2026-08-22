@@ -120,3 +120,33 @@ export function buildRuleSummary(game: GameState): string {
 
   return sentences.join(" ");
 }
+
+/** The two fields that together describe a game's post-game report. */
+type Reported = Pick<GameState, "summary" | "analysis" | "analysisError">;
+
+/**
+ * The best available match report: the GenLayer analysis once it has landed,
+ * the deterministic fallback until then.
+ *
+ * Every display site must go through this rather than reading `summary`
+ * directly, so that upgrading a game from fallback to real analysis needs no
+ * change at the call site.
+ */
+export function displaySummary(game: Reported): string {
+  return game.analysis || game.summary || "";
+}
+
+/** True when the report on screen is the deterministic fallback. */
+export function isFallbackSummary(game: Reported): boolean {
+  return !game.analysis && !!game.summary;
+}
+
+/**
+ * True when on-chain analysis could still be obtained for this game — it has
+ * not been produced, and nothing has yet reported it as impossible. Drives the
+ * automatic request the result screen makes when a game ends.
+ */
+export function analysisPending(game: Reported): boolean {
+  return !game.analysis && !game.analysisError;
+}
+

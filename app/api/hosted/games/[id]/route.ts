@@ -14,6 +14,18 @@ import {
 
 export const runtime = "nodejs";
 
+/**
+ * The "summary" action below deploys a contract and waits on GenLayer validator
+ * consensus, which takes far longer than the default serverless limit — at the
+ * default this handler would be killed mid-analysis every time. 60s is the
+ * ceiling that is valid on every Vercel plan.
+ *
+ * Consensus can still outlast it. That is survivable rather than fatal: the
+ * game keeps its deterministic fallback report, the analysis stays marked as
+ * outstanding, and the client can ask again — see summarizeHostedGame.
+ */
+export const maxDuration = 60;
+
 type Params = { params: Promise<{ id: string }> };
 
 /** GET /api/hosted/games/[id] — read current game state. */

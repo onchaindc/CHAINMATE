@@ -306,9 +306,11 @@ export class LocalGameStore implements GameStore {
     const game = this.getGameSync(id);
     if (!game) throw new Error("Game not found");
     if (!isGameOver(game.status)) throw new Error("The game is still in progress");
-    if (game.summary) return game;
+    // Gate on the analysis, never on the fallback: `save()` writes a rule-based
+    // summary the moment a game ends, so gating on `summary` here meant the AI
+    // analysis was never requested at all. (Same defect the hosted backend had.)
+    if (game.analysis) return game;
 
-    let summary = buildRuleSummary(game);
     try {
       const res = await fetch(SUMMARY_API, {
         method: "POST",
@@ -320,15 +322,24 @@ export class LocalGameStore implements GameStore {
           result: game.status,
         }),
       });
-      if (res.ok) {
-        const data = (await res.json()) as { text?: string };
-        if (data.text) summary = data.text;
+      const data = (await res.json().catch(() => ({}))) as {
+        text?: string;
+        error?: string;
+      };
+      if (res.ok && data.text) {
+        return this.save({ ...game, analysis: data.text, analysisError: undefined });
       }
-    } catch {
-      // fall back to the rule-based summary
+      // 501 when AI_API_KEY isn't set — a permanent condition on this
+      // deployment, so record it and stop asking rather than retrying forever.
+      return this.save({
+        ...game,
+        analysisError: data.error || `AI analysis failed (${res.status})`,
+      });
+    } catch (err) {
+      // The rule-based summary written at game end stays on screen.
+      const message = err instanceof Error ? err.message : "AI analysis failed";
+      return this.save({ ...game, analysisError: message });
     }
-
-    return this.save({ ...game, summary });
   }
 
   /** Every local game is "mine" — they all live in this browser. */
