@@ -17,6 +17,7 @@ import {
   openSeekRows,
   outgoingChallengeSnapshot,
   profileForPlayerId,
+  type ProfileRow,
   pruneStaleSeekRows,
   ratingsForPlayerIds,
   recentGameSnapshots,
@@ -365,6 +366,59 @@ export async function getLeaderboard(): Promise<PlayerStats[]> {
 }
 
 /**
+ * Reconcile a cached stats blob against the durable profile row.
+ *
+ * Two different kinds of field live in here and they need opposite rules:
+ *
+ *  - **Account-hood** (`isGuest`, and the username that comes with it) is not a
+ *    race. A `profiles` row keyed by this player id *is* the account, and the
+ *    transition only ever runs guest → account (deleting an account removes the
+ *    row). So a row's presence decides it, whatever the timestamps say.
+ *  - **Counters** (rating, rd, W/L/D, streaks) genuinely race between
+ *    instances, so the newer side wins and only then does the row's copy apply.
+ *
+ * Treating account-hood as a counter is what broke rated play: the blob written
+ * at account-creation time carries `updatedAt: Date.now()`, which is newer than
+ * the profile row it was created from, so `rowAt <= stats.updatedAt` held and
+ * the blob's `isGuest` was authoritative forever. Any instance that then
+ * materialised a default blob for that id — a KV miss, a storage reset, a
+ * rebuilt cache — recorded `isGuest: true` and pinned the player as a guest,
+ * and `applyRatingsIfFinished` quietly declined to rate every game they played.
+ *
+ * Exported for tests/node/ratings.test.ts: this is the decision that makes a
+ * game rated or casual, so it is pinned directly rather than inferred.
+ */
+export function reconcileWithProfile(
+  stats: PlayerStats,
+  row: ProfileRow | null,
+): PlayerStats {
+  if (!row) return stats;
+  const rowAt = new Date(row.updated_at).getTime() || 0;
+  // Account-hood always comes from the durable record.
+  const identity: PlayerStats = {
+    ...stats,
+    isGuest: row.is_guest,
+    username: row.username ?? stats.username,
+  };
+  if (rowAt <= stats.updatedAt) return identity;
+  return {
+    ...identity,
+    rating: row.rating,
+    // rd / last_played_at only exist from migration 0003 onward.
+    rd: row.rd ?? stats.rd,
+    lastPlayedAt: row.last_played_at ?? stats.lastPlayedAt,
+    peakRating: Math.max(stats.peakRating, row.peak_rating),
+    wins: row.wins,
+    losses: row.losses,
+    draws: row.draws,
+    games: row.games,
+    currentStreak: row.current_streak,
+    bestStreak: row.best_streak,
+    updatedAt: rowAt,
+  };
+}
+
+/**
  * The rating to actually play a rated game off.
  *
  * The stats blob above is per-instance fast-path storage. On a multi-instance
@@ -377,27 +431,7 @@ export async function getLeaderboard(): Promise<PlayerStats[]> {
 async function ratingBaseline(stats: PlayerStats): Promise<PlayerStats> {
   if (!supabaseConfigured()) return stats;
   try {
-    const row = await profileForPlayerId(stats.playerId);
-    if (!row) return stats;
-    const rowAt = new Date(row.updated_at).getTime() || 0;
-    if (rowAt <= stats.updatedAt) return stats;
-    return {
-      ...stats,
-      username: row.username ?? stats.username,
-      isGuest: row.is_guest,
-      rating: row.rating,
-      // rd / last_played_at only exist from migration 0003 onward.
-      rd: row.rd ?? stats.rd,
-      lastPlayedAt: row.last_played_at ?? stats.lastPlayedAt,
-      peakRating: Math.max(stats.peakRating, row.peak_rating),
-      wins: row.wins,
-      losses: row.losses,
-      draws: row.draws,
-      games: row.games,
-      currentStreak: row.current_streak,
-      bestStreak: row.best_streak,
-      updatedAt: rowAt,
-    };
+    return reconcileWithProfile(stats, await profileForPlayerId(stats.playerId));
   } catch {
     // Supabase trouble must never stop a game from being rated.
     return stats;
@@ -428,8 +462,16 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   const [c1, c2] = await Promise.all([getPlayerStats(p1), getPlayerStats(p2)]);
   // Rate off the durable record when it is ahead of this instance's cache.
   const [s1, s2] = await Promise.all([ratingBaseline(c1), ratingBaseline(c2)]);
-  // Guests have no persistent record — their games stay casual.
-  if (s1.isGuest || s2.isGuest) return;
+  // Guests have no persistent record — their games stay casual. Say so: an
+  // unrated game is indistinguishable from a broken rating update from the
+  // outside, and this guard silently swallowed both for months.
+  if (s1.isGuest || s2.isGuest) {
+    console.log(
+      `[chainmate] game ${next.id} left casual — ` +
+        `${s1.isGuest ? p1 : p2} has no account profile`,
+    );
+    return;
+  }
 
   const ratingBefore1 = s1.rating;
   const ratingBefore2 = s2.rating;
