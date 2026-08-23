@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, Plus, X } from "lucide-react";
 import { PlayerMenu } from "@/components/auth/player-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { buttonVariants } from "@/components/ui/button";
+import { useIdentity } from "@/lib/identity-context";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,8 +16,18 @@ import { cn } from "@/lib/utils";
  * `hidden md:inline` and similar with no fallback, so a phone could not get to
  * Watch, Games or Leaderboard at all: the links were simply gone.
  */
-const LINKS: { href: string; label: string; hideBelow?: "sm" | "md" | "lg" }[] = [
-  { href: "/create", label: "Play" },
+const LINKS: {
+  href: string;
+  /**
+   * Where the link goes once there is an account. Play leads to the lobby —
+   * resume, matchmaking, challenges and setup are all one page in — while a
+   * guest, who has none of that, goes straight to the setup screen.
+   */
+  authedHref?: string;
+  label: string;
+  hideBelow?: "sm" | "md" | "lg";
+}[] = [
+  { href: "/create", authedHref: "/play", label: "Play" },
   { href: "/join", label: "Join", hideBelow: "sm" },
   { href: "/create?mode=ai", label: "Solo", hideBelow: "sm" },
   { href: "/watch", label: "Watch", hideBelow: "md" },
@@ -30,15 +41,38 @@ const HIDE_CLASS = {
   lg: "hidden lg:inline-flex",
 } as const;
 
-/** True when `href` is the page currently being viewed. */
+/**
+ * True when `href` is the page currently being viewed.
+ *
+ * Matched on whole path segments, not as a bare string prefix: `/players/magnus`
+ * starts with `/play`, so a prefix test lights up the lobby link while you are
+ * reading somebody's profile.
+ */
 function isActive(pathname: string, href: string): boolean {
   const path = href.split("?")[0];
-  return pathname.startsWith(path) && pathname !== "/";
+  if (path === "/") return pathname === "/";
+  return pathname === path || pathname.startsWith(`${path}/`);
 }
 
 export function SiteNav() {
   const pathname = usePathname();
+  const identity = useIdentity();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const isAuthed =
+    !identity.isGuest &&
+    Boolean(identity.username && identity.username.trim().length > 0);
+
+  /* Resolved once per identity change, and used by both the bar and the sheet so
+     the two can never disagree about where Play goes. */
+  const links = useMemo(
+    () =>
+      LINKS.map((link) => ({
+        ...link,
+        href: isAuthed && link.authedHref ? link.authedHref : link.href,
+      })),
+    [isAuthed],
+  );
 
   /* A route change means the tap landed; the sheet has done its job. Without
      this it stays open over the page it just navigated to. */
@@ -79,11 +113,11 @@ export function SiteNav() {
         </Link>
 
         <nav className="flex items-center gap-1 sm:gap-2">
-          {LINKS.map(({ href, label, hideBelow }) => {
+          {links.map(({ href, label, hideBelow }) => {
             const active = isActive(pathname, href);
             return (
               <Link
-                key={href}
+                key={label}
                 href={href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
@@ -153,10 +187,10 @@ export function SiteNav() {
             className="animate-fade-in-up absolute inset-x-0 top-14 z-40 border-b border-border/70 bg-background/95 backdrop-blur-md lg:hidden"
           >
             <ul className="mx-auto grid w-full max-w-6xl gap-0.5 px-2 py-3 sm:px-4">
-              {LINKS.map(({ href, label }) => {
+              {links.map(({ href, label }) => {
                 const active = isActive(pathname, href);
                 return (
-                  <li key={href}>
+                  <li key={label}>
                     <Link
                       href={href}
                       aria-current={active ? "page" : undefined}

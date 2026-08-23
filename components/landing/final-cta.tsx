@@ -24,7 +24,7 @@ export function FinalCta() {
         <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
           {isAuthed ? (
             <>
-              <Link href="/create" className={cn(buttonVariants({ size: "lg" }))}>
+              <Link href="/play" className={cn(buttonVariants({ size: "lg" }))}>
                 <Play aria-hidden /> Play
               </Link>
               <Link href="/create?mode=ai" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
