@@ -32,8 +32,11 @@ export function Hero() {
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {isAuthed ? (
               <>
+                {/* Into the lobby, not straight to setup: a signed-in player may
+                    have a game already on the board, and the lobby puts that
+                    first. */}
                 <Link
-                  href="/create"
+                  href="/play"
                   className={cn(
                     buttonVariants({ size: "lg" }),
                     "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
