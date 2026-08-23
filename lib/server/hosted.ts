@@ -11,6 +11,7 @@ import {
   claimWaitingRow,
   dropSeekRows,
   gameSnapshotById,
+  gamesForPlayer,
   incomingChallengeSnapshots,
   leaderboardProfiles,
   mySeekRow,
@@ -1093,6 +1094,55 @@ async function playerNamesFor(ids: string[]): Promise<Record<string, LivePlayerI
   return out;
 }
 
+/**
+ * Every game these player ids took part in, newest first.
+ *
+ * The games index alone is not a usable answer here. It is a single blob in the
+ * fast store, and the fast store is per-instance on a serverless host: Vercel
+ * KV when configured, otherwise a file store whose `.data/` write fails on the
+ * read-only lambda filesystem and silently degrades to this instance's memory.
+ * `readIndex()` only rebuilds from the database when the blob is *missing*, so
+ * once any request on an instance has written one, that instance keeps serving
+ * it — missing every game played on every other instance. A player finishing a
+ * match and immediately opening Games would routinely be told they have none.
+ *
+ * So the database is asked for the player's own games directly, and the index
+ * is merged on top of it (it may hold a game whose Supabase write is still in
+ * flight, and it is the only source at all when Supabase is not configured).
+ */
+async function gamesForPlayerIds(
+  ids: string[],
+  max: number,
+): Promise<GameState[]> {
+  const wanted = new Set(ids.filter(Boolean));
+  if (wanted.size === 0) return [];
+
+  const entries = await readIndex();
+  const fromIndex = entries.filter(
+    (e) =>
+      !isOpenPoolRow(e) && (wanted.has(e.creator) || wanted.has(e.opponent)),
+  );
+
+  const [durable, local] = await Promise.all([
+    supabaseConfigured()
+      ? gamesForPlayer([...wanted], max).catch(() => [] as GameState[])
+      : Promise.resolve([] as GameState[]),
+    fetchGames(fromIndex, max),
+  ]);
+
+  const merged = new Map<string, GameState>();
+  // The index copy wins on a tie — a live game's newest state reaches the fast
+  // store on the same write that reaches Supabase, and may be a step ahead.
+  for (const game of durable) merged.set(game.id, game);
+  for (const game of local) merged.set(game.id, game);
+
+  // Both sources are already newest-first and overlap heavily, so taking `max`
+  // from each and re-ranking the union is enough for a 25-row list.
+  return [...merged.values()]
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    .slice(0, max);
+}
+
 /** Real list data for Games / Watch / homepage. */
 export async function listHostedGames(opts: {
   playerId?: string;
@@ -1106,21 +1156,21 @@ export async function listHostedGames(opts: {
     recent?: GameIndexEntry[];
     players?: Record<string, LivePlayerInfo>;
   }> {
-  const entries = await readIndex();
-
   if (opts.scope === "mine" && opts.playerId) {
     // Include the signed-in account's games too (cross-device continuity:
     // a new device starts with a fresh guest id but keeps the account's
     // player id from its profile).
-    const ids = new Set<string>([opts.playerId]);
-    if (opts.accountPlayerId) ids.add(opts.accountPlayerId);
-    const mine = entries.filter((e) => ids.has(e.creator) || ids.has(e.opponent));
-    const games = await fetchGames(mine, 25);
+    const games = await gamesForPlayerIds(
+      [opts.playerId, opts.accountPlayerId ?? ""],
+      25,
+    );
     const players = await playerNamesFor(
       games.flatMap((g) => [g.creator, g.opponent]),
     );
     return { games, players };
   }
+
+  const entries = await readIndex();
 
   if (opts.scope === "watch") {
     // Settle any flag falls first so the feed only shows real live games,
@@ -1186,11 +1236,7 @@ export async function getPlayerProfile(playerId: string): Promise<{
   // durable record when it is ahead of this instance's cache — otherwise a win
   // recorded elsewhere shows up as no change at all.
   const stats = await ratingBaseline(await getPlayerStats(playerId));
-  const entries = await readIndex();
-  const mine = entries.filter(
-    (e) => e.creator === playerId || e.opponent === playerId,
-  );
-  const games = await fetchGames(mine, 15);
+  const games = await gamesForPlayerIds([playerId], 15);
   const players = await playerNamesFor(
     games.flatMap((g) => [g.creator, g.opponent]),
   );
@@ -1418,6 +1464,36 @@ async function createSeekRow(
 }
 
 /**
+ * How wide a rating gap may be, given how long the searcher has waited and how
+ * confident both ratings are.
+ *
+ * Two properties matter, and the original single fixed window read off the
+ * searcher alone had neither.
+ *
+ * It considers *both* players. Only the lower player id ever claims (see
+ * seekInPool), so judging the gap from the claimer's own confidence is a trap:
+ * an established claimer (rd < 250, window 300) facing a provisional opponent
+ * 400 points away refuses the pair — and that opponent is structurally
+ * forbidden from claiming in return. Both sit searching forever.
+ *
+ * And it widens with the wait, which makes that deadlock unreachable no matter
+ * how the ratings fall. Two people who are both still holding a place in the
+ * queue after a minute want a game far more than they want a close one.
+ */
+export function ratingWindow(
+  myRd: number,
+  theirRd: number,
+  waitedMs: number,
+): number {
+  // Either side being provisional is enough — an unsettled rating is a weak
+  // prediction of strength in both directions.
+  const base = myRd >= 250 || theirRd >= 250 ? 500 : 300;
+  if (waitedMs >= 45_000) return Infinity; // still both here — just pair them
+  if (waitedMs >= 20_000) return base + 250;
+  return base;
+}
+
+/**
  * Pair two players through the shared pool.
  *
  * Every call is idempotent, which is what lets it serve as both "start
@@ -1429,6 +1505,8 @@ async function createSeekRow(
  * two players who spot each other in the same instant each claim the other's row
  * and end up in two different games — each sitting alone at a board. The higher
  * id waits to be claimed instead, so a pairing costs at most one extra poll.
+ * That asymmetry is why the rating window (above) has to widen: the higher id
+ * cannot rescue a pairing the lower id declines.
  */
 async function seekInPool(
   playerId: string,
@@ -1444,6 +1522,9 @@ async function seekInPool(
     const game = await getHostedGame(mine.id);
     if (game && !isGameOver(game.status)) return { status: "matched", game };
   }
+  /* How long I have been queuing. Only meaningful while the row is still mine
+     and open; a claimed or finished row is not a wait. */
+  const waitedMs = inPool && mine ? Math.max(0, now - Number(mine.created_at)) : 0;
 
   // 2. Otherwise, look for someone to pair with.
   const rows = await openSeekRows(playerId, since);
@@ -1455,29 +1536,42 @@ async function seekInPool(
 
   if (compatible.length > 0) {
     const me = await ratingBaseline(await getPlayerStats(playerId));
-    const ratings = await ratingsForPlayerIds(
+    const myRd = me.rd ?? START_RD;
+    const profiles = await ratingsForPlayerIds(
       compatible.map((r) => r.white_player_id),
     );
-    const maxDiff = (me.rd ?? START_RD) >= 250 ? 500 : 300;
     const ranked = compatible
-      .map((row) => ({
-        row,
-        diff: Math.abs(
-          (ratings[row.white_player_id] ?? START_RATING) - me.rating,
-        ),
-      }))
-      .filter((c) => c.diff <= maxDiff)
+      .map((row) => {
+        // No profile row means an unrated player, which is as provisional as it
+        // gets — not a 1200 with settled confidence.
+        const them = profiles[row.white_player_id] ?? {
+          rating: START_RATING,
+          rd: START_RD,
+        };
+        return {
+          row,
+          diff: Math.abs(them.rating - me.rating),
+          window: ratingWindow(myRd, them.rd, waitedMs),
+        };
+      })
+      .filter((c) => c.diff <= c.window)
       .sort((a, b) => a.diff - b.diff);
 
     // Leave the pool before claiming: while my own row is still open, a third
     // player could take it at the very moment I take someone else's, and I'd
     // owe two people a game.
+    let withdrew = false;
     if (ranked.length > 0 && mine && inPool) {
-      inPool = false;
-      if (!(await withdrawSeekRow(mine.id))) {
+      if (await withdrawSeekRow(mine.id)) {
+        inPool = false;
+        withdrew = true;
+      } else {
         // Claimed between the read and the withdrawal — that pairing wins.
         const game = await getHostedGame(mine.id);
         if (game && !isGameOver(game.status)) return { status: "matched", game };
+        // The row is gone but there is no game to show for it, so I really am
+        // out of the pool and will need a fresh place below.
+        inPool = false;
       }
     }
 
@@ -1486,6 +1580,17 @@ async function seekInPool(
       if (!game) continue; // someone got there first — try the next candidate
       await writeGame(game);
       return { status: "matched", game };
+    }
+
+    // Every candidate was claimed by somebody else while we were trying. We
+    // gave up our place to chase them, so take a new one — but note that this
+    // is the only path that resets the queue position, and it only runs when
+    // the row was genuinely withdrawn. Recreating it unconditionally (as this
+    // used to) meant a player who kept losing claim races kept jumping to the
+    // back of a queue ordered by wait time.
+    if (withdrew) {
+      await createSeekRow(playerId, timeControl, now);
+      return { status: "waiting" };
     }
   }
 
@@ -1499,17 +1604,18 @@ async function seekInPool(
 }
 
 /**
- * Enter the seek pool, pairing immediately with the closest compatible
- * seeker. Pairing uses rating proximity: same time
- * control preferred, closest rating wins, and the match is only made when
- * the gap is reasonable for the player's confidence (provisional players
- * match almost anyone; established players pair within ~300 points). When a
- * pair is found, a real rated hosted game starts immediately — nothing is
- * faked or staged.
+ * Enter the seek pool, pairing immediately with the closest compatible seeker.
  *
- * The pool itself lives in Supabase whenever it is configured (see
- * seekInPool below); the in-store pool underneath is the fallback for a
- * single-instance deployment with no database.
+ * Pairing uses rating proximity: same time control preferred, closest rating
+ * wins, and the match is only made when the gap is reasonable for how confident
+ * the two ratings are (see ratingWindow). That preference relaxes the longer
+ * somebody waits, and after 45 seconds drops entirely — a close game is worth
+ * having, but not worth never playing. When a pair is found, a real rated hosted
+ * game starts immediately; nothing is faked or staged.
+ *
+ * The pool itself lives in Supabase whenever it is configured (see seekInPool
+ * above); the in-store pool underneath is the fallback for a single-instance
+ * deployment with no database.
  */
 export async function seekMatch(
   playerId: string,
@@ -1539,6 +1645,7 @@ export async function seekMatch(
   const seekers = await readSeekers();
   const others = seekers.filter((s) => s.playerId !== playerId);
   const me = await getPlayerStats(playerId);
+  const mine = seekers.find((s) => s.playerId === playerId);
 
   const candidates = others.filter(
     (s) => !timeControl || !s.timeControl || s.timeControl === timeControl,
@@ -1552,7 +1659,12 @@ export async function seekMatch(
       bestDiff = diff;
     }
   }
-  const maxDiff = (me.rd ?? START_RD) >= 250 ? 500 : 300;
+  /* Pool entries carry a rating but no rd, so confidence is judged from the
+     searcher alone here — hence the same value twice. The wait-widening is what
+     matters either way: it is why a long search always ends in a game rather
+     than in silence. */
+  const myRd = me.rd ?? START_RD;
+  const maxDiff = ratingWindow(myRd, myRd, mine ? Math.max(0, now - mine.seekedAt) : 0);
 
   if (best && bestDiff <= maxDiff) {
     const game = await gameForPair(
@@ -1569,7 +1681,19 @@ export async function seekMatch(
     return { status: "matched", game };
   }
 
-  await writeSeekers([...others, { playerId, rating: me.rating, timeControl, seekedAt: now }]);
+  await writeSeekers([
+    ...others,
+    {
+      playerId,
+      rating: me.rating,
+      timeControl,
+      // Keep the original timestamp. pollSeek re-registers on every poll, so
+      // stamping `now` here would reset the wait every 2.5s — the widening
+      // above could never fire, and the pool's longest-waiting-first order
+      // would be meaningless.
+      seekedAt: mine?.seekedAt ?? now,
+    },
+  ]);
   return { status: "waiting" };
 }
 

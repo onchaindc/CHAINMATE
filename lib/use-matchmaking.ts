@@ -95,6 +95,11 @@ export function useMatchmaking(): Matchmaking {
               setSeeking(false);
               active.current = false;
               void store().cancelSeek().catch(() => {});
+              // Say so. Clearing the panel in silence looks identical to the
+              // search having broken, which is exactly how it was read.
+              setError(
+                "No opponent joined in 90 seconds. Nobody else is searching right now — try again, or create a game and share the link.",
+              );
               return;
             }
             try {
