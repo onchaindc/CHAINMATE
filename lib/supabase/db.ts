@@ -202,11 +202,30 @@ export async function leaderboardProfiles(limit: number): Promise<PlayerStats[]>
   }));
 }
 
+/**
+ * Report a write that Supabase rejected.
+ *
+ * Every durable write here is best-effort by design — the fast store already
+ * answered the request, so a failed mirror must not break the user's move. But
+ * "best-effort" was implemented as "unexamined", which meant a schema drift or a
+ * revoked permission would have degraded the whole app to per-instance memory in
+ * total silence: no error, no log, nothing to search for. One line in the
+ * function log is what makes that diagnosable.
+ */
+function reportWriteError(op: string, error: unknown): void {
+  if (!error) return;
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as { message: unknown }).message)
+      : String(error);
+  console.warn(`[chainmate] supabase ${op} failed: ${message}`);
+}
+
 /** Mirror a completed game into the games history table. */
 export async function upsertGameRecord(game: GameState): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  await admin.from("games").upsert(
+  const { error } = await admin.from("games").upsert(
     {
       id: game.id,
       white_player_id: game.creator,
@@ -223,6 +242,7 @@ export async function upsertGameRecord(game: GameState): Promise<void> {
     },
     { onConflict: "id" },
   );
+  reportWriteError(`upsertGameRecord(${game.id})`, error);
 }
 
 /** The real termination reason, never guessed from the winner alone. */
@@ -248,7 +268,7 @@ function resultLabel(status: GameStatus): string {
 export async function upsertGameSnapshot(game: GameState): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  await admin.from("games").upsert(
+  const { error } = await admin.from("games").upsert(
     {
       id: game.id,
       white_player_id: game.creator,
@@ -269,6 +289,7 @@ export async function upsertGameSnapshot(game: GameState): Promise<void> {
     },
     { onConflict: "id" },
   );
+  reportWriteError(`upsertGameSnapshot(${game.id})`, error);
 }
 
 function parseSnapshot(raw: unknown): GameState | null {
@@ -307,6 +328,56 @@ export async function recentGameSnapshots(
     .limit(limit);
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
+  if (error || !data) return [];
+  const out: GameState[] = [];
+  for (const row of data) {
+    const game = parseSnapshot(row.snapshot);
+    if (game) out.push(game);
+  }
+  return out;
+}
+
+/**
+ * Every game one player took part in, newest first.
+ *
+ * This is the durable answer to "show me my games", and it has to come from
+ * here rather than from the game store's index blob. That blob lives in
+ * per-instance storage (KV when configured, otherwise an in-memory file store
+ * that cannot write to a read-only serverless filesystem), so on a
+ * multi-instance host it only ever holds the games that happened to be played
+ * on the instance answering the request — a player's newest match is routinely
+ * invisible to it, which is exactly what made a freshly finished game vanish
+ * from Games and from the profile page.
+ *
+ * `games_white_idx` and `games_black_idx` (migration 0001) cover both sides of
+ * the OR. Pool placeholders are excluded: `hosted_s…` rows exist to hold a
+ * place in the matchmaking queue and are not games anybody played.
+ */
+export async function gamesForPlayer(
+  playerIds: string[],
+  limit: number,
+): Promise<GameState[]> {
+  const admin = getSupabaseAdmin();
+  const ids = [...new Set(playerIds.filter(Boolean))];
+  if (!admin || ids.length === 0) return [];
+  // PostgREST .or() takes a raw filter string, so the ids are interpolated
+  // rather than bound. Player ids are generated server-side (`acct_…`) or by
+  // the client identity (`0x…`), but this is an exported helper — reject
+  // anything that could break out of the filter list instead of trusting
+  // every future caller.
+  if (ids.some((id) => !/^[A-Za-z0-9_-]+$/.test(id))) {
+    throw new Error("gamesForPlayer: player ids must be alphanumeric");
+  }
+  const filter = ids
+    .flatMap((id) => [`white_player_id.eq.${id}`, `black_player_id.eq.${id}`])
+    .join(",");
+  const { data, error } = await admin
+    .from("games")
+    .select("snapshot")
+    .or(filter)
+    .not("id", "like", `${SEEK_ID_PREFIX}%`)
+    .order("created_at", { ascending: false })
+    .limit(limit);
   if (error || !data) return [];
   const out: GameState[] = [];
   for (const row of data) {
@@ -370,16 +441,20 @@ export async function openSeekRows(
   return data as unknown as SeekRow[];
 }
 
-/** My own live pool row — `status` says whether somebody claimed it. */
+/**
+ * My own live pool row — `status` says whether somebody claimed it, and
+ * `created_at` is how long I have been queuing (the pairing window widens with
+ * the wait, see seekInPool in lib/server/hosted.ts).
+ */
 export async function mySeekRow(
   playerId: string,
   since: number,
-): Promise<{ id: string; status: string } | null> {
+): Promise<{ id: string; status: string; created_at: number } | null> {
   const admin = getSupabaseAdmin();
   if (!admin) return null;
   const { data, error } = await admin
     .from("games")
-    .select("id, status")
+    .select("id, status, created_at")
     .like("id", `${SEEK_ID_PREFIX}%`)
     .eq("white_player_id", playerId)
     .gte("created_at", since)
@@ -387,7 +462,7 @@ export async function mySeekRow(
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;
-  return data as unknown as { id: string; status: string };
+  return data as unknown as { id: string; status: string; created_at: number };
 }
 
 /**
@@ -475,21 +550,30 @@ export async function pruneStaleSeekRows(before: number): Promise<void> {
     .lt("created_at", before);
 }
 
-/** Durable ratings for a set of player ids (players with no row are omitted). */
+/**
+ * Durable rating *and* confidence for a set of player ids (players with no row
+ * are omitted). Matchmaking needs the deviation as well as the rating: a
+ * provisional opponent is matchable across a much wider gap than an established
+ * one, and judging that from the searcher's own rd alone deadlocks the pair.
+ */
 export async function ratingsForPlayerIds(
   ids: string[],
-): Promise<Record<string, number>> {
+): Promise<Record<string, { rating: number; rd: number }>> {
   const admin = getSupabaseAdmin();
   const unique = [...new Set(ids.filter(Boolean))];
   if (!admin || unique.length === 0) return {};
   const { data, error } = await admin
     .from("profiles")
-    .select("player_id, rating")
+    .select("player_id, rating, rd")
     .in("player_id", unique);
   if (error || !data) return {};
-  const out: Record<string, number> = {};
-  for (const row of data as unknown as { player_id: string; rating: number }[]) {
-    out[row.player_id] = row.rating;
+  const out: Record<string, { rating: number; rd: number }> = {};
+  for (const row of data as unknown as {
+    player_id: string;
+    rating: number;
+    rd: number | null;
+  }[]) {
+    out[row.player_id] = { rating: row.rating, rd: row.rd ?? 350 };
   }
   return out;
 }
