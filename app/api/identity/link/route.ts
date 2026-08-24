@@ -126,7 +126,20 @@ export async function POST(req: NextRequest) {
             { status: 409 },
           );
         }
-        await admin!.from("profiles").update({ username }).eq("user_id", userId);
+        // Checked, because the response below hands back the NEW username
+        // either way: unchecked, a rejected update signed the player in under a
+        // name the database had never accepted. It stuck until the next reload
+        // and reappeared as the old name on every other device.
+        //
+        // No row-count check needed here, unlike /api/players/me — `existing`
+        // came from profileForUserId(userId), so this filter has a row.
+        const { error: renameError } = await admin!
+          .from("profiles")
+          .update({ username })
+          .eq("user_id", userId);
+        if (renameError) {
+          return NextResponse.json({ error: renameError.message }, { status: 500 });
+        }
       }
       return NextResponse.json({ profile: { ...existing, username: username || existing.username } });
     }
