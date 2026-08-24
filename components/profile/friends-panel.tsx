@@ -9,6 +9,7 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
+import { guestDisplayName } from "@/lib/identity";
 import { HostedGameStore, type SearchPlayerResult } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
 
@@ -86,7 +87,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
 
   const friendRow = (p: PlayerStats, actions?: React.ReactNode) => {
     const linkable = !p.isGuest && p.username;
-    const name = p.username ?? `Guest_${p.playerId.slice(0, 4).toUpperCase()}`;
+    const name = guestDisplayName(p.username);
     return (
       <div
         key={p.playerId}

@@ -23,6 +23,7 @@ import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
+import { guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import type { GameState, PlayerStats } from "@/lib/types";
@@ -339,7 +340,7 @@ export default function PublicPlayerPage() {
                   </Link>
                 ) : (
                   <span className="text-muted-foreground">
-                    {f.username ?? `Guest_${f.playerId.slice(0, 4).toUpperCase()}`}
+                    {guestDisplayName(f.username)}
                   </span>
                 )}
                 <span className="font-mono tabular-nums text-primary">{f.rating}</span>

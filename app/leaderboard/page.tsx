@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
+import { guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
@@ -136,7 +137,7 @@ export default function LeaderboardPage() {
                             </Link>
                           ) : (
                             <span className="truncate">
-                              {p.username ?? `Guest_${p.playerId.slice(0, 4).toUpperCase()}`}
+                              {guestDisplayName(p.username)}
                             </span>
                           )}
                           {p.isGuest && (

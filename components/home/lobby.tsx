@@ -24,6 +24,7 @@ import { RecentForm } from "@/components/profile/recent-form";
 import { SectionLabel } from "@/components/ui/page-header";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
+import { guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
@@ -417,8 +418,7 @@ export function Lobby() {
               ) : (
                 <ul className="divide-y divide-border/50">
                   {data.friends.slice(0, 5).map((f) => {
-                    const name =
-                      f.username ?? `Guest_${f.playerId.slice(0, 4).toUpperCase()}`;
+                    const name = guestDisplayName(f.username);
                     return (
                       <li key={f.playerId} className="flex items-center gap-2.5 px-3 py-2">
                         <PlayerAvatar name={name} size="sm" />
@@ -507,7 +507,7 @@ export function Lobby() {
 function liveName(p: { id: string; name?: string; isAi?: boolean }): string {
   if (p.isAi || p.id === AI_PLAYER_ID) return "Computer";
   if (!p.id) return "Waiting…";
-  return p.name || `Guest_${p.id.slice(0, 4).toUpperCase()}`;
+  return guestDisplayName(p.name);
 }
 
 function Stat({
