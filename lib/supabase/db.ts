@@ -526,28 +526,38 @@ export async function withdrawSeekRow(id: string): Promise<boolean> {
   return !error && Array.isArray(data) && data.length > 0;
 }
 
-/** Drop all of my waiting pool rows (cancel, or before re-registering). */
+/**
+ * Drop all of my waiting pool rows (cancel, or before re-registering).
+ *
+ * Best-effort by design — a row we fail to delete ages out of the pool via
+ * pruneStaleSeekRows, so matchmaking recovers on its own and nothing here is
+ * worth failing a search over. Logged rather than thrown for that reason, but
+ * logged: a delete that keeps failing shows up as ghost opponents in the pool,
+ * and that is otherwise indistinguishable from a matchmaking bug.
+ */
 export async function dropSeekRows(playerId: string): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin || !playerId) return;
-  await admin
+  const { error } = await admin
     .from("games")
     .delete()
     .like("id", `${SEEK_ID_PREFIX}%`)
     .eq("white_player_id", playerId)
     .eq("status", "waiting");
+  reportWriteError(`dropSeekRows(${playerId})`, error);
 }
 
 /** Clear pool rows nobody came back for, so the pool never rots. */
 export async function pruneStaleSeekRows(before: number): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  await admin
+  const { error } = await admin
     .from("games")
     .delete()
     .like("id", `${SEEK_ID_PREFIX}%`)
     .eq("status", "waiting")
     .lt("created_at", before);
+  reportWriteError("pruneStaleSeekRows", error);
 }
 
 /**
@@ -635,9 +645,10 @@ export async function upsertAchievements(stats: PlayerStats): Promise<void> {
     earned_at: a.earnedAt,
   }));
   if (rows.length === 0) return;
-  await admin
+  const { error } = await admin
     .from("player_achievements")
     .upsert(rows, { onConflict: "player_id,code" });
+  reportWriteError(`upsertAchievements(${stats.playerId})`, error);
 }
 
 /** Create/update the permanent profile for a freshly-signed-in account. */
@@ -718,10 +729,11 @@ export async function setPlayerCountry(
 ): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  await admin
+  const { error } = await admin
     .from("profiles")
     .update({ country: country || null, updated_at: new Date().toISOString() })
     .eq("player_id", playerId);
+  reportWriteError(`setPlayerCountry(${playerId})`, error);
 }
 
 /* ------------------------------------------------------------------ */
@@ -840,20 +852,31 @@ export async function requestFriend(
   }
   if (existing?.addressee_player_id === requesterId && existing.status === "pending") {
     // They asked first — just accept instead of stacking a duplicate.
-    await admin
+    //
+    // Checked, unlike before: this branch returned { ok: true } whatever
+    // happened, so a rejected update told the player the request was accepted
+    // while the row stayed pending. They saw a friend who never appeared in
+    // either list and no way to retry — the button was gone.
+    const { error } = await admin
       .from("friendships")
       .update({ status: "accepted", responded_at: Date.now() })
       .eq("requester_player_id", addresseeId)
       .eq("addressee_player_id", requesterId);
+    if (error) return { ok: false, error: error.message };
     return { ok: true };
   }
 
   // Clear any stale row (rejected / old direction) so the pair stays unique.
-  await admin
+  // Worth reporting rather than ignoring: the insert below is what enforces one
+  // row per pair, so a failed delete here comes back as a unique-violation on
+  // the insert instead, and "duplicate key value violates constraint" is not a
+  // sentence to show a player who clicked Add friend.
+  const { error: staleError } = await admin
     .from("friendships")
     .delete()
     .or(`requester_player_id.eq.${requesterId},requester_player_id.eq.${addresseeId}`)
     .or(`addressee_player_id.eq.${requesterId},addressee_player_id.eq.${addresseeId}`);
+  if (staleError) return { ok: false, error: staleError.message };
 
   const { error } = await admin.from("friendships").insert({
     requester_player_id: requesterId,
