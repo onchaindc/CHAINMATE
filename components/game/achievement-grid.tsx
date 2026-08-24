@@ -1,3 +1,6 @@
+import { Award } from "lucide-react";
+import { Panel } from "@/components/ui/panel";
+import { EmptyState } from "@/components/ui/states";
 import { ACHIEVEMENTS } from "@/lib/achievements";
 import { cn } from "@/lib/utils";
 import type { PlayerStats } from "@/lib/types";
@@ -9,25 +12,29 @@ export function AchievementGrid({ stats }: { stats: PlayerStats }) {
 
   if (earnedCount === 0) {
     return (
-      <div className="flex flex-col items-center rounded-lg border border-border/60 bg-card/30 px-6 py-10 text-center">
-        <p className="text-sm font-medium text-foreground/85">No achievements yet</p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          Win games and hit milestones — first victory, streaks, rating
-          milestones — to earn achievements.
-        </p>
-      </div>
+      <Panel>
+        <EmptyState
+          icon={Award}
+          title="No achievements yet"
+          description="Win games and hit milestones — first victory, streaks, rating milestones — to earn achievements."
+          className="py-10"
+        />
+      </Panel>
     );
   }
 
   return (
-    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/60 bg-border/50 sm:grid-cols-3">
+    /* The same hairline treatment as the stat tiles above it (`gap-px` over the
+       border colour): these two grids sit one under the other on the profile,
+       and were drawing their dividers at two different opacities. */
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 sm:grid-cols-3">
       {ACHIEVEMENTS.map((a) => {
         const isEarned = earned.has(a.code);
         return (
           <div
             key={a.code}
             className={cn(
-              "flex flex-col gap-1.5 bg-card/60 px-4 py-4",
+              "flex flex-col gap-1.5 bg-card/50 px-4 py-4",
               isEarned ? "text-foreground" : "text-muted-foreground/70",
             )}
             title={a.description}
@@ -36,8 +43,8 @@ export function AchievementGrid({ stats }: { stats: PlayerStats }) {
               {a.icon}
             </span>
             <p className={cn("text-xs font-semibold", isEarned && "text-primary")}>{a.name}</p>
-            <p className="text-[11px] leading-snug text-muted-foreground/90">{a.description}</p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider">
+            <p className="text-2xs leading-snug text-muted-foreground/90">{a.description}</p>
+            <p className="mt-0.5 text-2xs font-semibold uppercase tracking-wider">
               {isEarned ? "Earned" : "Locked"}
             </p>
           </div>

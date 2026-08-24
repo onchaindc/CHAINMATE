@@ -5,11 +5,13 @@ import { Radio, Trophy, Users } from "lucide-react";
 import { GameRow } from "@/components/game/game-row";
 import { LiveGameCard } from "@/components/game/live-game-card";
 import { PageHeader, SectionLabel } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { isGameOver, type GameIndexEntry, type LiveGameEntry } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 /**
  * Watch — the live broadcast feed.
@@ -102,8 +104,12 @@ export default function WatchPage() {
 
       {error && <ErrorNote message={error} className="mt-6" />}
 
-      {/* Live now — real active games from the live registry */}
-      <section className="mt-8 animate-fade-in-up [animation-delay:80ms]">
+      {/* Live now — real active games from the live registry.
+          The fade is gated on `!loading` throughout this page: `fade-in-up` has
+          fill mode `both` and runs once at mount, so at t=0 it animated the
+          loading skeletons and had already finished — leaving the real rows to
+          appear with no transition at all. */}
+      <section className={cn("mt-8", !loading && "animate-fade-in-up")}>
         <SectionLabel
           live={!loading && live.length > 0}
           aside={!loading && live.length > 0 ? `${live.length} active` : undefined}
@@ -115,13 +121,17 @@ export default function WatchPage() {
           )}
           Live now
         </SectionLabel>
-        <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
+        <Panel className="mt-3">
           {loading ? (
             <LoadingRows rows={2} rowClassName="h-16" />
           ) : live.length === 0 ? (
-            <p className="px-4 py-8 text-center text-xs text-muted-foreground">
-              No live games right now — every active match appears here automatically.
-            </p>
+            <EmptyState
+              icon={Radio}
+              title="No live games right now"
+              description="Every active match appears here automatically — start one and it shows up for everyone."
+              action={{ href: "/create", label: "Start a game" }}
+              className="py-10"
+            />
           ) : (
             <div className="divide-y divide-border/50">
               {live.map((entry) => (
@@ -129,22 +139,26 @@ export default function WatchPage() {
               ))}
             </div>
           )}
-        </div>
+        </Panel>
       </section>
 
       {/* Open games — public matches waiting for an opponent */}
-      <section className="mt-8 animate-fade-in-up [animation-delay:140ms]">
+      <section className={cn("mt-8", !loading && "animate-fade-in-up [animation-delay:60ms]")}>
         <SectionLabel>
           <Users className="h-3.5 w-3.5" aria-hidden />
           Open games
         </SectionLabel>
-        <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
+        <Panel className="mt-3">
           {loading ? (
             <LoadingRows rows={1} />
           ) : open.length === 0 ? (
-            <p className="px-4 py-8 text-center text-xs text-muted-foreground">
-              No public games waiting for an opponent right now.
-            </p>
+            <EmptyState
+              icon={Users}
+              title="No open games"
+              description="Nobody is waiting for an opponent right now. Create a public game and it will be listed here."
+              action={{ href: "/create", label: "Create a game" }}
+              className="py-10"
+            />
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {open.map((entry) => (
@@ -152,20 +166,21 @@ export default function WatchPage() {
               ))}
             </div>
           )}
-        </div>
+        </Panel>
       </section>
 
       {/* Recent completed matches */}
-      <section className="mt-8 animate-fade-in-up [animation-delay:200ms]">
+      <section className={cn("mt-8", !loading && "animate-fade-in-up [animation-delay:120ms]")}>
         <SectionLabel>
           <Trophy className="h-3.5 w-3.5" aria-hidden />
           Recent matches
         </SectionLabel>
-        <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
+        <Panel className="mt-3">
           {loading ? (
             <LoadingRows rows={2} />
           ) : recent.length === 0 ? (
             <EmptyState
+              icon={Trophy}
               title="No finished matches yet"
               description="Every completed game is archived here with a full replay."
               action={{ href: "/create", label: "Play the first one" }}
@@ -185,7 +200,7 @@ export default function WatchPage() {
               ))}
             </div>
           )}
-        </div>
+        </Panel>
       </section>
     </div>
   );

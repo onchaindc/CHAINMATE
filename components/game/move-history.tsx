@@ -82,7 +82,7 @@ export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps
           ref={containerRef}
           className="max-h-56 overflow-y-auto px-2 pb-2 lg:max-h-72"
         >
-          <table className="w-full text-[13px]">
+          <table className="w-full text-sm">
             <tbody>
               {pairs.map((pair, idx) => {
                 const whitePly = pair.white ? pair.white.number - 1 : -1;

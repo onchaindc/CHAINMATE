@@ -2,12 +2,15 @@ import { cn } from "@/lib/utils";
 
 interface PlayerAvatarProps {
   name: string;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   className?: string;
 }
 
 const SIZES = {
-  sm: "h-7 w-7 text-[11px]",
+  /** Inside a pill, beside text. Added because a caller was overriding `sm`
+      with three `!important` utilities to reach roughly this size. */
+  xs: "h-5 w-5 text-2xs",
+  sm: "h-7 w-7 text-2xs",
   md: "h-9 w-9 text-sm",
   lg: "h-14 w-14 text-xl",
 } as const;

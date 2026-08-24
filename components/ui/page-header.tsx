@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
  */
 export function PageHeader({
   eyebrow,
+  eyebrowIcon: EyebrowIcon,
   title,
   description,
   actions,
@@ -21,6 +22,11 @@ export function PageHeader({
 }: {
   /** Small uppercase label above the title ("Rankings", "Your record"). */
   eyebrow?: string;
+  /**
+   * Icon set inline before the eyebrow text. Here rather than in the caller so
+   * the size and gap can't drift — Auth had it at its own geometry.
+   */
+  eyebrowIcon?: ComponentType<{ className?: string }>;
   title: string;
   description?: ReactNode;
   /** Buttons aligned to the title on wide screens, stacked under it on narrow. */
@@ -40,7 +46,10 @@ export function PageHeader({
       >
         <div className="min-w-0">
           {eyebrow && (
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              {EyebrowIcon && (
+                <EyebrowIcon className="mr-1.5 inline h-3.5 w-3.5 align-[-0.2em]" />
+              )}
               {eyebrow}
             </p>
           )}
@@ -87,7 +96,7 @@ export function SectionLabel({
     <div className={cn("flex items-baseline justify-between gap-3", className)}>
       <h2
         className={cn(
-          "flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider",
+          "flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider",
           live ? "text-primary" : "text-muted-foreground",
         )}
       >
@@ -99,7 +108,7 @@ export function SectionLabel({
         )}
         {children}
       </h2>
-      {aside && <p className="text-[11px] text-muted-foreground">{aside}</p>}
+      {aside && <p className="text-2xs text-muted-foreground">{aside}</p>}
     </div>
   );
 }

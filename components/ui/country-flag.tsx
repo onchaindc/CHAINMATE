@@ -42,7 +42,11 @@ export function CountryFlag({ code, className }: CountryFlagProps) {
     return (
       <span
         className={cn(
-          "inline-flex shrink-0 items-center rounded-[3px] border border-border/70 bg-secondary/70 px-1 py-px font-mono text-[9px] font-semibold uppercase leading-[1.35] tracking-wide text-muted-foreground",
+          /* `leading-none` rather than the type scale's own line height: this
+             chip stands in for a 12px-tall flag image on the same text
+             baseline, and the token's 1rem leading made the fallback taller
+             than the thing it replaces. */
+          "inline-flex shrink-0 items-center rounded-[3px] border border-border/70 bg-secondary/70 px-1 py-0.5 font-mono text-2xs font-semibold uppercase leading-none tracking-wide text-muted-foreground",
           className,
         )}
         title={label}

@@ -110,7 +110,7 @@ export function ChallengeInbox() {
             className="animate-fade-in-up rounded-lg border border-primary/30 bg-card/95 p-3.5 shadow-elevation-3 backdrop-blur"
           >
             <div className="flex items-start justify-between gap-2">
-              <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
+              <p className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-[0.18em] text-primary">
                 <span
                   className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-primary"
                   aria-hidden

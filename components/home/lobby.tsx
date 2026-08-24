@@ -20,6 +20,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { GameRow } from "@/components/game/game-row";
+import { RecentForm } from "@/components/profile/recent-form";
 import { SectionLabel } from "@/components/ui/page-header";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
@@ -158,30 +159,6 @@ export function Lobby() {
     return map;
   }, [data?.stats.ratingHistory, data?.recent, playerId]);
 
-  /**
-   * The last few rated results as W/D/L. Taken from the games themselves —
-   * the sign of a rating change is not the result (you can lose rating in a
-   * draw against a weaker player).
-   */
-  const form = useMemo(() => {
-    const byId = new Map((data?.recent ?? []).map((g) => [g.id, g]));
-    return (data?.stats.ratingHistory ?? []).slice(0, 8).map((h) => {
-      const game = byId.get(h.gameId);
-      const outcome = !game
-        ? h.change > 0
-          ? "W"
-          : h.change < 0
-            ? "L"
-            : "D"
-        : game.winner === playerId
-          ? "W"
-          : game.winner === ""
-            ? "D"
-            : "L";
-      return { gameId: h.gameId, outcome, change: h.change } as const;
-    });
-  }, [data?.stats.ratingHistory, data?.recent, playerId]);
-
   const challengeFriend = async (friendId: string) => {
     setChallenging(friendId);
     setError(null);
@@ -204,7 +181,7 @@ export function Lobby() {
       {/* Who you are, and where you stand. */}
       <div className="animate-fade-in-up flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+          <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             Welcome back
           </p>
           <h1 className="font-display mt-3 truncate text-3xl font-bold tracking-tight">
@@ -356,11 +333,11 @@ export function Lobby() {
                           {names[g.invited ?? ""] ?? "a player"}
                         </span>
                       </p>
-                      <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                      <p className="font-mono text-2xs tabular-nums text-muted-foreground">
                         {g.timeControl ?? "Match"}
                       </p>
                     </div>
-                    <span className="shrink-0 text-[11px] uppercase tracking-wider text-muted-foreground">
+                    <span className="shrink-0 text-2xs uppercase tracking-wider text-muted-foreground">
                       Pending
                     </span>
                   </li>
@@ -391,7 +368,7 @@ export function Lobby() {
                       key={g.id}
                       game={g}
                       me={playerId}
-                      delta={deltas.get(g.id)}
+                      delta={deltas.get(g.id) ?? null}
                       names={names}
                     />
                   ))}
@@ -404,48 +381,14 @@ export function Lobby() {
         {/* ---- Sidebar: form, friends, live ---- */}
         <div className="min-w-0 space-y-6">
           {/* Form — the last few results, at a glance. */}
-          <section className="animate-fade-in-up [animation-delay:60ms] rounded-lg border border-border/70 bg-card/50 p-4">
-            <SectionLabel
-              aside={
-                stats && stats.currentStreak !== 0
-                  ? `${Math.abs(stats.currentStreak)} ${stats.currentStreak > 0 ? "win" : "loss"} streak`
-                  : undefined
-              }
-            >
-              Recent form
-            </SectionLabel>
-            {data === null ? (
-              <div className="mt-3 h-7 animate-pulse rounded-md bg-secondary/60" />
-            ) : form.length === 0 ? (
-              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                No rated games yet — your first result shows up here.
-              </p>
-            ) : (
-              <>
-                <ol className="mt-3 flex flex-wrap gap-1.5">
-                  {form.map((f) => (
-                    <li key={f.gameId}>
-                      <Link
-                        href={`/game/${f.gameId}?replay=1`}
-                        title={`${f.change > 0 ? `+${f.change}` : f.change} rating`}
-                        className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md text-[11px] font-bold transition-transform hover:scale-110",
-                          f.outcome === "W" && "bg-primary/15 text-primary",
-                          f.outcome === "L" && "bg-negative/15 text-negative",
-                          f.outcome === "D" && "bg-secondary text-muted-foreground",
-                        )}
-                      >
-                        {f.outcome}
-                      </Link>
-                    </li>
-                  ))}
-                </ol>
-                <p className="mt-2.5 text-[11px] text-muted-foreground">
-                  Newest first · tap a result to replay that game
-                </p>
-              </>
-            )}
-          </section>
+          <RecentForm
+            history={stats?.ratingHistory}
+            games={data?.recent}
+            playerId={playerId}
+            streak={stats?.currentStreak}
+            loading={data === null}
+            className="[animation-delay:60ms]"
+          />
 
           {/* Friends — a known opponent beats a random one. */}
           <section className="animate-fade-in-up [animation-delay:120ms]">
@@ -484,7 +427,7 @@ export function Lobby() {
                             <CountryFlag code={f.country} />
                             <span className="truncate">{name}</span>
                           </p>
-                          <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                          <p className="font-mono text-2xs tabular-nums text-muted-foreground">
                             {f.rating}
                           </p>
                         </div>
@@ -540,7 +483,7 @@ export function Lobby() {
                             <span className="text-muted-foreground">vs</span>{" "}
                             {liveName(entry.opponent)}
                           </p>
-                          <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                          <p className="font-mono text-2xs tabular-nums text-muted-foreground">
                             {entry.timeControl ?? "Match"} · {entry.moveCount} ply
                           </p>
                         </div>
@@ -580,7 +523,7 @@ function Stat({
 }) {
   return (
     <div className={cn("flex flex-col", className)}>
-      <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <dt className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </dt>
       <dd

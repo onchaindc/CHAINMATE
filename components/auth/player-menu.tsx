@@ -85,7 +85,7 @@ export function PlayerMenu() {
         <div className="absolute right-0 top-full z-50 mt-2 w-56 animate-fade-in-up overflow-hidden rounded-lg border border-border/70 bg-card/95 shadow-elevation-3 backdrop-blur">
           <div className="border-b border-border/60 px-4 py-3">
             <p className="truncate text-sm font-medium text-foreground">{name}</p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-2xs text-muted-foreground">
               {isGuest ? (
                 <>
                   Guest — progress saved on this device.

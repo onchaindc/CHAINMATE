@@ -171,7 +171,7 @@ export function EndGameModal({
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Match result
             </p>
             <h2
@@ -193,7 +193,7 @@ export function EndGameModal({
         {/* Players + rating changes */}
         <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-secondary/30 px-4 py-3">
           {playerCell("white")}
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="shrink-0 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             vs
           </span>
           {playerCell("black")}
@@ -201,13 +201,13 @@ export function EndGameModal({
 
         {/* Casual games are casual by design — say so, don't leave it unexplained. */}
         {isAiGame && (
-          <p className="mt-2.5 text-center text-[11px] leading-snug text-muted-foreground">
+          <p className="mt-2.5 text-center text-2xs leading-snug text-muted-foreground">
             Casual match — games against the computer never change your rating.
           </p>
         )}
         {!isAiGame &&
           [game.creator, game.opponent].some((id) => stats[id]?.isGuest) && (
-            <p className="mt-2.5 text-center text-[11px] leading-snug text-muted-foreground">
+            <p className="mt-2.5 text-center text-2xs leading-snug text-muted-foreground">
               Casual match — guest games never change a rating. Sign up for
               rated play.
             </p>
@@ -236,7 +236,7 @@ export function EndGameModal({
             ends, so there is always something here; the LLM analysis replaces
             it in place when it lands. */}
         <div className="mt-4 border-t border-border/60 pt-4">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             What changed the game?
           </p>
           {report && (
@@ -247,12 +247,12 @@ export function EndGameModal({
               matters: the fallback and the analysis read alike, and a player
               should be able to tell whether the validators have spoken. */}
           {analysisDone ? (
-            <p className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-primary">
+            <p className="mt-2.5 flex items-center gap-1.5 text-2xs font-medium text-primary">
               <Sparkles className="h-3 w-3" aria-hidden />
               {isHostedGame ? "Analysed on GenLayer by validator consensus" : "AI analysis"}
             </p>
           ) : analyzing ? (
-            <p className="mt-2.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <p className="mt-2.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
               {isHostedGame
                 ? "Running deeper analysis on GenLayer…"
@@ -260,7 +260,7 @@ export function EndGameModal({
             </p>
           ) : showingFallback ? (
             <div className="mt-2.5">
-              <p className="text-[11px] leading-snug text-muted-foreground">
+              <p className="text-2xs leading-snug text-muted-foreground">
                 {game.analysisError
                   ? `Automatic match report. ${
                       isHostedGame ? "On-chain analysis" : "AI analysis"

@@ -2,17 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Globe } from "lucide-react";
+import { Gamepad2, Globe } from "lucide-react";
 import { RequireProfile } from "@/components/auth/require-profile";
 import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
+import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
+import { RecentForm } from "@/components/profile/recent-form";
+import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { GuestBanner } from "@/components/auth/guest-banner";
-import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { COUNTRIES } from "@/lib/countries";
-import { CountryFlag } from "@/components/ui/country-flag";
 import { SectionLabel } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
@@ -53,6 +55,23 @@ function ProfileContent() {
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
   const hostedStore = useMemo(() => getStore("hosted") as HostedGameStore, []);
   const [savingCountry, setSavingCountry] = useState(false);
+
+  /**
+   * Rating change per game, for the history rows.
+   *
+   * The stats history is a recent window and can be missing older games, so the
+   * game's own `ratings` stamp — written when the game was rated and kept —
+   * takes precedence where both have an entry.
+   */
+  const deltas = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const h of stats?.ratingHistory ?? []) map.set(h.gameId, h.change);
+    for (const g of games ?? []) {
+      const change = g.ratings?.[playerId]?.change;
+      if (change !== undefined) map.set(g.id, change);
+    }
+    return map;
+  }, [stats?.ratingHistory, games, playerId]);
 
   useEffect(() => {
     // Wait for the real identity. Fetching on the interim id served the device
@@ -99,42 +118,20 @@ function ProfileContent() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
-      <div className="animate-fade-in-up flex flex-wrap items-center gap-4">
-        <PlayerAvatar name={name} size="lg" />
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <CountryFlag code={country} className="h-4 w-6" />
-            <h1 className="font-display truncate text-2xl font-bold tracking-tight">{name}</h1>
-            {identity.isGuest ? (
-              <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Guest
-              </span>
-            ) : (
-              <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                Account
-              </span>
-            )}
-            {stats && provisional && (
-              <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Provisional
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {identity.isGuest
-              ? "Guest — casual play, nothing is saved. Sign up for a permanent record."
-              : "ChainMate player — signed in and synced across devices"}
-          </p>
-        </div>
-        {rating !== null && (
-          <div className="ml-auto text-right">
-            <p className="font-mono text-2xl font-bold tabular-nums text-primary">{rating}</p>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              ELO rating
-            </p>
-          </div>
-        )}
-      </div>
+      <ProfileHeader
+        name={name}
+        eyebrow="Your profile"
+        country={country}
+        rating={rating}
+        ratingDelta={stats?.ratingHistory?.[0]?.change ?? null}
+        isGuest={identity.isGuest}
+        badges={stats && provisional && <ProfileBadge>Provisional</ProfileBadge>}
+        description={
+          identity.isGuest
+            ? "Guest — casual play, nothing is saved. Sign up for a permanent record."
+            : "ChainMate player — signed in and synced across devices"
+        }
+      />
 
       {identity.isGuest && (
         <div className="mt-6 animate-fade-in-up [animation-delay:60ms]">
@@ -143,11 +140,11 @@ function ProfileContent() {
       )}
 
       {/* Optional country — editable, shown as a flag next to the name */}
-      <div className="mt-6 flex animate-fade-in-up items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3 [animation-delay:60ms]">
+      <Panel className="mt-6 flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms]">
         <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <label
           htmlFor="country"
-          className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+          className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground"
         >
           Country
         </label>
@@ -178,17 +175,15 @@ function ProfileContent() {
             </option>
           ))}
         </select>
-      </div>
+      </Panel>
 
       {/* Username — editable for authenticated users */}
       {!identity.isGuest && !identity.linked && (
-        <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
-          <p className="text-sm text-amber-700 dark:text-amber-500">
-            Your account isn&apos;t linked to a player profile yet, so your name can&apos;t be
-            saved. Sign out and back in to finish setting up your account.
-          </p>
-        </div>
+        <ErrorNote
+          tone="warning"
+          className="mt-6"
+          message="Your account isn’t linked to a player profile yet, so your name can’t be saved. Sign out and back in to finish setting up your account."
+        />
       )}
 
       {!identity.isGuest && identity.linked && (
@@ -207,51 +202,47 @@ function ProfileContent() {
       {error && <ErrorNote message={error} className="mt-6" />}
 
       {/* Stats */}
-      <div className="mt-8 grid animate-fade-in-up grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 sm:grid-cols-5">
-        {[
+      <StatTiles
+        layout="five"
+        className="mt-8 animate-fade-in-up [animation-delay:80ms]"
+        tiles={[
           { label: "Games", value: stats ? String(stats.games) : "—" },
           { label: "Wins", value: stats ? String(stats.wins) : "—" },
           { label: "Losses", value: stats ? String(stats.losses) : "—" },
           { label: "Draws", value: stats ? String(stats.draws) : "—" },
-          {
-            label: "Win rate",
-            value: winRate !== null ? `${winRate}%` : "—",
-          },
-        ].map((s) => (
-          <div key={s.label} className="bg-card/50 px-4 py-4">
-            <p className="font-mono text-xl font-bold tabular-nums text-foreground">{s.value}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {s.label}
-            </p>
-          </div>
-        ))}
-      </div>
+          { label: "Win rate", value: winRate !== null ? `${winRate}%` : "—" },
+        ]}
+      />
 
-      <div className="mt-4 grid animate-fade-in-up grid-cols-3 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 [animation-delay:80ms]">
-        {[
+      <StatTiles
+        layout="three"
+        size="sm"
+        className="mt-4 animate-fade-in-up [animation-delay:100ms]"
+        tiles={[
           { label: "Peak rating", value: stats ? String(stats.peakRating) : "—" },
-          {
-            label: "Streak",
-            value: stats ? (streak === 0 ? "—" : `${streak > 0 ? "+" : ""}${streak}`) : "—",
-          },
-          { label: "Best streak", value: stats ? `+${stats.bestStreak}` : "—" },
-        ].map((s) => (
-          <div key={s.label} className="bg-card/50 px-4 py-4">
-            <p className="font-mono text-lg font-bold tabular-nums text-foreground">{s.value}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {s.label}
-            </p>
-          </div>
-        ))}
-      </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">
+          stats ? formatStreak(streak) : { label: "Streak", value: "—" },
+          { label: "Best streak", value: stats ? `${stats.bestStreak}W` : "—" },
+        ]}
+      />
+      <p className="mt-2 text-2xs text-muted-foreground">
         {provisional
           ? "Provisional rating — updates after rated online matches between two human players."
           : "Rating and streaks update after rated online matches between two human players."}
       </p>
 
+      {/* Form — the record above, in the order it happened. */}
+      <RecentForm
+        history={stats?.ratingHistory}
+        games={games ?? undefined}
+        playerId={playerId}
+        streak={streak}
+        loading={stats === null}
+        showTrend
+        className="mt-4 [animation-delay:120ms]"
+      />
+
       {/* Achievements */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:120ms]">
+      <div className="mt-10 animate-fade-in-up [animation-delay:140ms]">
         <SectionLabel
           aside={
             stats && stats.achievements.length > 0
@@ -271,18 +262,19 @@ function ProfileContent() {
       </div>
 
       {/* Friends + player search */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:140ms]">
+      <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
         <FriendsPanel store={hostedStore} />
       </div>
 
       {/* Recent games */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
+      <div className="mt-10 animate-fade-in-up [animation-delay:180ms]">
         <SectionLabel>Recent games</SectionLabel>
-        <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
+        <Panel className="mt-3">
           {games === null ? (
             <LoadingRows />
           ) : games.length === 0 ? (
             <EmptyState
+              icon={Gamepad2}
               title="No games yet"
               description="Play your first match to start building a record."
               action={{ href: "/create", label: "Create a game" }}
@@ -295,17 +287,20 @@ function ProfileContent() {
                   key={game.id}
                   game={game}
                   me={game.backend === "local" ? localMe : playerId}
+                  /* Local games are never rated, so they hold the column open
+                     with a blank rather than claiming a delta of zero. */
+                  delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
                   names={game.backend === "local" ? undefined : names}
                 />
               ))}
             </div>
           )}
-        </div>
+        </Panel>
       </div>
 
       {/* Danger zone — delete account */}
       {!identity.isGuest && (
-        <div className="mt-10 animate-fade-in-up [animation-delay:180ms]">
+        <div className="mt-10 animate-fade-in-up [animation-delay:200ms]">
           <DeleteAccountSection />
         </div>
       )}
@@ -344,7 +339,7 @@ function DeleteAccountSection() {
 
   return (
     <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-destructive">
+      <h3 className="text-2xs font-semibold uppercase tracking-wider text-destructive">
         Danger zone
       </h3>
       <p className="mt-1.5 text-xs text-muted-foreground">
@@ -510,15 +505,15 @@ function ProfileUsernameEditor({
   if (!editing) {
     return (
       <div className="mt-4 flex animate-fade-in-up items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3 [animation-delay:80ms]">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Username</span>
+        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Username</span>
         <span className="flex-1 font-mono text-sm text-foreground">{currentUsername}</span>
         {success && (
-          <span className="text-[11px] text-primary">Saved</span>
+          <span className="text-2xs text-primary">Saved</span>
         )}
         <button
           type="button"
           onClick={() => { setEditing(true); setNewName(currentUsername); setError(null); setSuccess(false); }}
-          className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          className="text-2xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Edit
         </button>
@@ -528,7 +523,7 @@ function ProfileUsernameEditor({
 
   return (
     <div className="mt-4 rounded-lg border border-border/70 bg-card/50 p-4 animate-fade-in-up [animation-delay:80ms]">
-      <label htmlFor="edit-username" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <label htmlFor="edit-username" className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         {currentUsername ? "Edit Username" : "Set Username"}
       </label>
       <div className="mt-1.5 flex items-center gap-2">
@@ -548,11 +543,11 @@ function ProfileUsernameEditor({
           Cancel
         </Button>
       </div>
-      {usernameState === "ok" && <p className="mt-1 text-[11px] text-primary">Available</p>}
-      {usernameState === "taken" && <p className="mt-1 text-[11px] text-destructive">That username is taken</p>}
-      {usernameState === "checking" && <p className="mt-1 text-[11px] text-muted-foreground">Checking…</p>}
-      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
-      <p className="mt-1 text-[11px] text-muted-foreground">
+      {usernameState === "ok" && <p className="mt-1 text-2xs text-primary">Available</p>}
+      {usernameState === "taken" && <p className="mt-1 text-2xs text-destructive">That username is taken</p>}
+      {usernameState === "checking" && <p className="mt-1 text-2xs text-muted-foreground">Checking…</p>}
+      {error && <p className="mt-1 text-2xs text-destructive">{error}</p>}
+      <p className="mt-1 text-2xs text-muted-foreground">
         3–20 characters · letters, numbers, underscores.
       </p>
     </div>

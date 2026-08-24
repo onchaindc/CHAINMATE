@@ -25,7 +25,7 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 sm:gap-4">
-      <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+      <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-primary">
         <span className="relative flex h-1.5 w-1.5">
           <span
             aria-hidden
@@ -39,9 +39,13 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <span className="flex min-w-0 items-center gap-2 text-sm">
+            {/* The piece tokens, not zinc: these discs stand in for the white
+                and black pieces, and a chess piece is the same colour in either
+                UI theme — which is exactly what `--piece-*` is defined for. A
+                fixed zinc disc read as light-on-light in the light theme. */}
             <span
               aria-hidden
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-zinc-800"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/25 bg-piece-light text-piece-dark"
             >
               {/* Lucide crown, not ♔ — the Unicode chess glyphs have no font
                   on Windows and rendered as an empty box. */}
@@ -55,13 +59,13 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
               </span>
             )}
           </span>
-          <span className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:block">
+          <span className="hidden shrink-0 text-2xs font-semibold uppercase tracking-wider text-muted-foreground sm:block">
             vs
           </span>
           <span className="flex min-w-0 items-center gap-2 text-sm">
             <span
               aria-hidden
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800 text-zinc-100"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/40 bg-piece-dark text-piece-light"
             >
               <Crown className="h-3 w-3" aria-hidden />
             </span>
@@ -74,7 +78,7 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
             )}
           </span>
         </div>
-        <p className="mt-1 truncate font-mono text-[11px] tabular-nums text-muted-foreground">
+        <p className="mt-1 truncate font-mono text-2xs tabular-nums text-muted-foreground">
           Move {Math.floor(entry.moveCount / 2) + 1}
           {entry.timeControl ? ` · ${entry.timeControl}` : ""}
         </p>

@@ -29,10 +29,10 @@ export function CommentaryPanel({
     <div className="border-t border-border/60">
       <div className="flex items-center gap-2 px-4 py-2.5">
         <img src="/logo-mark.svg" alt="" className="h-4 w-4" />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           Analysis
         </span>
-        <span className="ml-auto flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        <span className="ml-auto flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-muted-foreground">
           <span
             className={cn(
               "h-1 w-1 rounded-full",
@@ -65,10 +65,10 @@ export function CommentaryPanel({
                     {entry.move}
                   </span>
                 )}
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                <span className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">
                   {entry.side}
                 </span>
-                <Badge variant="secondary" className="ml-auto px-1.5 py-0 text-[10px]">
+                <Badge variant="secondary" className="ml-auto px-1.5 py-0 text-2xs">
                   {entry.source === "chain" ? "chain" : "engine"}
                 </Badge>
               </div>
@@ -88,10 +88,10 @@ export function CommentaryPanel({
           <div className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2.5">
             <div className="flex items-center gap-2">
               <img src="/logo-mark.svg" alt="" className="h-3.5 w-3.5" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+              <span className="text-2xs font-semibold uppercase tracking-wider text-primary">
                 LLM insight
               </span>
-              <Badge variant="gold" className="ml-auto px-1.5 py-0 text-[10px]">
+              <Badge variant="gold" className="ml-auto px-1.5 py-0 text-2xs">
                 ready
               </Badge>
             </div>
@@ -102,10 +102,10 @@ export function CommentaryPanel({
         {aiEnabled && aiStatus === "failed" && (
           <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-secondary/20 px-3 py-2.5">
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Analysis failed
               </p>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 The position could not be analyzed right now.
               </p>
             </div>
@@ -116,13 +116,13 @@ export function CommentaryPanel({
         )}
 
         {aiEnabled && aiStatus === "unavailable" && (
-          <p className="px-1 text-[11px] text-muted-foreground/70">
+          <p className="px-1 text-2xs text-muted-foreground/70">
             Analysis unavailable for this move.
           </p>
         )}
 
         {aiHint && (
-          <p className="px-1 pt-1 text-[11px] text-muted-foreground/70">{aiHint}</p>
+          <p className="px-1 pt-1 text-2xs text-muted-foreground/70">{aiHint}</p>
         )}
       </div>
     </div>

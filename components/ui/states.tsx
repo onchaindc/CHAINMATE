@@ -99,6 +99,7 @@ export function ErrorNote({
   message,
   title,
   onRetry,
+  tone = "error",
   className,
 }: {
   message: string;
@@ -106,28 +107,54 @@ export function ErrorNote({
    *  not join"). Without one the message stands alone. */
   title?: string;
   onRetry?: () => void;
+  /**
+   * `warning` for "this needs your attention but nothing failed" — an account
+   * that never finished linking, a preference that won't persist. Same shape,
+   * because it is the same kind of interruption; a different colour, because
+   * dressing a notice as an error teaches people to ignore errors.
+   */
+  tone?: "error" | "warning";
   className?: string;
 }) {
+  const warn = tone === "warning";
   return (
     <div
       role="alert"
       className={cn(
-        "flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5",
+        "flex items-start gap-2.5 rounded-lg border px-3 py-2.5",
+        warn
+          ? "border-warning/40 bg-warning/10"
+          : "border-destructive/40 bg-destructive/10",
         className,
       )}
     >
       <AlertCircle
-        className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
+        className={cn(
+          "mt-0.5 h-4 w-4 shrink-0",
+          warn ? "text-warning" : "text-destructive",
+        )}
         aria-hidden
       />
       <div className="min-w-0 flex-1">
         {title && (
-          <p className="text-sm font-medium text-destructive">{title}</p>
+          <p
+            className={cn(
+              "text-sm font-medium",
+              warn ? "text-warning" : "text-destructive",
+            )}
+          >
+            {title}
+          </p>
         )}
         <p
           className={cn(
-            "text-destructive",
-            title ? "mt-0.5 text-xs leading-snug text-destructive/90" : "text-sm",
+            warn ? "text-warning" : "text-destructive",
+            title
+              ? cn(
+                  "mt-0.5 text-xs leading-snug",
+                  warn ? "text-warning/90" : "text-destructive/90",
+                )
+              : "text-sm",
           )}
         >
           {message}
@@ -137,7 +164,10 @@ export function ErrorNote({
         <button
           type="button"
           onClick={onRetry}
-          className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive underline-offset-2 hover:underline"
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 text-xs font-medium underline-offset-2 hover:underline",
+            warn ? "text-warning" : "text-destructive",
+          )}
         >
           <RefreshCw className="h-3 w-3" aria-hidden />
           Retry

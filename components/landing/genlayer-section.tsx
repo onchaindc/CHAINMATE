@@ -12,7 +12,7 @@ export function GenLayerSection() {
     <section className="border-t border-border/50">
       <div className="mx-auto grid w-full max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-20">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+          <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             Infrastructure
           </p>
           <h2 className="font-display mt-3 text-2xl font-bold tracking-tight text-balance sm:text-3xl">
@@ -32,7 +32,7 @@ export function GenLayerSection() {
             <code className="font-mono text-xs text-foreground/85">
               contracts/chainmate.py
             </code>
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               GenVM · Bradbury
             </span>
           </div>
