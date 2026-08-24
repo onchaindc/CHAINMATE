@@ -21,6 +21,20 @@ type Step = "form" | "google-onboarding" | "done";
 const PENDING_KEY = "chainmate:pending-auth:v1";
 const OAUTH_FLAG = "chainmate:oauth:v1";
 
+/**
+ * Where "Play as Guest" starts a guest off, matching both landing-page
+ * Play-as-Guest buttons. Every visitor already has a guest identity
+ * (identity.ts), so the button needs a destination, not a sign-up step.
+ */
+const GUEST_START = "/create";
+
+/**
+ * The RequireProfile-wrapped routes. A guest sent to one of these is bounced
+ * straight back to /auth, so no guest navigation may ever resolve to them.
+ * Keep in sync with the pages that wrap themselves in RequireProfile.
+ */
+const ACCOUNT_ONLY = ["/profile", "/games", "/play"];
+
 function GoogleGIcon() {
   return (
     <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4">
@@ -260,8 +274,21 @@ function AuthContent() {
 
   const configured = supabaseClientConfigured();
 
+  /**
+   * Guests keep `returnTo` only when they can actually use it — arriving from a
+   * game invite is the case that matters, and the reason returnTo survives OAuth
+   * at all.
+   *
+   * Never an account-only page. `returnTo` falls back to /profile, which is
+   * RequireProfile-wrapped, so this button used to bounce the guest right back
+   * to the sign-up screen — and the bounce appended ?returnTo=/profile, which
+   * pinned them in the loop with no way out of it.
+   */
   const startAsGuest = useCallback(() => {
-    router.push(returnTo);
+    const accountOnly = ACCOUNT_ONLY.some(
+      (route) => returnTo === route || returnTo.startsWith(`${route}/`),
+    );
+    router.push(accountOnly ? GUEST_START : returnTo);
   }, [router, returnTo]);
 
   // Google OAuth return handler — handles the race where SIGNED_IN fires
