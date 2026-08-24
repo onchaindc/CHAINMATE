@@ -3,10 +3,12 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, ChevronLeft, ShieldCheck } from "lucide-react";
+import { ArrowRight, ChevronLeft, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
+import { ErrorNote } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { supabaseClientConfigured } from "@/lib/supabase/config";
@@ -30,6 +32,16 @@ function GoogleGIcon() {
   );
 }
 
+/**
+ * The username and destination stashed before the Google redirect.
+ *
+ * Written and cleared, but — until now — never read, which is a real bug and not
+ * just an unused function: `redirectTo` is a bare `${origin}/auth`, so the
+ * `returnTo` query param does not survive the round trip through Google. Every
+ * player who signed in from a game invite came back with no param and was sent
+ * to their profile instead of the game they were invited to. This is the copy
+ * that does survive.
+ */
 function readPendingAuth(): { username: string; returnTo: string } | null {
   if (typeof window === "undefined") return null;
   const raw =
@@ -76,8 +88,22 @@ function AuthContent() {
   const identity = useIdentity();
 
   const upgrade = params.get("upgrade") === "1";
-  const returnTo = params.get("returnTo") ?? "/profile";
   const modeParam = params.get("mode");
+  const returnToParam = params.get("returnTo");
+
+  /**
+   * Where to send the player once they're signed in.
+   *
+   * The query param when there is one, otherwise the copy stashed before the
+   * Google redirect — coming back from Google there is no param at all. The
+   * leading-slash test is the open-redirect guard, and it lives here, once,
+   * rather than being repeated at each of the three navigations below.
+   */
+  const returnTo = useMemo(() => {
+    if (returnToParam?.startsWith("/")) return returnToParam;
+    const pending = readPendingAuth()?.returnTo;
+    return pending?.startsWith("/") ? pending : "/profile";
+  }, [returnToParam]);
 
   const [step, setStep] = useState<Step>("form");
   const [googleOnboardingToken, setGoogleOnboardingToken] = useState<string | null>(null);
@@ -93,7 +119,7 @@ function AuthContent() {
   useEffect(() => {
     if (identity.status === "loading") return;
     if (!identity.isGuest && identity.username && identity.username.trim().length > 0) {
-      router.replace(returnTo.startsWith("/") ? returnTo : "/profile");
+      router.replace(returnTo);
     }
   }, [identity.status, identity.isGuest, identity.username, router, returnTo]);
 
@@ -158,7 +184,7 @@ function AuthContent() {
         window.history.replaceState(null, "", "/auth");
         setStep("done");
         await identity.refresh();
-        setTimeout(() => { router.push(returnTo.startsWith("/") ? returnTo : "/profile"); }, 350);
+        setTimeout(() => { router.push(returnTo); }, 350);
       } catch (err) {
         setBusy(false);
         setError(friendlyAuthError(err));
@@ -205,7 +231,7 @@ function AuthContent() {
       setStep("done");
       setGoogleOnboardingToken(null);
       await identity.refresh();
-      setTimeout(() => { router.push(returnTo.startsWith("/") ? returnTo : "/profile"); }, 350);
+      setTimeout(() => { router.push(returnTo); }, 350);
     } catch (err) {
       setBusy(false);
       setError(friendlyAuthError(err));
@@ -233,10 +259,9 @@ function AuthContent() {
   }, [username, returnTo, friendlyAuthError]);
 
   const configured = supabaseClientConfigured();
-  const guest = useMemo(() => getGuestIdentity(), []);
 
   const startAsGuest = useCallback(() => {
-    router.push(returnTo.startsWith("/") ? returnTo : "/create");
+    router.push(returnTo);
   }, [router, returnTo]);
 
   // Google OAuth return handler — handles the race where SIGNED_IN fires
@@ -294,20 +319,22 @@ function AuthContent() {
 
   return (
     <div className="mx-auto w-full max-w-md px-4 py-12 sm:px-6 lg:py-20">
-      <div className="animate-fade-in-up">
-        <p className="text-center text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
-          <ShieldCheck className="mr-1.5 inline h-3.5 w-3.5" aria-hidden />
-          Player account
-        </p>
-        <h1 className="font-display mt-3 text-center text-3xl font-bold tracking-tight">
-          {step === "google-onboarding" ? "Choose your username"
+      {/* The eyebrow carries the shield, so it is passed as the icon-bearing
+          string the header already centres — this block was hand-rolled at a
+          different tracking and top margin than every other page's heading. */}
+      <PageHeader
+        align="center"
+        eyebrow="Player account"
+        eyebrowIcon={ShieldCheck}
+        title={
+          step === "google-onboarding" ? "Choose your username"
             : upgrade ? "Save your progress"
             : modeParam === "signin" ? "Welcome back"
-            : "Play chess."}
-        </h1>
-      </div>
+            : "Play chess."
+        }
+      />
 
-      <div className="mt-4 animate-fade-in-up rounded-lg border border-border/70 bg-card/50 p-6 [animation-delay:60ms]">
+      <Panel className="mt-6 animate-fade-in-up p-6 [animation-delay:60ms]">
         {step === "google-onboarding" ? (
           <div className="flex flex-col gap-4">
             <div>
@@ -317,7 +344,7 @@ function AuthContent() {
               </p>
             </div>
             <div>
-              <label htmlFor="onboard-username" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <label htmlFor="onboard-username" className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Username
               </label>
               <Input
@@ -331,11 +358,11 @@ function AuthContent() {
                 className="mt-1.5"
               />
               {usernameHint && (
-                <p className={cn("mt-1.5 text-[11px]", usernameState === "ok" && "text-primary", usernameState === "taken" && "text-destructive", usernameState === "checking" && "text-muted-foreground")}>
+                <p className={cn("mt-1.5 text-2xs", usernameState === "ok" && "text-primary", usernameState === "taken" && "text-destructive", usernameState === "checking" && "text-muted-foreground")}>
                   {usernameHint}
                 </p>
               )}
-              <p className="mt-1 text-[11px] text-muted-foreground">
+              <p className="mt-1 text-2xs text-muted-foreground">
                 3–20 characters · letters, numbers, underscores. Your public name.
               </p>
             </div>
@@ -369,22 +396,17 @@ function AuthContent() {
               Play as Guest <ArrowRight className="h-4 w-4" aria-hidden />
             </Button>
             {!configured && (
-              <p className="text-center text-[11px] text-muted-foreground">
+              <p className="text-center text-2xs text-muted-foreground">
                 Guest play works without an account. Sign up to save your rating and history.
               </p>
             )}
           </div>
         )}
 
-        {error && (
-          <div className="mt-4 flex items-start gap-2.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-            <p className="text-sm text-destructive">{error}</p>
-          </div>
-        )}
-      </div>
+        {error && <ErrorNote message={error} className="mt-4" />}
+      </Panel>
 
-      <p className="mt-6 animate-fade-in-up text-center text-[11px] text-muted-foreground [animation-delay:120ms]">
+      <p className="mt-6 animate-fade-in-up text-center text-2xs text-muted-foreground [animation-delay:120ms]">
         <Link href="/" className="underline-offset-2 hover:underline">
           ← Back to ChainMate
         </Link>
