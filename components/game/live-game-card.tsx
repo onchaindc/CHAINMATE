@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Crown } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { type LiveGameEntry } from "@/lib/types";
 
@@ -16,12 +17,19 @@ import { type LiveGameEntry } from "@/lib/types";
 export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
   const white = entry.creator;
   const black = entry.opponent;
-  /** Short-id guest label, matching the rest of the app — a bare "Guest" made
-      every unnamed player look like the same person. */
-  const guestName = (id: string) => `Guest_${id.slice(0, 4).toUpperCase()}`;
-  const whiteName = white.name || guestName(white.id);
-  const blackName =
-    black.name || (black.isAi ? "ChainMate AI" : black.id ? guestName(black.id) : "Waiting…");
+  /**
+   * `guestDisplayName` rather than `name || "Guest"` — the live registry carries
+   * the stored username, which is `Guest_XXXX` for a guest, and `||` would pass
+   * that non-empty string through with the short id still on it.
+   */
+  const whiteName = guestDisplayName(white.name);
+  const blackName = black.name
+    ? guestDisplayName(black.name)
+    : black.isAi
+      ? "ChainMate AI"
+      : black.id
+        ? "Guest"
+        : "Waiting…";
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 sm:gap-4">

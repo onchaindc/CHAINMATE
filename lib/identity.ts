@@ -19,6 +19,25 @@ import { randomHex } from "@/lib/utils";
 const GUEST_KEY = "chainmate:identity:v1";
 const AUTH_KEY = "chainmate:auth:v1";
 
+/**
+ * What to show for a player who has no account name: just "Guest".
+ *
+ * Every guest is labelled identically on purpose — the user asked for the
+ * trailing short id to go. Two guests in one list are therefore
+ * indistinguishable, which is the accepted trade.
+ *
+ * The stored `username` still carries a unique `Guest_XXXX`, because
+ * profiles_username_lower_idx (0001_init.sql:36) is a global unique index that
+ * guest rows share — every guest storing the literal "Guest" would collide on
+ * the second insert. So this strips the suffix at display time rather than at
+ * the source, and it exists once because ten call sites used to rebuild this
+ * label by hand and had already drifted apart.
+ */
+export function guestDisplayName(username?: string | null): string {
+  if (!username) return "Guest";
+  return /^Guest_[0-9A-Fa-f]+$/.test(username) ? "Guest" : username;
+}
+
 export interface GuestIdentity {
   playerId: string;
   username: string;

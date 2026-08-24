@@ -6,6 +6,7 @@ import { Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
 import { describeResult } from "@/lib/game-result";
+import { guestDisplayName } from "@/lib/identity";
 import { analysisPending, displaySummary, isFallbackSummary, keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
@@ -118,7 +119,7 @@ export function EndGameModal({
       ? aiLevelFor(game.aiDifficulty).name
       : isViewer
         ? "You"
-        : stats[id]?.username ?? "Guest";
+        : guestDisplayName(stats[id]?.username);
     return (
       <div className={side === "white" ? "min-w-0 text-left" : "min-w-0 text-right"}>
         <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">

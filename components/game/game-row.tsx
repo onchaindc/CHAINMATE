@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import {
   AI_PLAYER_ID,
@@ -30,14 +31,20 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
   const isCreatorMe = Boolean(me && creator === me);
   const isOpponentMe = Boolean(me && opponent === me);
   /**
-   * Real username when the server sent one, otherwise the app-wide short-id
-   * guest label — a bare "Guest" made every unnamed player look like the same
-   * person, which is what made history rows read "Guest vs Guest".
+   * Real username when the server sent one, otherwise a plain "Guest".
+   *
+   * This used to append a short id (`Guest_A3F9`) so two guests in one list
+   * couldn't be mistaken for each other. Dropped at the user's request: the ids
+   * were noise on every row, and the column position already says which side is
+   * which. "Guest vs Guest" is the accepted cost.
+   *
+   * Routed through `guestDisplayName` rather than `names?.[id] || "Guest"`:
+   * `upsertProfiles` (db.ts) synthesises `Guest_XXXX` into the username column,
+   * so the server can hand back a non-empty name that `||` passes straight
+   * through — putting the short id back on screen.
    */
   const nameFor = (id: string) =>
-    id === AI_PLAYER_ID
-      ? "Computer"
-      : names?.[id] || `Guest_${id.slice(0, 4).toUpperCase()}`;
+    id === AI_PLAYER_ID ? "Computer" : guestDisplayName(names?.[id]);
   const opponentLabel = opponent ? nameFor(opponent) : "Waiting…";
   const creatorLabel = nameFor(creator);
   const title = isCreatorMe
