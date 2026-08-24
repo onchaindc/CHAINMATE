@@ -80,7 +80,7 @@ export function HeroPreview() {
       <div className="mt-6 space-y-6">
         {/* Latest analysis */}
         <section>
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Latest analysis
           </h3>
           {latest ? (
@@ -113,7 +113,7 @@ export function HeroPreview() {
 
         {/* Recent games */}
         <section>
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Recent games
           </h3>
           <div className="mt-2 overflow-hidden rounded-lg border border-border/60 bg-card/50">

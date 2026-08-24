@@ -38,6 +38,13 @@
        is nearly invisible, so light uses a green instead. */
     --positive: 152 55% 32%;
 
+    /* "Something needs your attention, but nothing has failed" — an account
+       that never finished linking, a setting that won't persist. The profile
+       page reached for `amber-500` for this, and was the one place in the app
+       carrying a manual `dark:` override, because a fixed palette colour can't
+       follow the theme. */
+    --warning: 35 78% 38%;
+
     /* Modal scrim. Light mode dims toward ink rather than pure black. */
     --scrim: 220 25% 20%;
     --scrim-alpha: 0.45;
@@ -141,6 +148,10 @@
     --negative: 14 68% 63%;
     /* Dark theme reads gold as the win colour — keep it. */
     --positive: 42 45% 60%;
+
+    /* Lifted well clear of the gold primary: on near-black a dark amber reads
+       as a dimmed gold, i.e. as ordinary chrome rather than as a notice. */
+    --warning: 38 90% 62%;
 
     --scrim: 0 0% 0%;
     --scrim-alpha: 0.6;

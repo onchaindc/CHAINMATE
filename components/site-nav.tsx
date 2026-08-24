@@ -165,7 +165,7 @@ export function SiteNav() {
           </button>
 
           <span
-            className="ml-1 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80 xl:flex"
+            className="ml-1 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/80 xl:flex"
             title="Chess rules are enforced by an intelligent contract on the GenLayer network"
           >
             <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />

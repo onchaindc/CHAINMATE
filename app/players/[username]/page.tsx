@@ -1,12 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { AlertCircle, Loader2, Swords, UserCheck, UserMinus, UserPlus } from "lucide-react";
+import {
+  Gamepad2,
+  Loader2,
+  Swords,
+  UserCheck,
+  UserMinus,
+  UserPlus,
+  UserX,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { SectionLabel } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
+import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
+import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
+import { RecentForm } from "@/components/profile/recent-form";
+import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -33,6 +48,13 @@ export default function PublicPlayerPage() {
     bestStreak: number;
   } | null>(null);
   const [games, setGames] = useState<GameState[]>([]);
+  /**
+   * The player's rating record. Served alongside the profile all along — and
+   * thrown away here, which is why the public page showed a current rating and
+   * nothing about how it got there while `ratingHistory` sat unused in the
+   * response.
+   */
+  const [stats, setStats] = useState<PlayerStats | null>(null);
   const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
   const [friends, setFriends] = useState<PlayerStats[]>([]);
   const [friendship, setFriendship] = useState<"none" | "requested" | "incoming" | "friends">(
@@ -54,11 +76,31 @@ export default function PublicPlayerPage() {
     return map;
   }, [players]);
 
+  /**
+   * Rating change per game, for the history rows.
+   *
+   * The game's own stamp wins over the stats history: `ratings` is written onto
+   * the game when it is rated and stays there, while the history is a recent
+   * window and can be missing older entries.
+   */
+  const deltas = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const h of stats?.ratingHistory ?? []) map.set(h.gameId, h.change);
+    if (player) {
+      for (const g of games) {
+        const change = g.ratings?.[player.playerId]?.change;
+        if (change !== undefined) map.set(g.id, change);
+      }
+    }
+    return map;
+  }, [stats?.ratingHistory, games, player]);
+
   const load = useCallback(async () => {
     setError(null);
     try {
       const data = await store.publicProfile(username);
       setPlayer(data.player);
+      setStats(data.stats);
       setGames(data.games);
       setPlayers(data.players);
       setFriends(data.friends);
@@ -111,28 +153,36 @@ export default function PublicPlayerPage() {
 
   if (error && !player) {
     return (
-      <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
-        <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
-        <h1 className="font-display mt-4 text-2xl font-bold tracking-tight">Player not found</h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{error}</p>
-        <Button className="mt-6" onClick={() => router.push("/profile")}>
-          Back to your profile
-        </Button>
+      <div className="mx-auto w-full max-w-md px-4 py-24 sm:px-6">
+        <EmptyState
+          icon={UserX}
+          title="Player not found"
+          description={error}
+          action={{ href: "/leaderboard", label: "Browse the leaderboard" }}
+        />
       </div>
     );
   }
 
   if (!player) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-16 sm:px-6">
-        <div className="space-y-3">
+      <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+        <div className="space-y-4">
           <div className="h-16 animate-pulse rounded-lg bg-secondary/60" />
-          <div className="grid grid-cols-5 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60">
+          {/* Matches the 5-up stat grid it stands in for, so the page doesn't
+              reflow into a different shape when the data lands. */}
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 sm:grid-cols-5">
             {[0, 1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-20 animate-pulse bg-card/50" />
+              <div
+                key={i}
+                className="h-[4.5rem] animate-pulse bg-card/50"
+                style={{ animationDelay: `${i * 90}ms` }}
+              />
             ))}
           </div>
-          <div className="h-48 animate-pulse rounded-lg bg-secondary/60" />
+          <Panel>
+            <LoadingRows rows={4} />
+          </Panel>
         </div>
       </div>
     );
@@ -144,37 +194,24 @@ export default function PublicPlayerPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
-      {/* Header */}
-      <div className="animate-fade-in-up flex flex-wrap items-center gap-4">
-        <PlayerAvatar name={player.username} size="lg" />
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <CountryFlag code={player.country} className="h-4 w-6" />
-            <h1 className="font-display truncate text-2xl font-bold tracking-tight">
-              {player.username}
-            </h1>
-            {player.isGuest ? (
-              <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Guest
-              </span>
-            ) : (
-              <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                Account
-              </span>
-            )}
-            {isMe && (
-              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                you
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
+      <ProfileHeader
+        name={player.username}
+        eyebrow="Player"
+        country={player.country}
+        rating={player.rating}
+        ratingDelta={stats?.ratingHistory?.[0]?.change ?? null}
+        isGuest={player.isGuest}
+        description={
+          <>
             {player.isGuest ? "Guest player" : "ChainMate player"}
-            {player.games > 0 ? ` · ${player.games} game${player.games === 1 ? "" : "s"} played` : ""}
-          </p>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {!isMe && (
+            {player.games > 0
+              ? ` · ${player.games} game${player.games === 1 ? "" : "s"} played`
+              : ""}
+          </>
+        }
+        badges={isMe && <ProfileBadge tone="primary">You</ProfileBadge>}
+        actions={
+          !isMe && (
             <>
               {friendship === "none" && (
                 <Button
@@ -204,7 +241,12 @@ export default function PublicPlayerPage() {
                     <UserCheck className="h-3.5 w-3.5" aria-hidden />
                     Accept
                   </Button>
-                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act("decline", player.playerId)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void act("decline", player.playerId)}
+                  >
                     Decline
                   </Button>
                 </>
@@ -220,132 +262,118 @@ export default function PublicPlayerPage() {
                   Friends
                 </Button>
               )}
-              <Button
-                size="sm"
-                disabled={challenging}
-                onClick={() => void challenge()}
-              >
+              <Button size="sm" disabled={challenging} onClick={() => void challenge()}>
                 {challenging ? (
-                  <Loader2 className="animate-spin" aria-hidden />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
                   <Swords className="h-3.5 w-3.5" aria-hidden />
                 )}
-                Challenge to a game
+                Challenge
               </Button>
             </>
-          )}
-          <div className="text-right">
-            <p className="font-mono text-2xl font-bold tabular-nums text-primary">
-              {player.rating}
-            </p>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              ELO rating
-            </p>
-          </div>
-        </div>
-      </div>
+          )
+        }
+      />
 
-      {error && (
-        <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <ErrorNote message={error} onRetry={() => void load()} className="mt-5" />}
 
-      {/* Stats */}
-      <div className="mt-8 grid animate-fade-in-up grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 sm:grid-cols-5">
-        {[
+      <StatTiles
+        layout="five"
+        className="mt-8 animate-fade-in-up"
+        tiles={[
           { label: "Games", value: String(player.games) },
           { label: "Wins", value: String(player.wins) },
           { label: "Losses", value: String(player.losses) },
           { label: "Draws", value: String(player.draws) },
           { label: "Win rate", value: winRate !== null ? `${winRate}%` : "—" },
-        ].map((s) => (
-          <div key={s.label} className="bg-card/50 px-4 py-4">
-            <p className="font-mono text-xl font-bold tabular-nums text-foreground">{s.value}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {s.label}
-            </p>
-          </div>
-        ))}
-      </div>
+        ]}
+      />
 
-      <div className="mt-4 grid animate-fade-in-up grid-cols-3 gap-px overflow-hidden rounded-lg border border-border/70 bg-border/60 [animation-delay:80ms]">
-        {[
+      <StatTiles
+        layout="three"
+        size="sm"
+        className="mt-4 animate-fade-in-up [animation-delay:80ms]"
+        tiles={[
           { label: "Peak rating", value: String(player.peakRating) },
-          {
-            label: "Streak",
-            value: streak === 0 ? "—" : `${streak > 0 ? "+" : ""}${streak}`,
-          },
-          { label: "Best streak", value: `+${player.bestStreak}` },
-        ].map((s) => (
-          <div key={s.label} className="bg-card/50 px-4 py-4">
-            <p className="font-mono text-lg font-bold tabular-nums text-foreground">{s.value}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {s.label}
-            </p>
-          </div>
-        ))}
-      </div>
+          formatStreak(streak),
+          { label: "Best streak", value: `${player.bestStreak}W` },
+        ]}
+      />
+
+      {/* Form — the shape of the record the tiles above only total up. */}
+      <RecentForm
+        history={stats?.ratingHistory}
+        games={games}
+        playerId={player.playerId}
+        streak={streak}
+        showTrend
+        className="mt-4 [animation-delay:100ms]"
+      />
 
       {/* Friends */}
       <div className="mt-10 animate-fade-in-up [animation-delay:120ms]">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Friends <span className="ml-1 font-mono text-primary">{friends.length}</span>
-        </h2>
+        <SectionLabel aside={friends.length > 0 ? String(friends.length) : undefined}>
+          Friends
+        </SectionLabel>
         {friends.length === 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {player.username} hasn&rsquo;t added any friends yet.
           </p>
         ) : (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <ul className="mt-3 flex flex-wrap gap-2">
             {friends.map((f) => (
-              <span
+              <li
                 key={f.playerId}
                 className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/50 py-1 pl-1.5 pr-3 text-xs"
               >
-                <PlayerAvatar name={f.username ?? "?"} size="sm" className="!h-5 !w-5 !text-[9px]" />
+                <PlayerAvatar name={f.username ?? "?"} size="xs" />
                 <CountryFlag code={f.country} />
                 {!f.isGuest && f.username ? (
-                  <a
+                  /* `next/link`, not a bare anchor: this is an internal route,
+                     and an <a> made every friend a full document reload. */
+                  <Link
                     href={`/players/${encodeURIComponent(f.username)}`}
                     className="font-medium text-foreground/90 underline-offset-2 hover:underline"
                   >
                     {f.username}
-                  </a>
+                  </Link>
                 ) : (
                   <span className="text-muted-foreground">
                     {f.username ?? `Guest_${f.playerId.slice(0, 4).toUpperCase()}`}
                   </span>
                 )}
                 <span className="font-mono tabular-nums text-primary">{f.rating}</span>
-              </span>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </div>
 
       {/* Recent games */}
       <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Recent games
-        </h2>
-        <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
+        <SectionLabel>Recent games</SectionLabel>
+        <Panel className="mt-3">
           {games.length === 0 ? (
-            <div className="flex flex-col items-center px-6 py-12 text-center">
-              <p className="text-sm font-medium text-foreground/85">No games yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {player.username} hasn&rsquo;t finished a match yet.
-              </p>
-            </div>
+            <EmptyState
+              icon={Gamepad2}
+              title="No games yet"
+              description={`${player.username} hasn’t finished a match yet.`}
+              className="py-12"
+            />
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {games.slice(0, 10).map((game) => (
-                <GameRow key={game.id} game={game} me={viewerId} names={names} />
+                <GameRow
+                  key={game.id}
+                  game={game}
+                  me={viewerId}
+                  delta={deltas.get(game.id) ?? null}
+                  names={names}
+                />
               ))}
             </div>
           )}
-        </div>
+        </Panel>
       </div>
     </div>
   );

@@ -71,7 +71,7 @@ export function BoardVisual() {
           }),
         )}
       </div>
-      <p className="mt-3 flex items-center justify-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
+      <p className="mt-3 flex items-center justify-center gap-2 text-2xs font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
         <img src="/logo-mark.svg" alt="" className="h-4 w-4" />
         Every move validated on GenLayer
       </p>

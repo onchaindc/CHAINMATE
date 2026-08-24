@@ -15,7 +15,7 @@ export function Hero() {
     <section className="relative">
       <div className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.02fr_0.98fr] lg:py-20">
         <div className="animate-fade-in-up max-w-xl">
-          <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+          <p className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
             Secured by GenLayer
           </p>
@@ -84,7 +84,7 @@ export function Hero() {
             )}
           </div>
           {!isAuthed && (
-            <p className="mt-3 text-[11px] text-muted-foreground">
+            <p className="mt-3 text-2xs text-muted-foreground">
               Sign up to save your rating, history and achievements across devices.
             </p>
           )}

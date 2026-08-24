@@ -97,7 +97,7 @@ export default function CreateGamePage() {
                   ? "Finding opponent…"
                   : "Play online — find a match"}
             </Button>
-            <p className="text-center text-[11px] leading-snug text-muted-foreground">
+            <p className="text-center text-2xs leading-snug text-muted-foreground">
               Pairs you with a live player of similar rating in the same time
               control ({timeControl}). If no one is searching right now, you&rsquo;ll
               see the options below instead.
@@ -127,7 +127,7 @@ export default function CreateGamePage() {
 
           <div className="flex items-center gap-3" aria-hidden>
             <span className="h-px flex-1 bg-border/70" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               or set up a game
             </span>
             <span className="h-px flex-1 bg-border/70" />
@@ -135,7 +135,7 @@ export default function CreateGamePage() {
 
           {/* Mode — segmented control */}
           <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <p className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               Game type
             </p>
             <div
@@ -167,7 +167,7 @@ export default function CreateGamePage() {
           {/* Time control — segmented control (PvP) */}
           {mode === "pvp" && (
             <div className="animate-fade-in-up">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Time control
               </p>
               <div
@@ -207,7 +207,7 @@ export default function CreateGamePage() {
           {/* Visibility — segmented control (PvP) */}
           {mode === "pvp" && (
             <div className="animate-fade-in-up">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Game type
               </p>
               <div
@@ -235,7 +235,7 @@ export default function CreateGamePage() {
                     )}
                   >
                     {v.label}
-                    <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
+                    <span className="ml-1.5 font-mono text-2xs text-muted-foreground">
                       {v.hint}
                     </span>
                   </button>
@@ -247,7 +247,7 @@ export default function CreateGamePage() {
           {/* AI difficulty — pick a named opponent, chess.com-style */}
           {mode === "ai" && (
             <div className="animate-fade-in-up">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Opponent
               </p>
               <div
@@ -272,7 +272,7 @@ export default function CreateGamePage() {
                     <span className="min-w-0">
                       <span className="flex items-center gap-2 text-sm font-medium">
                         <span className="truncate">{level.name}</span>
-                        <span className="shrink-0 font-mono text-[10px] tabular-nums text-primary">
+                        <span className="shrink-0 font-mono text-2xs tabular-nums text-primary">
                           {level.rating}
                         </span>
                       </span>
@@ -300,7 +300,11 @@ export default function CreateGamePage() {
 
           {/* Side info */}
           <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2.5">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-zinc-900">
+            {/* The piece tokens, not zinc: this disc stands in for the white
+                pieces, and a chess piece is the same colour in either UI theme
+                — which is what `--piece-*` is defined for. Fixed zinc read as
+                light-on-light in the light theme. */}
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-piece-outline/25 bg-piece-light text-piece-dark">
               {/* Lucide crown, not ♔ — Windows has no font for the Unicode
                   chess glyphs, so this disc showed an empty box. */}
               <Crown className="h-4 w-4" aria-hidden />
@@ -343,7 +347,7 @@ export default function CreateGamePage() {
           </Button>
 
           {backend === "genlayer" && mode === "pvp" && (
-            <p className="text-center text-[11px] leading-snug text-muted-foreground/70">
+            <p className="text-center text-2xs leading-snug text-muted-foreground/70">
               Deployment is signed with the server-side GENLAYER_PRIVATE_KEY and
               can take a few seconds on testnet.
             </p>

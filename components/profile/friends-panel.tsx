@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, Search, UserPlus, Users, X } from "lucide-react";
+import { Search, UserPlus, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { Panel } from "@/components/ui/panel";
+import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { HostedGameStore, type SearchPlayerResult } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
 
@@ -105,7 +107,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
               <span className="truncate">{name}</span>
             )}
           </p>
-          <p className="truncate text-[11px] text-muted-foreground">
+          <p className="truncate text-2xs text-muted-foreground">
             <span className="font-mono tabular-nums text-primary">{p.rating}</span>
             {!p.isGuest && p.games > 0 ? ` · ${p.games} games` : p.isGuest ? " · guest" : ""}
           </p>
@@ -116,22 +118,24 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
   };
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
+    <Panel>
       <div className="flex items-center justify-between px-4 py-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           Friends
         </span>
         {friends !== null && (
-          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+          <span className="font-mono text-2xs tabular-nums text-muted-foreground">
             {friends.length}
           </span>
         )}
       </div>
 
+      {/* Inset rather than a full-width row: the panel's own dividers separate
+          its sections, and a second flush-edge treatment for the error read as
+          another section instead of a notice about the one below it. */}
       {error && (
-        <div className="flex items-start gap-2.5 border-t border-border/60 px-4 py-2.5">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden />
-          <p className="text-xs text-destructive">{error}</p>
+        <div className="border-t border-border/60 p-3">
+          <ErrorNote message={error} />
         </div>
       )}
 
@@ -151,10 +155,10 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
           />
         </div>
         {searching && (
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Searching…</p>
+          <p className="mt-1.5 text-2xs text-muted-foreground">Searching…</p>
         )}
         {results !== null && results.length === 0 && !searching && (
-          <p className="mt-1.5 text-[11px] text-muted-foreground">
+          <p className="mt-1.5 text-2xs text-muted-foreground">
             No players found for “{query.trim()}”.
           </p>
         )}
@@ -173,12 +177,12 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
                       {r.username}
                     </Link>
                     {r.is_guest && (
-                      <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      <span className="shrink-0 text-2xs uppercase tracking-wider text-muted-foreground">
                         guest
                       </span>
                     )}
                   </p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-2xs text-muted-foreground">
                     <span className="font-mono tabular-nums text-primary">{r.rating}</span>
                     {r.games > 0 && <span> · {r.games} games</span>}
                   </p>
@@ -201,7 +205,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
       {/* Incoming requests */}
       {incoming.length > 0 && (
         <div className="border-t border-border/60">
-          <p className="px-4 pt-2.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+          <p className="px-4 pt-2.5 text-2xs font-semibold uppercase tracking-wider text-primary">
             Friend requests
           </p>
           <div className="divide-y divide-border/50 py-1">
@@ -235,20 +239,14 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
       {/* Friends list */}
       <div className="border-t border-border/60">
         {friends === null ? (
-          <div className="space-y-2 px-3 py-3">
-            {[0, 1].map((i) => (
-              <div key={i} className="h-10 animate-pulse rounded-md bg-secondary/60" />
-            ))}
-          </div>
+          <LoadingRows rows={2} rowClassName="h-10" className="px-3 py-3" />
         ) : friends.length === 0 ? (
-          <div className="flex flex-col items-center px-6 py-8 text-center">
-            <Users className="h-6 w-6 text-muted-foreground/50" aria-hidden />
-            <p className="mt-2 text-sm font-medium text-foreground/85">No friends yet</p>
-            <p className="mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
-              Search for a player above and send a request — accepted friends
-              show up here and on their profile.
-            </p>
-          </div>
+          <EmptyState
+            icon={Users}
+            title="No friends yet"
+            description="Search for a player above and send a request — accepted friends show up here and on their profile."
+            className="py-8"
+          />
         ) : (
           <div className="divide-y divide-border/50 py-1">
             {friends.map((p) =>
@@ -268,6 +266,6 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
           </div>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }

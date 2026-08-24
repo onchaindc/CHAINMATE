@@ -63,7 +63,7 @@ export default function JoinGamePage() {
         <CardContent className="p-5">
           <form onSubmit={join} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="game-id" className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Label htmlFor="game-id" className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Game id or link
               </Label>
               <Input

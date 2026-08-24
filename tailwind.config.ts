@@ -55,6 +55,9 @@ const config: Config = {
            not a dangerous action, so these are separate from `destructive`. */
         negative: "hsl(var(--negative) / <alpha-value>)",
         positive: "hsl(var(--positive) / <alpha-value>)",
+        /* Needs attention, but nothing failed. Separate from `destructive` for
+           the same reason the two above are: this is a notice, not a failure. */
+        warning: "hsl(var(--warning) / <alpha-value>)",
         /* Modal backdrop. */
         scrim: "hsl(var(--scrim) / var(--scrim-alpha))",
         /* Board colours read from CSS variables so a board theme is a variable

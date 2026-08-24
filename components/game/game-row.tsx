@@ -13,7 +13,11 @@ interface GameRowProps {
   game: GameState | GameIndexEntry;
   /** This browser's identity for the relevant store (drives "You vs …"). */
   me?: string;
-  /** Rating change for this game (+16 / −12), when known from rating history. */
+  /**
+   * Rating change for this game (+16 / −12), when known from rating history.
+   * Pass `null` rather than omitting it in a list where *some* rows are rated —
+   * null holds the column open, `undefined` removes it from the row entirely.
+   */
   delta?: number | null;
   /** Real display names for player ids (usernames from the server). */
   names?: Record<string, string>;
@@ -79,33 +83,47 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
     >
       <div className="min-w-0">
         <p className="truncate text-sm text-foreground/90">{title}</p>
-        <p className="truncate text-[11px] text-muted-foreground">
+        {/* Narrow screens only: the column version below appears from `sm`, and
+            for every width above that this line was printing it a second time. */}
+        <p className="truncate font-mono text-2xs text-muted-foreground sm:hidden">
           {game.timeControl ?? "Match"}
         </p>
       </div>
+      {/* Fixed-width cells, so the results form a column instead of ending
+          wherever each row's text happens to run out. `text-right` is inherited
+          by every cell from here. */}
       <div className="flex shrink-0 items-center gap-3 text-right">
-        <span className="hidden font-mono text-xs tabular-nums text-muted-foreground sm:block">
+        <span className="hidden w-14 font-mono text-xs tabular-nums text-muted-foreground sm:block">
           {game.timeControl ?? "—"}
         </span>
-        <span className="hidden text-xs tabular-nums text-muted-foreground md:block">
+        {/* Mono like the cell beside it — a proportional date next to a
+            monospaced time control made the pair look accidentally misaligned. */}
+        <span className="hidden w-12 font-mono text-xs tabular-nums text-muted-foreground md:block">
           {date}
         </span>
-        {delta !== undefined && delta !== null && over && (
+        {/* The slot is reserved whenever the caller passes `delta` at all, even
+            as null: an unrated game in a rated list must still hold the column
+            open, or every row after it shifts left. */}
+        {delta !== undefined && (
           <span
             className={cn(
-              "font-mono text-xs tabular-nums",
-              delta > 0 && "text-primary",
-              delta < 0 && "text-negative",
-              delta === 0 && "text-muted-foreground",
+              "w-9 font-mono text-xs tabular-nums",
+              delta === null || !over
+                ? "text-muted-foreground"
+                : delta > 0
+                  ? "text-positive"
+                  : delta < 0
+                    ? "text-negative"
+                    : "text-muted-foreground",
             )}
-            title="Rating change"
+            title={delta !== null && over ? "Rating change" : undefined}
           >
-            {delta > 0 ? `+${delta}` : delta}
+            {delta !== null && over ? (delta > 0 ? `+${delta}` : delta) : ""}
           </span>
         )}
         <span
           className={cn(
-            "flex items-center gap-1.5 text-xs font-medium",
+            "flex w-24 items-center justify-end gap-1.5 text-xs font-medium sm:w-32",
             over
               ? game.winner
                 ? "text-primary"
@@ -116,13 +134,15 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
           )}
         >
           {game.status === "active" && (
-            <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-primary" aria-hidden />
+            <span className="h-1.5 w-1.5 shrink-0 animate-pulse-soft rounded-full bg-primary" aria-hidden />
           )}
-          {result}
+          <span className="truncate">{result}</span>
         </span>
-        {colorLabel && (
-          <span className="font-mono text-[11px] uppercase text-muted-foreground">
-            {colorLabel}
+        {/* Same reservation as the delta cell: which side you played is only
+            known for your own games, and the rest must not close the gap. */}
+        {me && (
+          <span className="w-3 font-mono text-2xs uppercase text-muted-foreground">
+            {colorLabel ?? ""}
           </span>
         )}
       </div>

@@ -96,12 +96,12 @@ export function PlayerCard({
             <CountryFlag code={country} />
             <span className="truncate capitalize">{displayName}</span>
             {isYou && (
-              <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+              <Badge variant="secondary" className="px-1.5 py-0 text-2xs">
                 you
               </Badge>
             )}
             {isWinner && (
-              <Badge variant="gold" className="gap-1 px-1.5 py-0 text-[10px]">
+              <Badge variant="gold" className="gap-1 px-1.5 py-0 text-2xs">
                 <Crown className="h-3 w-3" aria-hidden />
                 winner
               </Badge>

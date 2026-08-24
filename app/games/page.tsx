@@ -6,6 +6,7 @@ import { RequireProfile } from "@/components/auth/require-profile";
 import { GameRow } from "@/components/game/game-row";
 import { GuestBanner } from "@/components/auth/guest-banner";
 import { PageHeader, SectionLabel } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
@@ -113,19 +114,19 @@ function GamesContent() {
           <SectionLabel live aside="Finish or resign a game to end your session.">
             Active session
           </SectionLabel>
-          <div className="mt-3 overflow-hidden rounded-lg border border-primary/25 bg-card/50">
+          <Panel tone="accent" className="mt-3">
             <div className="divide-y divide-border/50 px-2 py-2">
               {activeGames.map((game) => (
                 <GameRow
                   key={game.id}
                   game={game}
                   me={game.backend === "local" ? localMe : identity.playerId}
-                  delta={game.backend === "local" ? null : deltas.get(game.id)}
+                  delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
                   names={game.backend === "local" ? undefined : names}
                 />
               ))}
             </div>
-          </div>
+          </Panel>
         </div>
       )}
 
@@ -135,10 +136,13 @@ function GamesContent() {
         </SectionLabel>
       )}
 
-      <div
+      <Panel
         className={cn(
-          "animate-fade-in-up overflow-hidden rounded-lg border border-border/70 bg-card/50 [animation-delay:80ms]",
-          activeGames !== null && activeGames.length > 0 && "mt-3",
+          "animate-fade-in-up [animation-delay:80ms]",
+          /* `mt-3` tucks the list under its own "Completed" label; without an
+             active session there is no label, and the list was left with no top
+             margin at all — flush against the page header. */
+          activeGames !== null && activeGames.length > 0 ? "mt-3" : "mt-8",
         )}
       >
         {error && <ErrorNote message={error} className="rounded-none border-0 border-b" />}
@@ -165,13 +169,13 @@ function GamesContent() {
                 key={game.id}
                 game={game}
                 me={game.backend === "local" ? localMe : identity.playerId}
-                delta={game.backend === "local" ? null : deltas.get(game.id)}
+                delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
                 names={game.backend === "local" ? undefined : names}
               />
             ))}
           </div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }
