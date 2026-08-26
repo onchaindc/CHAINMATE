@@ -324,7 +324,19 @@ export function EndGameModal({
               Rematch
             </Button>
           ) : (
-            <Link href={isAiGame ? "/create?mode=ai" : "/create"} className="flex-1">
+            <Link
+              href={
+                /* Carry the opponent across to Solo. Without the level, a
+                   rematch after losing to Zenith lands on the default and the
+                   player has to re-pick the level they just played.
+                   `normalizeAiDifficulty` on the other end absorbs a missing or
+                   legacy value, so an old game with no `aiDifficulty` is safe. */
+                isAiGame
+                  ? `/solo${game.aiDifficulty ? `?level=${game.aiDifficulty}` : ""}`
+                  : "/create"
+              }
+              className="flex-1"
+            >
               <Button className="w-full">
                 <RotateCcw aria-hidden />
                 Play again
