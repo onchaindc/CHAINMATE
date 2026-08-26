@@ -40,8 +40,9 @@ To play on the actual GenLayer chain, see
 
 ### Instant single-player (Play vs AI)
 
-1. Open `/create?mode=ai` (or hit **Play vs AI** on the landing page).
-2. Pick a difficulty — **Casual** (2-ply search) or **Competitive** (3-ply).
+1. Open `/solo` (or hit **Play vs AI** on the landing page).
+2. Pick an opponent — **Pawn** (600) through **Zenith** (2000), a 1- to 3-ply
+   search with a shrinking chance of a deliberate blunder.
 3. Play White against the AI (Black). It moves through the exact same
    validation + commentary path as a human, entirely in your browser.
 
