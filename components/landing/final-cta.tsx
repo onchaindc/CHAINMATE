@@ -27,7 +27,7 @@ export function FinalCta() {
               <Link href="/play" className={cn(buttonVariants({ size: "lg" }))}>
                 <Play aria-hidden /> Play
               </Link>
-              <Link href="/create?mode=ai" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
+              <Link href="/solo" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
                 <Bot aria-hidden /> Play vs AI
               </Link>
             </>
@@ -39,7 +39,7 @@ export function FinalCta() {
               <Link href="/create" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
                 <Gamepad2 aria-hidden /> Play as Guest
               </Link>
-              <Link href="/create?mode=ai" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
+              <Link href="/solo" className={cn(buttonVariants({ variant: "outline", size: "lg" }))}>
                 <Bot aria-hidden /> Play vs AI
               </Link>
             </>

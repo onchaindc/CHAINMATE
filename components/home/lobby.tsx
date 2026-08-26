@@ -308,7 +308,7 @@ export function Lobby() {
 
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />
-                  <LobbyLink href="/create?mode=ai" icon={Bot} label="Play the computer" />
+                  <LobbyLink href="/solo" icon={Bot} label="Play the computer" />
                   <LobbyLink href="/join" icon={Link2} label="Join by link" />
                 </div>
               </div>

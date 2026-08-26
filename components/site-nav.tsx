@@ -29,7 +29,7 @@ const LINKS: {
 }[] = [
   { href: "/create", authedHref: "/play", label: "Play" },
   { href: "/join", label: "Join", hideBelow: "sm" },
-  { href: "/create?mode=ai", label: "Solo", hideBelow: "sm" },
+  { href: "/solo", label: "Solo", hideBelow: "sm" },
   { href: "/watch", label: "Watch", hideBelow: "md" },
   { href: "/games", label: "Games", hideBelow: "md" },
   { href: "/leaderboard", label: "Leaderboard", hideBelow: "lg" },

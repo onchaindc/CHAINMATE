@@ -289,7 +289,7 @@ export default function GamePage() {
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Button onClick={() => (window.location.href = "/create")}>Create a game</Button>
           <Link
-            href="/create?mode=ai"
+            href="/solo"
             className={cn(buttonVariants({ variant: "outline" }))}
           >
             <Bot aria-hidden />
