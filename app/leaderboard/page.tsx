@@ -15,25 +15,30 @@ import type { PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * A sticky header cell.
+ * A header cell.
  *
- * Three things it has to get right, all of them non-obvious:
+ * **Deliberately not sticky.** It used to be `sticky top-nav z-10`, and that is
+ * what put the header on top of the first player instead of above it. A sticky
+ * box resolves its offsets against its nearest *scrolling* ancestor, and the
+ * horizontal scroller this table needs is one — unavoidably. CSS does not allow
+ * a one-axis scroll container: when `overflow-x` is `auto`, an `overflow-y` of
+ * `visible` computes to `auto` too, so `overflow-x-auto overflow-y-visible`
+ * scrolls on **both** axes no matter what it asks for.
  *
- * `top-nav` — the nav is fixed and opaque, so a header stuck to `top-0` parks
- * behind it. This is the nav's own height token.
- *
- * The opaque background — the panel's `bg-card/50` is translucent, and rows
- * would scroll visibly through a header that inherited it. `bg-card` matches
- * the panel's own surface once composited over the page, so the header looks
- * like part of the panel rather than a strip of a different colour.
+ * So `top-nav` never meant "pin under the nav" here. It resolved against a box
+ * that never scrolls vertically, which left the header nothing to stick to and
+ * only a 3.5rem offset to honour — shifting it down over row 1. It was never
+ * sticking; it was only ever overlapping. A sticky header and a horizontal
+ * scroller are mutually exclusive, and the scroller is the one keeping the last
+ * column from being cut off.
  *
  * `shadow` for the underline, not `border-b` — with `border-collapse: collapse`
  * (Tailwind's preflight default) borders belong to the table, not the cell, so a
- * bottom border stays with the row's original position and slides out from under
- * the header as it sticks. A shadow is painted by the cell and travels with it.
+ * bottom border on a header cell is drawn by the table and can land a hair off
+ * the row it belongs to. A shadow is painted by the cell itself.
  */
 const HEAD =
-  "sticky top-nav z-10 bg-card px-4 py-2.5 font-semibold shadow-[inset_0_-1px_0_0_hsl(var(--border))]";
+  "bg-card px-4 py-2.5 font-semibold shadow-[inset_0_-1px_0_0_hsl(var(--border))]";
 
 export default function LeaderboardPage() {
   const identity = useIdentity();
@@ -69,10 +74,11 @@ export default function LeaderboardPage() {
 
       {error && <ErrorNote message={error} className="mt-6" />}
 
-      {/* `clip={false}`, because the sticky header below resolves against the
-          nearest scrolling ancestor — and `overflow-hidden` would make this
-          panel one, pinning the header to a box that never scrolls. */}
-      <Panel clip={false} className="mt-8 animate-fade-in-up [animation-delay:80ms]">
+      {/* Clips again now that nothing inside is sticky — `clip={false}` was only
+          ever there to keep this panel from becoming the sticky header's
+          scrolling ancestor, and the header it was protecting is gone. Clipping
+          means the corner cells no longer have to round themselves. */}
+      <Panel className="mt-8 animate-fade-in-up [animation-delay:80ms]">
         {players === null ? (
           <LoadingRows />
         ) : players.length === 0 ? (
@@ -83,28 +89,30 @@ export default function LeaderboardPage() {
             action={{ href: "/create", label: "Play a rated game" }}
           />
         ) : (
-          /* `overflow-x-auto` on a wrapper *inside* the panel, not on the panel:
-             a horizontal scroller is also the nearest scrolling ancestor for
-             `position: sticky`, and the header needs to resolve against the page.
-             `overflow-y-visible` keeps this box from capturing the vertical axis
-             — a scroll container clips on both, even when only one can scroll. */
-          <div className="overflow-x-auto overflow-y-visible">
+          /* Horizontal escape hatch for the narrow end of the range. This scrolls
+             on both axes whichever way it's written (see `HEAD`), so nothing
+             inside it can be sticky. */
+          <div className="overflow-x-auto">
+            {/* Column widths have to clear the *header* labels, not the digits.
+                The labels are the widest thing in these columns — uppercase
+                `text-2xs` with `tracking-wider` — and `px-4` eats 2rem of every
+                column before any text is drawn. At `w-16` that left a 32px
+                content box, which "LOSSES" (~44px) and "GAMES" (~41px) cannot
+                fit; table cells don't clip and a single word can't wrap, so they
+                spilled into the neighbouring column and the last one read as
+                cut off. Sized off the labels now. */}
             <table className="w-full min-w-[26rem] table-fixed text-sm">
               <thead>
                 <tr className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  <th className={cn(HEAD, "w-12 rounded-tl-lg text-right")}>#</th>
+                  <th className={cn(HEAD, "w-12 text-right")}>#</th>
                   <th className={cn(HEAD, "text-left")}>Player</th>
-                  <th className={cn(HEAD, "w-20 text-right")}>Rating</th>
-                  <th className={cn(HEAD, "hidden w-16 text-right sm:table-cell")}>Wins</th>
-                  <th className={cn(HEAD, "hidden w-16 text-right sm:table-cell")}>Losses</th>
-                  <th className={cn(HEAD, "w-16 rounded-tr-lg text-right")}>Games</th>
+                  <th className={cn(HEAD, "w-24 text-right")}>Rating</th>
+                  <th className={cn(HEAD, "hidden w-20 text-right sm:table-cell")}>Wins</th>
+                  <th className={cn(HEAD, "hidden w-24 text-right sm:table-cell")}>Losses</th>
+                  <th className={cn(HEAD, "w-20 text-right")}>Games</th>
                 </tr>
               </thead>
-              {/* The panel can't clip (see above), so the corner cells round
-                  themselves — otherwise the header's opaque fill and a
-                  highlighted bottom row paint square corners over the panel's
-                  rounded border. */}
-              <tbody className="[&>tr:last-child>td:first-child]:rounded-bl-lg [&>tr:last-child>td:last-child]:rounded-br-lg">
+              <tbody>
                 {players.map((p, i) => {
                   const isMe = p.playerId === me;
                   return (
