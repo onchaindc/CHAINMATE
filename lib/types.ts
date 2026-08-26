@@ -18,14 +18,24 @@ export interface AiLevel {
   depth: number;
   /** Chance the computer plays a random legal move instead of its best. */
   blunderChance: number;
+  /**
+   * How far below best a move may score, in centipawns, and still be picked.
+   *
+   * The engine is deterministic: the same position always produced the same
+   * move, so every game against a level ran identically. Anything within this
+   * margin of the best score counts as equally playable and one is chosen at
+   * random, which is what makes games differ. Kept small deliberately — it only
+   * ever decides between moves that are already near-equal.
+   */
+  variety: number;
 }
 
 export const AI_LEVELS: AiLevel[] = [
-  { id: "beginner", name: "Pawn", rating: 600, blurb: "New to the game — hangs pieces you can punish.", depth: 1, blunderChance: 0.3 },
-  { id: "casual", name: "Nova", rating: 900, blurb: "A relaxed club player who makes the odd slip.", depth: 1, blunderChance: 0.12 },
-  { id: "club", name: "Atlas", rating: 1200, blurb: "Solid fundamentals — punishes blunders.", depth: 2, blunderChance: 0.06 },
-  { id: "advanced", name: "Onyx", rating: 1600, blurb: "Sharp tactical play with few mistakes.", depth: 2, blunderChance: 0.02 },
-  { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless — bring your A-game.", depth: 3, blunderChance: 0 },
+  { id: "beginner", name: "Pawn", rating: 600, blurb: "New to the game — hangs pieces you can punish.", depth: 1, blunderChance: 0.3, variety: 40 },
+  { id: "casual", name: "Nova", rating: 900, blurb: "A relaxed club player who makes the odd slip.", depth: 1, blunderChance: 0.12, variety: 30 },
+  { id: "club", name: "Atlas", rating: 1200, blurb: "Solid fundamentals — punishes blunders.", depth: 2, blunderChance: 0.06, variety: 20 },
+  { id: "advanced", name: "Onyx", rating: 1600, blurb: "Sharp tactical play with few mistakes.", depth: 2, blunderChance: 0.02, variety: 15 },
+  { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless — bring your A-game.", depth: 3, blunderChance: 0, variety: 10 },
 ];
 
 /** Map any stored difficulty value (incl. legacy ids) onto a known level. */
