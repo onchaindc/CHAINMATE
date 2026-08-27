@@ -28,7 +28,7 @@ import { guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
-import { AI_PLAYER_ID, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
+import { AI_PLAYER_ID, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -101,7 +101,7 @@ export function Lobby() {
       stats: profile.stats,
       mine: resumable,
       sent,
-      recent: profile.games,
+      recent: profile.games.filter(isPlayedGame),
       players: { ...mine.players, ...profile.players },
       live: watch.live,
       friends: friends.friends,
@@ -359,7 +359,7 @@ export function Lobby() {
                 <EmptyState
                   icon={Trophy}
                   title="No finished games yet"
-                  description="Play a rated match and it appears here with the rating change it earned."
+                  description="Your results appear here."
                   action={{ href: "/create", label: "Play a rated game" }}
                 />
               ) : (
