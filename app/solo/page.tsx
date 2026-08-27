@@ -80,7 +80,7 @@ export default function SoloPage() {
             eyebrow="Solo"
             eyebrowIcon={Bot}
             title="Play the computer"
-            description="Five opponents, from a beginner who hangs pieces to one that doesn't miss. Nothing here is rated and there is no clock."
+            description="Five engine levels, 600 to 2000. Unrated, untimed."
           />
 
           <Panel className="mt-8 animate-fade-in-up [animation-delay:80ms]">

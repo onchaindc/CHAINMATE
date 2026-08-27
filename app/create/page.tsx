@@ -75,8 +75,8 @@ export default function CreateGamePage() {
         title="Create a game"
         description={
           backend === "genlayer"
-            ? "A fresh ChainMate contract is deployed and you play White. Share the game link to invite Black."
-            : "You play White. Share the link — your opponent joins as Black from any device."
+            ? "Deploys a fresh contract. You play White."
+            : "You play White. Share the link to invite Black."
         }
         className="w-full"
       />
@@ -103,9 +103,7 @@ export default function CreateGamePage() {
                   : "Play online — find a match"}
             </Button>
             <p className="text-center text-2xs leading-snug text-muted-foreground">
-              Pairs you with a live player of similar rating in the same time
-              control ({timeControl}). If no one is searching right now, you&rsquo;ll
-              see the options below instead.
+              Rated, {timeControl}, against similar rating.
             </p>
           </div>
 
@@ -119,9 +117,7 @@ export default function CreateGamePage() {
                   Searching for an opponent…
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  You&rsquo;re in the pool. The moment another player starts
-                  searching at a compatible rating, a rated match begins and
-                  this page takes you straight to it.
+                  You&rsquo;ll go straight to the board when you&rsquo;re paired.
                 </p>
               </div>
               <Button variant="outline" size="sm" onClick={match.cancel}>
@@ -171,8 +167,7 @@ export default function CreateGamePage() {
               ))}
             </div>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              Minutes per side + increment per move. Real clocks with
-              automatic flag-fall — if your time runs out, you lose on time.
+              Minutes per side + increment per move.
             </p>
           </div>
 
@@ -230,7 +225,7 @@ export default function CreateGamePage() {
                 You play <span className="text-foreground">White</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                White moves first. Games are rated and broadcast live on Watch by default.
+                Rated, and listed on Watch unless private.
               </p>
             </div>
             <ShieldCheck className="h-4 w-4 shrink-0 text-primary/70" aria-hidden />
@@ -262,8 +257,7 @@ export default function CreateGamePage() {
 
           {backend === "genlayer" && (
             <p className="text-center text-2xs leading-snug text-muted-foreground/70">
-              Deployment is signed with the server-side GENLAYER_PRIVATE_KEY and
-              can take a few seconds on testnet.
+              Testnet deployment can take a few seconds.
             </p>
           )}
         </CardContent>
