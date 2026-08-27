@@ -69,7 +69,7 @@ export default function LeaderboardPage() {
       <PageHeader
         eyebrow="Rankings"
         title="Leaderboard"
-        description="Real ELO ratings from completed online matches. Every player starts at 1200; every rating here came from an actual game."
+        description="Rated games only. Ratings update after each result."
       />
 
       {error && <ErrorNote message={error} className="mt-6" />}
@@ -85,7 +85,7 @@ export default function LeaderboardPage() {
           <EmptyState
             icon={Trophy}
             title="No rated games yet"
-            description="Finish an online multiplayer match and the winner’s rating is updated."
+            description="Play a rated game to appear here."
             action={{ href: "/create", label: "Play a rated game" }}
           />
         ) : (

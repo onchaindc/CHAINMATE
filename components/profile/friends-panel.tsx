@@ -245,7 +245,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
           <EmptyState
             icon={Users}
             title="No friends yet"
-            description="Search for a player above and send a request — accepted friends show up here and on their profile."
+            description="Search above to send a request."
             className="py-8"
           />
         ) : (

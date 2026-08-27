@@ -55,7 +55,7 @@ export default function JoinGamePage() {
         align="center"
         eyebrow="Invite"
         title="Join a game"
-        description="Enter the game id or paste the invite link your opponent shared. You’ll play Black."
+        description="Paste an invite link or game id. You play Black."
         className="w-full"
       />
 

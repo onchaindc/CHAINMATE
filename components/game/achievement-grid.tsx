@@ -16,7 +16,7 @@ export function AchievementGrid({ stats }: { stats: PlayerStats }) {
         <EmptyState
           icon={Award}
           title="No achievements yet"
-          description="Win games and hit milestones — first victory, streaks, rating milestones — to earn achievements."
+          description="Earned achievements appear here."
           className="py-10"
         />
       </Panel>
