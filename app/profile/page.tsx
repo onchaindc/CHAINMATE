@@ -182,7 +182,7 @@ function ProfileContent() {
         <ErrorNote
           tone="warning"
           className="mt-6"
-          message="Your account isn’t linked to a player profile yet, so your name can’t be saved. Sign out and back in to finish setting up your account."
+          message="Account not linked to a profile yet — sign out and back in to finish setup."
         />
       )}
 

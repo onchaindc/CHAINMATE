@@ -275,10 +275,10 @@ export default function GamePage() {
 
   if (!game) {
     const reason = isLocalGameId(id)
-      ? "This game was created in local mode, so it only exists in the browser where it was created. Open the original tab to keep playing — or start a fresh game."
+      ? "This game only exists in the browser that created it. Open that tab, or start a new game."
       : isHostedGameId(id)
-        ? "This game could not be found in the shared store. The link may be stale or the id mistyped — create a new game and share the fresh invite."
-        : "This on-chain game could not be found on the network. It may still be finalising, or the id is wrong.";
+        ? "No game with this id. The link may be expired or mistyped."
+        : "Not found on-chain. It may still be finalising.";
     return (
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
         <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
