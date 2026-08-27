@@ -294,6 +294,19 @@ export function isGameOver(status: GameStatus): boolean {
 }
 
 /**
+ * Whether a game belongs in a player's record.
+ *
+ * An aborted game is over but never happened — no moves, no result, nothing
+ * rated — so a row for one reports nothing and only pads the history. Note this
+ * is deliberately *not* folded into `GAME_OVER_STATUSES`: an aborted game is
+ * genuinely finished, and `isGameOver` has to keep saying so or the board would
+ * stay live. It just isn't a match anyone played.
+ */
+export function isPlayedGame(game: { status: GameStatus }): boolean {
+  return game.status !== "aborted";
+}
+
+/**
  * True when `next` is an *older* snapshot of the same game than `prev`.
  *
  * Clients learn about the opponent's moves by polling, so two requests can be

@@ -10,7 +10,7 @@ import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
-import { isGameOver, type GameIndexEntry, type LiveGameEntry } from "@/lib/types";
+import { isGameOver, isPlayedGame, type GameIndexEntry, type LiveGameEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,7 +70,7 @@ export default function WatchPage() {
     setOpen(remote.open);
     setPlayers(remote.players);
     setLocalIds(new Set(localRecent.map((e) => e.id)));
-    setRecent(mergeEntries([...remote.recent, ...localRecent]));
+    setRecent(mergeEntries([...remote.recent, ...localRecent]).filter(isPlayedGame));
     setError(null);
     setLoading(false);
   }, []);
@@ -97,9 +97,9 @@ export default function WatchPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
       <PageHeader
-        eyebrow="Watch"
-        title="Watch chess"
-        description="Every active match is broadcast here automatically — follow live games, join open ones, or replay a finished game move by move."
+        eyebrow="Live"
+        title="Watch"
+        description="Live games, open challenges, and finished games to replay."
       />
 
       {error && <ErrorNote message={error} className="mt-6" />}
@@ -128,7 +128,7 @@ export default function WatchPage() {
             <EmptyState
               icon={Radio}
               title="No live games right now"
-              description="Every active match appears here automatically — start one and it shows up for everyone."
+              description="Start a game and it appears here."
               action={{ href: "/create", label: "Start a game" }}
               className="py-10"
             />
@@ -155,7 +155,7 @@ export default function WatchPage() {
             <EmptyState
               icon={Users}
               title="No open games"
-              description="Nobody is waiting for an opponent right now. Create a public game and it will be listed here."
+              description="Nobody is waiting for an opponent."
               action={{ href: "/create", label: "Create a game" }}
               className="py-10"
             />
@@ -182,8 +182,8 @@ export default function WatchPage() {
             <EmptyState
               icon={Trophy}
               title="No finished matches yet"
-              description="Every completed game is archived here with a full replay."
-              action={{ href: "/create", label: "Play the first one" }}
+              description="Replays appear here."
+              action={{ href: "/create", label: "Create a game" }}
               className="py-10"
             />
           ) : (

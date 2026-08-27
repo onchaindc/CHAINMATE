@@ -23,7 +23,7 @@ import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById } from "@/lib/utils";
 import { getIdentityToken } from "@/lib/identity";
 import { Input } from "@/components/ui/input";
-import type { GameState, PlayerStats } from "@/lib/types";
+import { isPlayedGame, type GameState, type PlayerStats } from "@/lib/types";
 
 export default function ProfilePage() {
   return (
@@ -91,7 +91,7 @@ function ProfileContent() {
         if (cancelled) return;
         setStats(profile.stats);
         setPlayers(profile.players);
-        setGames(mergeGamesById([...profile.games, ...localGames]));
+        setGames(mergeGamesById([...profile.games, ...localGames]).filter(isPlayedGame));
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load profile");
@@ -276,7 +276,7 @@ function ProfileContent() {
             <EmptyState
               icon={Gamepad2}
               title="No games yet"
-              description="Play your first match to start building a record."
+              description="Your games appear here."
               action={{ href: "/create", label: "Create a game" }}
               className="py-14"
             />

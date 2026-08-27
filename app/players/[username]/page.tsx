@@ -26,7 +26,7 @@ import { useIdentity } from "@/lib/identity-context";
 import { guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
-import type { GameState, PlayerStats } from "@/lib/types";
+import { isPlayedGame, type GameState, type PlayerStats } from "@/lib/types";
 
 export default function PublicPlayerPage() {
   const params = useParams<{ username: string }>();
@@ -102,7 +102,7 @@ export default function PublicPlayerPage() {
       const data = await store.publicProfile(username);
       setPlayer(data.player);
       setStats(data.stats);
-      setGames(data.games);
+      setGames(data.games.filter(isPlayedGame));
       setPlayers(data.players);
       setFriends(data.friends);
       setFriendship(data.friendship);

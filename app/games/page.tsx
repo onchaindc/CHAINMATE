@@ -13,7 +13,7 @@ import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById, cn } from "@/lib/utils";
-import type { GameState } from "@/lib/types";
+import { isPlayedGame, type GameState } from "@/lib/types";
 
 export default function GamesPage() {
   return (
@@ -43,7 +43,10 @@ function GamesContent() {
 
   const activeGames =
     games?.filter((g) => g.status === "waiting" || g.status === "active") ?? null;
-  const completedGames = games?.filter((g) => !(g.status === "waiting" || g.status === "active")) ?? null;
+  const completedGames =
+    games?.filter(
+      (g) => !(g.status === "waiting" || g.status === "active") && isPlayedGame(g),
+    ) ?? null;
 
   useEffect(() => {
     // Wait for the real identity, like the profile page does — fetching on the
@@ -97,9 +100,11 @@ function GamesContent() {
       <PageHeader
         eyebrow="Your record"
         title="Games"
-        description={`Every match played by ${
-          identity.isGuest ? "this device" : "your account"
-        }, from the online store and local mode.`}
+        description={
+          identity.isGuest
+            ? "Games played on this device."
+            : "Every game on your account, online and offline."
+        }
       />
 
       {identity.isGuest && (
@@ -111,9 +116,7 @@ function GamesContent() {
       {/* Active session: games the player joined but hasn't finished or resigned */}
       {activeGames !== null && activeGames.length > 0 && (
         <div className="mt-8 animate-fade-in-up [animation-delay:80ms]">
-          <SectionLabel live aside="Finish or resign a game to end your session.">
-            Active session
-          </SectionLabel>
+          <SectionLabel live>Active session</SectionLabel>
           <Panel tone="accent" className="mt-3">
             <div className="divide-y divide-border/50 px-2 py-2">
               {activeGames.map((game) => (
@@ -153,13 +156,12 @@ function GamesContent() {
           <EmptyState
             icon={Gamepad2}
             title="No games yet"
-            description="Play your first match — create a game or challenge the computer."
+            description="Create a game or play the computer."
             action={{ href: "/create", label: "Create a game" }}
           />
         ) : (completedGames ?? []).length === 0 ? (
           <EmptyState
-            title="No completed games yet"
-            description="Your finished matches will appear here."
+            title="No completed games"
             className="py-12"
           />
         ) : (
