@@ -28,13 +28,25 @@ export const maxDuration = 60;
 
 type Params = { params: Promise<{ id: string }> };
 
-/** GET /api/hosted/games/[id] — read current game state. */
-export async function GET(_req: NextRequest, { params }: Params) {
+/**
+ * GET /api/hosted/games/[id] — read current game state.
+ * GET /api/hosted/games/[id]?analysis=1 — drive the post-game analysis to
+ * completion server-side (awaited) and return the game with the real result.
+ * The client polls this after a game ends; the first poll runs the GenLayer
+ * call, so analysis never depends on a browser tab staying open. Idempotent:
+ * returns immediately once `analysis` (or a terminal `analysisError`) is set.
+ */
+export async function GET(req: NextRequest, { params }: Params) {
   const { id } = await params;
+  const runAnalysis = req.nextUrl.searchParams.get("analysis") === "1";
   try {
     const game = await getHostedGame(id);
     if (!game) {
       return NextResponse.json({ error: "Game not found" }, { status: 404 });
+    }
+    if (runAnalysis) {
+      const analysed = await summarizeHostedGame(id);
+      return NextResponse.json({ game: analysed });
     }
     return NextResponse.json({ game });
   } catch (err) {

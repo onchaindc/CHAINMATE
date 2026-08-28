@@ -272,6 +272,11 @@ export interface GameStore {
   /** Settle a flag fall now; returns the (possibly ended) current state. */
   resolveTimeout(id: string): Promise<GameState>;
   generateSummary(id: string): Promise<GameState>;
+  /**
+   * Drive the server-side post-game analysis to completion (hosted games).
+   * Optional — stores that don't support it can omit it.
+   */
+  analysis?(id: string): Promise<GameState>;
   /** Subscribe to live updates for a game. Returns an unsubscribe fn. */
   subscribe(id: string, callback: (state: GameState) => void): () => void;
   /** This browser's player identity (address-like id). */

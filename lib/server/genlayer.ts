@@ -306,7 +306,7 @@ export async function analyzeGameOnChain(game: {
   if (!analyzerAddress || !/^0x[0-9a-fA-F]{40}$/.test(analyzerAddress)) {
     throw new Error("Could not determine analyzer contract address from deploy receipt");
   }
-  console.log(`[genlayer:analyze] deployed analyzer at ${analyzerAddress}`);
+  console.log(`[genlayer:analyze] deployed analyzer at ${analyzerAddress} (deploy tx ${deployHash})`);
 
   // Step 2: Load game data into the analyzer
   const movesJson = JSON.stringify(
@@ -321,7 +321,7 @@ export async function analyzeGameOnChain(game: {
     value: BigInt(0),
   });
   await waitForWrite(loadHash, "load_game");
-  console.log("[genlayer:analyze] game data loaded, generating analysis...");
+  console.log(`[genlayer:analyze] game data loaded (load_game tx ${loadHash}), generating analysis...`);
 
   // Step 3: Generate analysis (this is the slow part — GenLayer LLM consensus)
   const analyzeHash = await client.writeContract({
@@ -331,8 +331,9 @@ export async function analyzeGameOnChain(game: {
     args: [],
     value: BigInt(0),
   });
+  console.log(`[genlayer:analyze] generate_analysis submitted (tx ${analyzeHash}), waiting for validator consensus...`);
   await waitForWrite(analyzeHash, "generate_analysis");
-  console.log("[genlayer:analyze] analysis generated, reading summary...");
+  console.log(`[genlayer:analyze] analysis generated (generate_analysis tx ${analyzeHash}), reading summary...`);
 
   // Step 4: Read the summary
   const summary = (await client.readContract({
@@ -346,7 +347,9 @@ export async function analyzeGameOnChain(game: {
     throw new Error("GenLayer analysis returned empty or invalid summary");
   }
 
-  console.log(`[genlayer:analyze] analysis complete (${summary.length} chars)`);
+  console.log(
+    `[genlayer:analyze] analysis complete (${summary.length} chars, contract ${analyzerAddress}, txs: deploy ${deployHash}, load ${loadHash}, analyze ${analyzeHash})`,
+  );
   return summary;
 }
 
