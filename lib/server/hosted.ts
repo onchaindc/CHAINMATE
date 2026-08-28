@@ -4,7 +4,11 @@ import { computeClocks } from "@/lib/clocks";
 import { getGameStorage } from "@/lib/server/storage";
 import { earnedAchievements, earnedCodes, type AchievementContext } from "@/lib/achievements";
 import { buildRuleSummary } from "@/lib/summary";
-import { genlayerAnalyzer, type GameAnalyzer } from "@/lib/server/genlayer";
+import {
+  genlayerAnalyzer,
+  genlayerKeysAvailable,
+  type GameAnalyzer,
+} from "@/lib/server/genlayer";
 import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
@@ -731,6 +735,10 @@ async function resolveTimeout(game: GameState): Promise<GameState> {
   };
   await applyRatingsIfFinished(game, next);
   await writeGame(next);
+  // Server-side trigger: every completed game asks for GenLayer analysis
+  // right here (after the terminal state is persisted, so the analysis run
+  // sees a finished game), independent of any browser tab staying open.
+  void requestAnalysisForGame(next.id).catch(() => {});
   return next;
 }
 
@@ -837,6 +845,8 @@ export async function submitHostedMove(
     next = { ...next, updatedAt: Date.now() };
   }
   await writeGame(next);
+  // Server-side trigger: every completed game asks for GenLayer analysis.
+  if (isGameOver(next.status)) void requestAnalysisForGame(next.id).catch(() => {});
   return next;
 }
 
@@ -858,6 +868,8 @@ export async function resignHostedGame(id: string, playerId: string): Promise<Ga
     next = { ...next, updatedAt: Date.now() };
   }
   await writeGame(next);
+  // Server-side trigger: the completed game generates GenLayer analysis.
+  if (isGameOver(next.status)) void requestAnalysisForGame(next.id).catch(() => {});
   return next;
 }
 
@@ -891,6 +903,8 @@ export async function respondHostedDraw(
     await applyRatingsIfFinished(game, next);
   }
   await writeGame(next);
+  // Server-side trigger: a draw by agreement also gets analysed.
+  if (isGameOver(next.status)) void requestAnalysisForGame(next.id).catch(() => {});
   return next;
 }
 
@@ -960,6 +974,27 @@ export async function rematchHostedGame(prevId: string, playerId: string): Promi
  * second run once the first has landed.)
  */
 const analysisInFlight = new Map<string, Promise<GameState>>();
+
+/**
+ * Fire-and-forget server-side trigger used by every game-end hook. The heavy
+ * GenLayer run is deduped inside `summarizeHostedGame`, so this is safe to
+ * call from moves, resignations, timeouts and draws alike — and it guarantees
+ * the GenLayer contract is invoked server-authoritatively the moment a game
+ * finishes, independent of any browser that might close.
+ *
+ * Only fires when signing keys are actually configured (i.e. a real on-chain
+ * call is possible). Without keys there is nothing to invoke; the client
+ * surfaces the "not configured" state instead.
+ */
+async function requestAnalysisForGame(id: string): Promise<void> {
+  if (!genlayerKeysAvailable()) return;
+  try {
+    await summarizeHostedGame(id);
+  } catch (err) {
+    // Analysis is best-effort — never break the game result over it.
+    console.error(`[hosted] auto-analysis request failed for game ${id}:`, err);
+  }
+}
 
 /**
  * Produce the post-game report for a finished game.

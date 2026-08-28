@@ -249,6 +249,53 @@ test("an unfinished game is refused", async () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Server-side auto-trigger                                            */
+/* ------------------------------------------------------------------ */
+
+test("the game-end path auto-requests analysis server-side when keys are configured", async () => {
+  /* The steward requirement: a completed game must create a GenLayer request
+     without any browser interaction. The auto-trigger fires inside the
+     game-end path (checkmate / resign / timeout / draw) the moment the game
+     finishes, but only when signing keys are actually configured. With a
+     (fake) key set, the real analyzer is invoked and fails locally — which
+     still proves the request was created: the game records why. */
+  process.env.GENLAYER_PRIVATE_KEY =
+    "0x0000000000000000000000000000000000000000000000000000000000000001";
+  try {
+    const game = await startGame();
+    await play(game.id, FOOLS_MATE);
+
+    // Give the fire-and-forget trigger a moment to settle locally.
+    await new Promise((r) => setTimeout(r, 500));
+    const settled = await hosted.getHostedGame(game.id);
+
+    // The trigger ran: it attempted the (real) analyzer and recorded the
+    // failure rather than silently doing nothing.
+    assert.ok(
+      settled!.analysisError,
+      "the game-end path must have auto-requested analysis (got: " +
+        JSON.stringify(settled!.analysisError ?? null) +
+        ")",
+    );
+    assert.equal(settled!.analysis, undefined);
+    assert.ok(settled!.summary.length > 0, "the fallback report must still be present");
+  } finally {
+    delete process.env.GENLAYER_PRIVATE_KEY;
+  }
+});
+
+test("without keys the game-end path does not attempt analysis", async () => {
+  delete process.env.GENLAYER_PRIVATE_KEY;
+  const game = await startGame();
+  const finished = await play(game.id, FOOLS_MATE);
+
+  await new Promise((r) => setTimeout(r, 100));
+  const settled = await hosted.getHostedGame(game.id);
+  assert.equal(settled!.analysis, undefined);
+  assert.equal(settled!.analysisError, undefined, "no keys means no auto-request");
+});
+
+/* ------------------------------------------------------------------ */
 /* Production wiring                                                   */
 /* ------------------------------------------------------------------ */
 

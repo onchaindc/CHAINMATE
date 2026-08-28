@@ -171,7 +171,20 @@ export function useGame(id: string) {
   const requestAnalysis = useCallback(async () => {
     setAnalyzing(true);
     try {
-      applyState(await storeRef.current!.generateSummary(id));
+      const store = storeRef.current!;
+      if (store.analysis) {
+        // The dedicated analysis executor drives the GenLayer call to
+        // completion server-side (awaited, long budget). Poll while it is
+        // still pending so a slow consensus run eventually lands.
+        for (let i = 0; i < 10; i++) {
+          const next = await store.analysis(id);
+          applyState(next);
+          if (!analysisPending(next)) break;
+          await new Promise((r) => setTimeout(r, 5000));
+        }
+      } else {
+        applyState(await store.generateSummary(id));
+      }
     } catch {
       /* Hosted analysis can outlast the serverless request that asked for it.
          Nothing is lost: the fallback report is already on screen, polling

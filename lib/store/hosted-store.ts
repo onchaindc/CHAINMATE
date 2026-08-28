@@ -238,6 +238,17 @@ export class HostedGameStore implements GameStore {
     return data.game;
   }
 
+  /**
+   * Drive the server-side post-game analysis to completion (awaited, long
+   * budget) and return the updated game. The reliable path for the result
+   * screen — works even if the tab that ended the game has been closed.
+   */
+  async analysis(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}?analysis=1`);
+    if (!data.game) throw new Error("Analysis failed");
+    return data.game;
+  }
+
   subscribe(id: string, callback: (state: GameState) => void): () => void {
     if (!this.listeners.has(id)) this.listeners.set(id, new Set());
     this.listeners.get(id)!.add(callback);
