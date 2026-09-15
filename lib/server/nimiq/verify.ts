@@ -9,21 +9,22 @@
  *    address is the FIRST 20 BYTES of Blake2b-256(public key), custom base32
  *    encoded ("0123456789ABCDEFGHJKLMNPQRSTUVXY"), prefixed "NQ" plus an
  *    IBAN-style mod-97 checksum (2 digits), displayed in 4-char groups.
- *  - Signatures: Ed25519 over the exact challenge bytes (RFC 8032), via
- *    @noble/ed25519. @noble/ed25519 v2 requires sha512 to be provided by the
- *    application (documented design), which we supply from @noble/hashes.
+ *  - Signatures: Ed25519 (RFC 8032) via @noble/ed25519, over SHA-256 of the
+ *    Nimiq-framed challenge message — NOT over the raw message bytes.
+ *    @noble/ed25519 v2 requires sha512 to be provided by the application
+ *    (documented design), which we supply from @noble/hashes.
  *
  * The challenge message format is deterministic (see challengeMessage()):
  *
  *   chainmate-link:{network}:{playerId}:{nonce}:{issuedAt}
  *
- * Byte-exactness note: signing/verification operate on UTF-8 bytes of the
- * message string. The message contains only ASCII, so every client and the
- * server encode it identically.
+ * Byte-exactness note: the framing operates on UTF-8 bytes of the message
+ * string. The message contains only ASCII, so every client and the server
+ * encode it identically.
  */
 
 import { blake2b } from "@noble/hashes/blake2b";
-import { sha512 } from "@noble/hashes/sha2";
+import { sha256, sha512 } from "@noble/hashes/sha2";
 import * as ed from "@noble/ed25519";
 
 // @noble/ed25519 v2 application-supplied hashing (documented design): both
@@ -210,7 +211,42 @@ export function addressFromPublicKey(publicKeyHex: string): string {
 }
 
 /**
- * Verify an ed25519 signature over the exact challenge message bytes.
+ * Nimiq's canonical message-signing convention — the EXACT algorithm Nimiq
+ * Pay applies to every sign() request. Mirrored from
+ * nimiq/core-rs-albatross wallet/src/wallet_account.rs
+ * (WalletAccount::prepare_message_for_signature; same convention as the
+ * legacy Keyguard `Key.signMessage`):
+ *
+ *   prefix  = "\x16Nimiq Signed Message:\n"   (0x16 = 22 = prefix byte length,
+ *                                               the Bitcoin-style length tag)
+ *   buffer  = prefix || ascii(utf8ByteLength(message)) || utf8(message)
+ *   signed  = SHA-256(buffer)                 (32 bytes — what Ed25519 signs)
+ *
+ * A wallet therefore NEVER signs the raw message bytes. Verifying against
+ * raw UTF-8 fails for every real Nimiq Pay signature — the exact bug this
+ * module's previous version had (tests passed only because the test helper
+ * made the same raw-bytes assumption). The framing also binds the signature
+ * to "Nimiq signed message" semantics so it can never be replayed as a
+ * transaction signature.
+ */
+export const NIMIQ_SIGN_MESSAGE_PREFIX = "\x16Nimiq Signed Message:\n";
+
+/** The exact 32 bytes Nimiq wallets sign for a given message string. */
+export function nimiqMessageSigningHash(message: string): Uint8Array {
+  const messageBytes = new TextEncoder().encode(message);
+  const lengthAscii = new TextEncoder().encode(String(messageBytes.byteLength));
+  const prefixBytes = new TextEncoder().encode(NIMIQ_SIGN_MESSAGE_PREFIX);
+  const buffer = new Uint8Array(
+    prefixBytes.byteLength + lengthAscii.byteLength + messageBytes.byteLength,
+  );
+  buffer.set(prefixBytes, 0);
+  buffer.set(lengthAscii, prefixBytes.byteLength);
+  buffer.set(messageBytes, prefixBytes.byteLength + lengthAscii.byteLength);
+  return sha256(buffer);
+}
+
+/**
+ * Verify an Ed25519 signature over the Nimiq-framed challenge message hash.
  * Throws on malformed inputs; returns false on a well-formed wrong signature.
  */
 export async function verifyChallengeSignature(params: {
@@ -218,8 +254,8 @@ export async function verifyChallengeSignature(params: {
   signatureHex: string;
   publicKeyHex: string;
 }): Promise<boolean> {
-  const message = new TextEncoder().encode(params.message);
+  const signedBytes = nimiqMessageSigningHash(params.message);
   const signature = validateSignatureHex(params.signatureHex);
   const publicKey = validatePublicKey(params.publicKeyHex);
-  return ed.verifyAsync(signature, message, publicKey);
+  return ed.verifyAsync(signature, signedBytes, publicKey);
 }
