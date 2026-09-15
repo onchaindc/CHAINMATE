@@ -42,6 +42,14 @@ export function nimiqNetworkId(name: NimiqNetworkName): NimiqNetworkId {
   return NIMIQ_NETWORK_IDS[name];
 }
 
+/** Reverse map: protocol networkId → network name, or null when unknown. */
+export function networkIdToName(id: number): NimiqNetworkName | null {
+  for (const [name, known] of Object.entries(NIMIQ_NETWORK_IDS)) {
+    if (known === id) return name as NimiqNetworkName;
+  }
+  return null;
+}
+
 /** Feature flag — everything Nimiq in the UI keys off this.
  *  Delegated to lib/nimiq/flag.ts so there is exactly one reader. */
 import { isNimiqEnabled } from "@/lib/nimiq/flag";
@@ -59,6 +67,22 @@ export const NIMIQ_NETWORK_ID: NimiqNetworkId = nimiqNetworkId(NIMIQ_NETWORK);
  */
 export const NIMIQ_TREASURY_ADDRESS: string =
   (process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS ?? "").trim();
+
+/**
+ * H4 — the CANONICAL server-side treasury authority for money logic.
+ *
+ * Priority: NIMIQ_TREASURY_ADDRESS (server-only) > NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS
+ * (inlined into the browser bundle; kept as fallback so existing single-variable
+ * deployments keep working). Economic verification uses this; payout dispatch
+ * independently reads NIMIQ_PAYOUT_TREASURY_ADDRESS and FAILS CLOSED when the
+ * two disagree, so entries can never be accepted into one treasury while
+ * prizes are paid from another.
+ */
+export function getCanonicalTreasuryAddress(): string {
+  const server = (process.env.NIMIQ_TREASURY_ADDRESS ?? "").trim();
+  if (server) return server;
+  return (process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS ?? "").trim();
+}
 
 /** Loose NQ-address shape check (grouped or ungrouped, 36 base32 chars). */
 export function isPlausibleNimiqAddress(address: string): boolean {

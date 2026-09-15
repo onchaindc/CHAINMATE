@@ -45,8 +45,11 @@
  */
 
 import {
-  getNimiqPayoutConfig,
-} from "@/lib/server/nimiq/payout-config";
+  getCanonicalTreasuryAddress,
+  NIMIQ_NETWORK,
+  networkIdToName,
+} from "@/lib/nimiq/config";
+import { getNimiqPayoutConfig } from "@/lib/server/nimiq/payout-config";
 import {
   NimiqRpcError,
   getBlockNumber,
@@ -124,6 +127,21 @@ export function buildRpcTreasurySigner(
 ): TreasurySigner | null {
   const config = getNimiqPayoutConfig();
   if (!config) return null;
+
+  // H4 — fail closed: the payout node's treasury and the ENTRY treasury
+  // must be the same address. A divergence would mean players pay into one
+  // treasury while prizes leave another (accounting can never balance), so
+  // misconfiguration here disables dispatch entirely rather than paying out
+  // of an unaccounted wallet. When the entry treasury is simply not yet
+  // configured there is nothing to diverge FROM — 1C already refuses entry
+  // verification in that state, so dispatch construction is allowed.
+  const entryTreasury = canonicalAddress(getCanonicalTreasuryAddress());
+  if (entryTreasury && canonicalAddress(config.treasuryAddress) !== entryTreasury) {
+    throw new PayoutDispatchError(
+      "configuration-error",
+      `Treasury mismatch: NIMIQ_PAYOUT_TREASURY_ADDRESS (${config.treasuryAddress}) differs from the entry treasury (${entryTreasury}) — refusing to dispatch payouts`,
+    );
+  }
 
   const send = deps.sendBasicTransaction ?? sendBasicTransaction;
   const heightOf = deps.getBlockNumber ?? getBlockNumber;
@@ -552,6 +570,32 @@ export async function verifyOutgoingPayout(
     throw new PayoutDispatchError(
       "broadcast-failed",
       "Payout transaction failed on-chain execution",
+    );
+  }
+
+  // M1 — fail closed: the payout network identity MUST be present, known,
+  // and equal to the deployment network. A node answer without usable
+  // network information can never verify a payout.
+  const txNetworkId = (tx as { networkId?: unknown }).networkId;
+  const expectedNetwork = payout.network ?? NIMIQ_NETWORK;
+  const expectedId = expectedNetwork === "main" ? 42 : 5;
+  if (typeof txNetworkId !== "number") {
+    throw new PayoutDispatchError(
+      "malformed-response",
+      "Node response has no networkId — payout network cannot be established, refusing verification",
+    );
+  }
+  const knownNetwork = networkIdToName(txNetworkId);
+  if (!knownNetwork) {
+    throw new PayoutDispatchError(
+      "broadcast-failed",
+      `Payout transaction networkId ${txNetworkId} is not a known Nimiq network`,
+    );
+  }
+  if (txNetworkId !== expectedId) {
+    throw new PayoutDispatchError(
+      "broadcast-failed",
+      `Payout transaction is on networkId ${txNetworkId} (${knownNetwork}), expected ${expectedId} (${expectedNetwork})`,
     );
   }
   if (typeof tx.blockNumber !== "number" || tx.blockNumber < 0) {

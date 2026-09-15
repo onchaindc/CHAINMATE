@@ -25,11 +25,11 @@
  * transaction) surfaces as a typed conflict error, never a double acceptance.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-
 import {
+  getCanonicalTreasuryAddress,
   getServerNimiqRpcConfig,
+  NIMIQ_NETWORK,
+  networkIdToName,
   type NimiqNetworkName,
 } from "@/lib/nimiq/config";
 import { toLuna, type NimiqMoneyError } from "@/lib/nimiq/format";
@@ -166,31 +166,60 @@ export interface NimiqTxStore {
 /* Fast-store implementation of the seam (+ Supabase mirror)           */
 /* ------------------------------------------------------------------ */
 
-const STORE_KEY = "chainmate:nimiq:transactions";
+/**
+ * B2 — the consumption map lives under its own key in the SAME project
+ * storage abstraction as every other ChainMate store (KV when configured,
+ * else the .data file store) — raw fs only for the one-time import of the
+ * pre-B2 format below.
+ *
+ * The key is versioned (:v2): the legacy import runs exactly ONCE per
+ * deployment (when the v2 key does not exist yet), after which the v2 map
+ * is authoritative. This keeps the migration deterministic and idempotent.
+ */
+const STORE_KEY = "chainmate:nimiq:transactions:v2";
 
-function readFileStore(): Record<string, VerifiedNimiqTransaction> {
-  const file = path.join(process.cwd(), ".data", "games.json");
-  try {
-    const raw = fs.readFileSync(file, "utf8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return (parsed[STORE_KEY] ?? {}) as Record<string, VerifiedNimiqTransaction>;
-  } catch {
-    return {};
+async function readTxMap(): Promise<Record<string, VerifiedNimiqTransaction>> {
+  const { getGameStorage } = await import("@/lib/server/storage");
+  const raw = await getGameStorage().get(STORE_KEY);
+  if (raw !== null) {
+    try {
+      return JSON.parse(raw) as Record<string, VerifiedNimiqTransaction>;
+    } catch {
+      return {};
+    }
   }
+  // First v2 read ever: import the pre-B2 raw-file rows (if any) once.
+  return await importLegacyTxMap();
 }
 
-function writeFileStore(map: Record<string, VerifiedNimiqTransaction>): void {
-  const dir = path.join(process.cwd(), ".data");
-  const file = path.join(dir, "games.json");
-  fs.mkdirSync(dir, { recursive: true });
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-  } catch {
-    // fresh store
+async function writeTxMap(map: Record<string, VerifiedNimiqTransaction>): Promise<void> {
+  const { getGameStorage } = await import("@/lib/server/storage");
+  await getGameStorage().set(STORE_KEY, JSON.stringify(map));
+}
+
+/**
+ * One-time import of consumption rows written by the pre-B2 raw-file store
+ * (a namespaced key inside .data/games.json). Writes the result under the
+ * v2 key — even when empty — so the import runs exactly once per deployment
+ * and no consumption history (the replay guard!) is lost on upgrade.
+ */
+async function importLegacyTxMap(): Promise<Record<string, VerifiedNimiqTransaction>> {
+  const { readFileSafe } = await import("@/lib/server/legacy-store");
+  const raw = readFileSafe("games.json");
+  let legacy: Record<string, VerifiedNimiqTransaction> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      legacy = (parsed["chainmate:nimiq:transactions"] ?? {}) as Record<
+        string,
+        VerifiedNimiqTransaction
+      >;
+    } catch {
+      legacy = {};
+    }
   }
-  parsed[STORE_KEY] = map;
-  fs.writeFileSync(file, JSON.stringify(parsed));
+  await writeTxMap(legacy); // v2 key now exists: import never runs again
+  return legacy;
 }
 
 /** Process-wide lock so concurrent verifies cannot both pass replay checks. */
@@ -208,45 +237,56 @@ async function withConsumptionLock<T>(key: string, fn: () => Promise<T>): Promis
 
 /**
  * Durable consumption record. The Supabase UNIQUE (network, tx_hash) is the
- * cross-instance final guard; the fast store + in-process lock is the
+ * cross-instance final guard; the project fast store + in-process lock is the
  * single-instance fast path. Duplicate consumption ALWAYS resolves to a
  * typed already-consumed error — never a silent double accept.
+ *
+ * B2: the map persists through the SAME project storage abstraction as every
+ * other ChainMate store (KV when configured, else the .data file store) —
+ * not raw fs — and the durable mirror is AWAITED where correctness depends
+ * on it (insertConsumed), so a cross-instance duplicate insert surfaces as
+ * the typed conflict instead of racing ahead unguarded.
  */
 export const fastStoreTxStore: NimiqTxStore = {
   async findByNetworkAndHash(network, txHash) {
-    const map = readFileStore();
+    const map = await readTxMap();
     return map[`${network}:${txHash}`] ?? null;
   },
   async listByTournament(tournamentId) {
-    const map = readFileStore();
+    const map = await readTxMap();
     return Object.values(map).filter((row) => row.tournamentId === tournamentId);
   },
   async insertConsumed(tx) {
     return withConsumptionLock(`${tx.network}:${tx.txHash}`, async () => {
-      const map = readFileStore();
+      const map = await readTxMap();
       const key = `${tx.network}:${tx.txHash}`;
       if (map[key]) {
         throw new NimiqTxError("already-consumed", "This transaction was already consumed");
       }
       const id = Date.now(); // monotonic-enough local id; Supabase bigserial is authoritative in prod
-      map[key] = { ...tx, id, verifiedAt: Date.now() };
-      writeFileStore(map);
-      // Best-effort durable mirror; its UNIQUE constraint is the real guard.
-      void mirrorConsumption({ ...tx, id, verifiedAt: map[key].verifiedAt });
+      const row: VerifiedNimiqTransaction = { ...tx, id, verifiedAt: Date.now() };
+      // Await the durable mirror BEFORE exposing success: if the mirror
+      // reports the row already exists (another instance consumed this tx
+      // first), the unique violation becomes the typed conflict and the
+      // local map is NOT polluted with a second owner.
+      await mirrorConsumption(row);
+      map[key] = row;
+      await writeTxMap(map);
       return id;
     });
   },
 };
 
 async function mirrorConsumption(tx: VerifiedNimiqTransaction): Promise<void> {
+  // Imported lazily: keeps the Supabase client out of test runs entirely.
+  const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
+  const { supabaseConfigured } = await import("@/lib/supabase/config");
+  if (!supabaseConfigured()) return;
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  let error: { message: string } | null = null;
   try {
-    // Imported lazily: keeps the Supabase client out of test runs entirely.
-    const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
-    const { supabaseConfigured } = await import("@/lib/supabase/config");
-    if (!supabaseConfigured()) return;
-    const admin = getSupabaseAdmin();
-    if (!admin) return;
-    const { error } = await admin.from("nimiq_transactions").insert({
+    ({ error } = await admin.from("nimiq_transactions").insert({
       network: tx.network,
       tx_hash: tx.txHash,
       player_id: tx.playerId,
@@ -257,19 +297,23 @@ async function mirrorConsumption(tx: VerifiedNimiqTransaction): Promise<void> {
       amount_luna: tx.amountLuna,
       block_number: tx.blockNumber,
       confirmations: tx.confirmations,
-    });
-    if (error) {
-      // Unique violation = another instance consumed it first: typed conflict.
-      if (/duplicate key|unique constraint|already exists/i.test(error.message)) {
-        throw new NimiqTxError("already-consumed", "This transaction was already consumed");
-      }
-      console.error(`[nimiq-tx] durable mirror failed: ${error.message}`);
-    }
+    }));
   } catch (err) {
-    if (err instanceof NimiqTxError) throw err;
-    console.error(
-      `[nimiq-tx] mirror error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // A thrown transport error is a Supabase outage, not a replay: the fast
+    // store still records the consumption and the next mirror attempt can
+    // backfill. Only the UNIQUE conflict below is authoritative enough to
+    // fail the consumption.
+    console.error(`[nimiq-tx] durable mirror threw: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  if (error) {
+    // Unique violation = another instance consumed it first: typed conflict.
+    // B2: surfaced to the caller (insertConsumed awaits this mirror) instead
+    // of being swallowed — the local map is not updated in that case.
+    if (/duplicate key|unique constraint|already exists/i.test(error.message)) {
+      throw new NimiqTxError("already-consumed", "This transaction was already consumed");
+    }
+    console.error(`[nimiq-tx] durable mirror failed: ${error.message}`);
   }
 }
 
@@ -305,11 +349,13 @@ async function verifyOnChain(
   obligation: VerificationObligation,
   deps: VerifyDeps,
 ): Promise<OnChainVerification> {
-  const network = obligation.network ?? "test";
-  // Read at call time (not import time) so per-process env changes and test
-  // isolation work; this is the same NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS that
-  // lib/nimiq/config.ts declares.
-  const configuredTreasury = (process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS ?? "").trim();
+  // H4 — the canonical server-side treasury authority. A server-side
+  // NIMIQ_TREASURY_ADDRESS wins when set; otherwise the NEXT_PUBLIC value
+  // (which Next also ships to the browser) is honoured so existing single-
+  // variable deployments keep working. Payout dispatch independently pins
+  // NIMIQ_PAYOUT_TREASURY_ADDRESS and fails closed when the two disagree —
+  // so entries can never land in one treasury while prizes leave another.
+  const configuredTreasury = getCanonicalTreasuryAddress();
   const expectedRecipient = canonicalAddress(
     obligation.expectedRecipient ?? configuredTreasury,
   );
@@ -320,6 +366,12 @@ async function verifyOnChain(
       "NIMIQ_TREASURY_ADDRESS is not configured — cannot verify an incoming transaction",
     );
   }
+
+  // M1 — fail closed: the expected network MUST be explicit, and the node's
+  // own networkId field MUST be present, a known id, and matching. A response
+  // without usable network identity can never be verified into money state.
+  const expectedNetwork: NimiqNetworkName = obligation.network ?? NIMIQ_NETWORK;
+  const expectedId = expectedNetwork === "main" ? 42 : 5;
 
   // 1. The player's LINKED wallet (Phase 1B) — not any client-supplied sender.
   const linked = await (deps.getLinkedWallet ?? getLinkedWallet)(obligation.playerId);
@@ -345,7 +397,30 @@ async function verifyOnChain(
     throw new NimiqTxError("transaction-not-found", "Transaction not found on the network");
   }
 
-  // 3. Inclusion + execution success. A pending tx has no block height.
+  // 3. M1 — network identity, checked BEFORE anything else about the tx so a
+  // cross-network replay dies here. Fail closed: missing or unknown networkId
+  // on the node response rejects the verification outright.
+  if (typeof tx.networkId !== "number") {
+    throw new NimiqTxError(
+      "malformed-rpc-response",
+      "Node response has no networkId — network cannot be established, refusing verification",
+    );
+  }
+  const knownNetworkId = networkIdToName(tx.networkId);
+  if (!knownNetworkId) {
+    throw new NimiqTxError(
+      "wrong-network",
+      `Transaction networkId ${tx.networkId} is not a known Nimiq network`,
+    );
+  }
+  if (tx.networkId !== expectedId) {
+    throw new NimiqTxError(
+      "wrong-network",
+      `Transaction is on networkId ${tx.networkId} (${knownNetworkId}), expected ${expectedId} (${expectedNetwork})`,
+    );
+  }
+
+  // 4. Inclusion + execution success. A pending tx has no block height.
   if (
     typeof tx.blockNumber !== "number" ||
     !Number.isFinite(tx.blockNumber) ||
@@ -415,22 +490,11 @@ async function verifyOnChain(
     );
   }
 
-  // 8. Network: the node's own networkId must match the expected network.
-  if (typeof tx.networkId === "number") {
-    const expectedId = network === "main" ? 42 : 5;
-    if (tx.networkId !== expectedId) {
-      throw new NimiqTxError(
-        "wrong-network",
-        `Transaction is on networkId ${tx.networkId}, expected ${expectedId} (${network})`,
-      );
-    }
-  }
-
   return {
     tx,
     blockHeight: tx.blockNumber,
     confirmations,
-    network,
+    network: expectedNetwork,
     sender,
     recipient,
     amountLuna,
@@ -453,7 +517,7 @@ export async function verifyIncomingTransaction(
 
   // Replay check first (fast, typed) — but the durable guard is the insert.
   const store = deps.store ?? fastStoreTxStore;
-  const network = obligation.network ?? "test";
+  const network = obligation.network ?? NIMIQ_NETWORK;
   const existing = await store.findByNetworkAndHash(network, txHash);
   if (existing) {
     throw new NimiqTxError("already-consumed", "This transaction was already consumed");

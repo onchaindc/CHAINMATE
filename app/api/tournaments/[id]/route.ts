@@ -7,6 +7,7 @@ import {
   requestArenaPairing,
   transitionTournament,
 } from "@/lib/server/tournaments";
+import { requireAccountForPaidTournament } from "@/lib/server/tournament-economy";
 import type { TournamentStatus } from "@/lib/tournament-types";
 
 export const runtime = "nodejs";
@@ -78,6 +79,18 @@ export async function POST(req: NextRequest, { params }: Params) {
   try {
     switch (body.action) {
       case "join": {
+        // H2: a PAID tournament can never be joined without an account.
+        // Gate here too — the paid-entry route is the normal path, but the
+        // plain join endpoint must also refuse guests on paid events.
+        const { getTournamentDoc } = await import("@/lib/server/tournament-store");
+        const doc = await getTournamentDoc(id);
+        if (!doc) return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
+        try {
+          await requireAccountForPaidTournament(doc, acting.playerId);
+        } catch (gateErr) {
+          const message = gateErr instanceof Error ? gateErr.message : "Account required";
+          return NextResponse.json({ error: message }, { status: 403 });
+        }
         const res = await joinTournament(id, acting.playerId);
         if (!res.ok) return NextResponse.json({ error: res.error }, { status: 409 });
         return NextResponse.json({ ok: true });

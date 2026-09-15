@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
+  SeatCreationError,
   TournamentEntryError,
   joinPaidTournament,
 } from "@/lib/server/tournament-economy";
@@ -57,6 +58,14 @@ export async function POST(req: NextRequest, { params }: Params) {
       },
     });
   } catch (err) {
+    if (err instanceof SeatCreationError) {
+      // The tx WAS consumed but no seat exists. 500 + the hash: the payment
+      // is traceable and support can self-heal by resubmitting the same hash.
+      return NextResponse.json(
+        { error: err.message, kind: err.kind, consumedTxHash: err.consumedTxHash },
+        { status: err.status },
+      );
+    }
     if (err instanceof TournamentEntryError) {
       return NextResponse.json(
         { error: err.message, kind: err.kind },

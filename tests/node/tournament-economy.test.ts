@@ -36,13 +36,19 @@ const LINKED = "NQ0700000000000000000000000000000000";
 const TREASURY = "NQ09V9Q7P4V07V0XGV0XGV0XGV0XGV0XGV0X".replace(/[^A-Z0-9]/g, "").slice(0, 36);
 const FEE_LUNA = 500_000n; // 5 NIM
 
+/** Paid-state shape mirrored onto fake entries (matches TournamentEntry.paid). */
+interface FakePaidState {
+  txHash: string;
+  paidAt: number;
+}
+
 interface FakeDoc {
   id: string;
   status: string;
   creatorId: string;
   maxPlayers: number;
   entryFeeLuna: string | null;
-  entries: Array<{ playerId: string; leftAt?: number }>;
+  entries: Array<{ playerId: string; leftAt?: number; paid?: FakePaidState }>;
 }
 
 function makeWorld(opts?: { feeLuna?: bigint | null }) {
@@ -92,9 +98,31 @@ function makeWorld(opts?: { feeLuna?: bigint | null }) {
     rpc: makeRpc(),
     getLinkedWallet: async () => ({ address: LINKED, network: "test" as const, linkedAt: 0 }),
     getTournamentDoc: async () => ({ ...doc, entries: doc.entries.map((e) => ({ ...e })) }),
-    markEntryPaid: async (_tid, playerId, txHash) => {
+    // Harness seam: the H2 gate is exercised explicitly in its own tests;
+    // every other test plays an authenticated account.
+    isGuestAccount: async () => false,
+    // B1 seat seams — mirrored into the fake doc so assertions on entries
+    // keep working. The REAL engine writers are exercised by the dedicated
+    // paid-join integration suite (money-path-integration.test.ts).
+    reserveSeat: async (_tid, playerId) => {
+      const existing = doc.entries.find((e) => e.playerId === playerId);
+      if (existing) {
+        existing.leftAt = undefined;
+        return { created: false };
+      }
+      if (doc.entries.filter((e) => e.leftAt === undefined).length >= doc.maxPlayers) {
+        throw new economy.TournamentEntryError("tournament-full", "The tournament is full");
+      }
+      doc.entries.push({ playerId } as never);
+      return { created: true };
+    },
+    releaseSeat: async (_tid, playerId, created) => {
+      if (!created) return;
       doc.entries = doc.entries.filter((e) => e.playerId !== playerId);
-      doc.entries.push({ playerId, paid: { txHash, paidAt: 1 } } as never);
+    },
+    markEntryPaid: async (_tid, playerId, txHash) => {
+      const entry = doc.entries.find((e) => e.playerId === playerId);
+      if (entry) entry.paid = { txHash, paidAt: 1 } as never;
     },
   };
 
@@ -338,10 +366,13 @@ test("registration closed / tournament full / duplicate join rejections", async 
   );
 
   const w3 = makeWorld();
-  w3.doc.entries.push({ playerId: "acct_p1" });
+  // An UNPAID seat is not a duplicate join — paying is the join (B1). The
+  // duplicate-join guard that matters is an already-PAID seat: a second
+  // payment can never attach.
+  w3.doc.entries.push({ playerId: "acct_p1", paid: { txHash: "c".repeat(64), paidAt: 1 } } as never);
   await assert.rejects(
     () => economy.joinPaidTournament("tour_econ", "acct_p1", w3.validTx().hash, w3.deps),
-    (err: EconomyModule.TournamentEntryError) => err.kind === "already-joined",
+    (err: EconomyModule.TournamentEntryError) => err.kind === "already-paid",
   );
 });
 
@@ -359,10 +390,24 @@ test("same tx cannot be reused for a second entry (replay durability)", async ()
 test("same player cannot pay twice for the same tournament", async () => {
   const w = makeWorld();
   await economy.joinPaidTournament("tour_econ", "acct_p1", w.validTx().hash, w.deps);
+  // A SECOND, different transaction is rejected — the seat is already paid.
   await assert.rejects(
     () => economy.joinPaidTournament("tour_econ", "acct_p1", w.validTx().hash, w.deps),
-    (err: EconomyModule.TournamentEntryError) => err.kind === "already-joined",
+    (err: EconomyModule.TournamentEntryError) => err.kind === "already-paid",
   );
+});
+
+test("B1 self-heal: resubmitting the SAME tx after a successful join is idempotent", async () => {
+  const w = makeWorld();
+  const h = w.validTx().hash;
+  const first = await economy.joinPaidTournament("tour_econ", "acct_p1", h, w.deps);
+  // Crash-recovery retry: the ledger says already-consumed, but the row
+  // belongs to THIS player + tournament, so the seat is completed (no-op)
+  // and success is returned — never a double consumption, never an error.
+  const second = await economy.joinPaidTournament("tour_econ", "acct_p1", h, w.deps);
+  assert.equal(second.txHash, first.txHash);
+  const rows = await w.store.listByTournament!("tour_econ");
+  assert.equal(rows.length, 1); // consumed exactly once
 });
 
 test("one payment cannot be attached to two tournaments", async () => {

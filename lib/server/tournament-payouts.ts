@@ -30,15 +30,13 @@
  *   payout_status: none → pending → partial → paid (or refund_required)
  */
 
-import fs from "node:fs";
-import path from "node:path";
-
 import {
   allocatePrizePool,
   isPrizePreset,
   type PrizePreset,
 } from "@/lib/tournament-economy";
 import { getLinkedWallet } from "@/lib/server/nimiq/service";
+import { getGameStorage } from "@/lib/server/storage";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -91,27 +89,118 @@ export interface PayoutPlanResult {
 }
 
 /* ------------------------------------------------------------------ */
-/* Storage — durable payout ledger (fast store + Supabase mirror)      */
+/* Storage — durable payout ledger (project storage + Supabase mirror) */
 /* ------------------------------------------------------------------ */
 
 interface PayoutsFile {
   payouts: Record<string, PayoutRecord>;
 }
 
-const PAYOUTS_FILE = path.join(process.cwd(), ".data", "payouts.json");
+/* ------------------------------------------------------------------ */
+/* M4 — monotonic payout persistence                                   */
+/* ------------------------------------------------------------------ */
 
-function payoutsFile(): PayoutsFile {
+export const PAYOUT_STATUSES: readonly PayoutStatus[] = [
+  "pending",
+  "dispatching",
+  "sent",
+  "verified",
+  "failed",
+  "blocked_no_wallet",
+];
+
+export function isPayoutStatus(value: string): value is PayoutStatus {
+  return (PAYOUT_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * Persistence rank of a payout status. Higher = more advanced. pending,
+ * failed and blocked_no_wallet share the lowest rank: they are all
+ * retryable starting points (a failed/blocked payout legitimately returns
+ * to pending via retryPayout).
+ */
+export function payoutStatusRank(status: PayoutStatus): number {
+  switch (status) {
+    case "dispatching": return 2;
+    case "sent": return 3;
+    case "verified": return 4;
+    default: return 1; // pending | failed | blocked_no_wallet
+  }
+}
+
+/**
+ * M4 — a stale write must NEVER move a payout backward. The more advanced
+ * of the two records wins outright: a pending/failed/blocked write arriving
+ * after the payout was dispatched (sent/verified) is dropped, and a stale
+ * pending write cannot clobber an in-flight WAL ('dispatching') row either.
+ * Forward transitions (including retry re-planning) are untouched.
+ *
+ * Explicit backward exception: 'dispatching' → 'failed' is the WAL
+ * RESOLUTION path (expired/incomplete dispatch intent) — it must stay
+ * possible or a dead WAL row could never be cleared for re-planning.
+ * Equal-rank rewrites are allowed (pending ↔ failed ↔ blocked_no_wallet
+ * are all pre-dispatch retryable states; retryPayout uses failed → pending).
+ */
+const BACKWARD_ALLOWED: ReadonlySet<string> = new Set(["dispatching>failed"]);
+
+export function mergeMonotonicPayout(existing: PayoutRecord, incoming: PayoutRecord): PayoutRecord {
+  const rankIn = payoutStatusRank(incoming.status);
+  const rankEx = payoutStatusRank(existing.status);
+  if (rankIn < rankEx && !BACKWARD_ALLOWED.has(`${existing.status}>${incoming.status}`)) {
+    return existing;
+  }
+  return incoming;
+}
+
+/**
+ * B2 — the payout ledger lives in the SAME project storage abstraction as
+ * every other ChainMate store (KV when configured, else the .data file
+ * store) under its own key. It no longer touches the filesystem directly,
+ * so payout state follows the deployment's storage backend.
+ */
+const PAYOUTS_KEY = "chainmate:payouts";
+
+async function readPayoutsFile(): Promise<PayoutsFile> {
   try {
-    const raw = fs.readFileSync(PAYOUTS_FILE, "utf8");
-    return JSON.parse(raw) as PayoutsFile;
+    const raw = await getGameStorage().get(PAYOUTS_KEY);
+    if (!raw) return { payouts: {} };
+    const parsed = JSON.parse(raw) as PayoutsFile;
+    return parsed?.payouts ? parsed : { payouts: {} };
   } catch {
     return { payouts: {} };
   }
 }
 
-function writePayoutsFile(file: PayoutsFile): void {
-  fs.mkdirSync(path.dirname(PAYOUTS_FILE), { recursive: true });
-  fs.writeFileSync(PAYOUTS_FILE, JSON.stringify(file));
+async function writePayoutsFile(file: PayoutsFile): Promise<void> {
+  await getGameStorage().set(PAYOUTS_KEY, JSON.stringify(file));
+}
+
+/**
+ * One-time import of payouts written by the pre-B2 raw-file store
+ * (.data/payouts.json). Merge-then-persist so no pre-existing payout state
+ * is lost when the deployment upgrades. Safe to call repeatedly (the legacy
+ * file simply stops existing as a source once imported or absent).
+ */
+export async function migrateLegacyPayoutStore(): Promise<number> {
+  const { readFileSafe } = await import("@/lib/server/legacy-store");
+  const raw = readFileSafe("payouts.json");
+  if (!raw) return 0;
+  let legacy: PayoutsFile;
+  try {
+    legacy = JSON.parse(raw) as PayoutsFile;
+  } catch {
+    return 0;
+  }
+  if (!legacy?.payouts) return 0;
+  const current = await readPayoutsFile();
+  let imported = 0;
+  for (const [key, payout] of Object.entries(legacy.payouts)) {
+    const existing = current.payouts[key];
+    current.payouts[key] = existing ? mergeMonotonicPayout(existing, payout) : payout;
+    if (!existing) imported += 1;
+  }
+  await writePayoutsFile(current);
+  return imported;
 }
 
 function payoutKey(tournamentId: string, playerId: string): string {
@@ -137,18 +226,23 @@ export interface PayoutStore {
 
 export const fastStorePayoutStore: PayoutStore = {
   async listByTournament(tournamentId) {
-    const file = payoutsFile();
+    const file = await readPayoutsFile();
     return Object.values(file.payouts)
       .filter((p) => p.tournamentId === tournamentId)
       .sort((a, b) => a.payoutRank - b.payoutRank);
   },
   async upsert(payout) {
-    const file = payoutsFile();
-    file.payouts[payoutKey(payout.tournamentId, payout.playerId)] = payout;
-    writePayoutsFile(file);
+    await withPayoutLock(`row:${payout.tournamentId}:${payout.playerId}`, async () => {
+      const file = await readPayoutsFile();
+      const key = payoutKey(payout.tournamentId, payout.playerId);
+      const existing = file.payouts[key];
+      // M4: never persist a backward transition over a more advanced state.
+      file.payouts[key] = existing ? mergeMonotonicPayout(existing, payout) : payout;
+      await writePayoutsFile(file);
+    });
   },
   async get(tournamentId, playerId) {
-    const file = payoutsFile();
+    const file = await readPayoutsFile();
     return file.payouts[payoutKey(tournamentId, playerId)] ?? null;
   },
 };
@@ -453,7 +547,27 @@ export async function mirrorPayouts(tournamentId: string, payouts: PayoutRecord[
     if (!supabaseConfigured()) return;
     const admin = getSupabaseAdmin();
     if (!admin) return;
-    const rows = payouts.map((p) => ({
+    // M4: the durable mirror is monotonic too — merge each incoming row
+    // against the current durable row so an out-of-order mirror write can
+    // never downgrade an advanced state (verified → sent → …) in Supabase.
+    const ids = payouts.map((p) => p.playerId);
+    const { data: durableRows } = await admin
+      .from("tournament_payouts")
+      .select("player_id, status")
+      .eq("tournament_id", tournamentId)
+      .in("player_id", ids.length > 0 ? ids : ["__none__"]);
+    const durableStatus = new Map<string, string>();
+    for (const row of (durableRows ?? []) as Array<{ player_id: string; status: string }>) {
+      durableStatus.set(row.player_id, row.status);
+    }
+    const merged = payouts.map((p) => {
+      const durable = durableStatus.get(p.playerId);
+      if (durable && isPayoutStatus(durable)) {
+        return mergeMonotonicPayout({ ...p, status: durable }, p);
+      }
+      return p;
+    });
+    const rows = merged.map((p) => ({
       tournament_id: p.tournamentId,
       player_id: p.playerId,
       payout_rank: p.payoutRank,

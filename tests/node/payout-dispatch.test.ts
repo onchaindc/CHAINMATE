@@ -480,6 +480,7 @@ function makeVerifyDeps(opts: {
         value: opts.payout.amountLuna,
         blockNumber: 991,
         flags: 0,
+        networkId: 5,
         ...(opts.onChainTx ?? {}),
       };
     }) as unknown as typeof import("@/lib/server/nimiq/rpc").getTransactionByHash,
