@@ -48,6 +48,7 @@ import {
 } from "@/lib/types";
 import { START_FEN } from "@/lib/types";
 import { randomHex } from "@/lib/utils";
+import { ingestTournamentGameResult } from "@/lib/server/tournaments";
 
 /**
  * Shared multiplayer store. Games are small JSON blobs keyed by game id, so
@@ -735,6 +736,10 @@ async function resolveTimeout(game: GameState): Promise<GameState> {
   };
   await applyRatingsIfFinished(game, next);
   await writeGame(next);
+  // Tournament ingestion: if this game belongs to a tournament match, record
+  // the authoritative result there too. Idempotent and best-effort — a
+  // tournament hiccup never un-finishes a chess game.
+  await ingestTournamentGameResult(next.id, next).catch(() => {});
   // Server-side trigger: every completed game asks for GenLayer analysis
   // right here (after the terminal state is persisted, so the analysis run
   // sees a finished game), independent of any browser tab staying open.
@@ -845,6 +850,7 @@ export async function submitHostedMove(
     next = { ...next, updatedAt: Date.now() };
   }
   await writeGame(next);
+  if (isGameOver(next.status)) await ingestTournamentGameResult(next.id, next).catch(() => {});
   // Server-side trigger: every completed game asks for GenLayer analysis.
   if (isGameOver(next.status)) void requestAnalysisForGame(next.id).catch(() => {});
   return next;
@@ -868,6 +874,7 @@ export async function resignHostedGame(id: string, playerId: string): Promise<Ga
     next = { ...next, updatedAt: Date.now() };
   }
   await writeGame(next);
+  if (isGameOver(next.status)) await ingestTournamentGameResult(next.id, next).catch(() => {});
   // Server-side trigger: the completed game generates GenLayer analysis.
   if (isGameOver(next.status)) void requestAnalysisForGame(next.id).catch(() => {});
   return next;
@@ -903,6 +910,7 @@ export async function respondHostedDraw(
     await applyRatingsIfFinished(game, next);
   }
   await writeGame(next);
+  if (isGameOver(next.status)) await ingestTournamentGameResult(next.id, next).catch(() => {});
   // Server-side trigger: a draw by agreement also gets analysed.
   if (isGameOver(next.status)) void requestAnalysisForGame(next.id).catch(() => {});
   return next;
@@ -922,6 +930,7 @@ export async function abortHostedGame(id: string, playerId: string): Promise<Gam
     summary: res.game.summary || buildRuleSummary(res.game),
   };
   await writeGame(next);
+  await ingestTournamentGameResult(next.id, next).catch(() => {});
   return next;
 }
 

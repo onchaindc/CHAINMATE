@@ -28,6 +28,7 @@ const LINKS: {
   hideBelow?: "sm" | "md" | "lg";
 }[] = [
   { href: "/create", authedHref: "/play", label: "Play" },
+  { href: "/tournaments", label: "Tournaments", hideBelow: "sm" },
   { href: "/join", label: "Join", hideBelow: "sm" },
   { href: "/solo", label: "Solo", hideBelow: "sm" },
   { href: "/watch", label: "Watch", hideBelow: "md" },

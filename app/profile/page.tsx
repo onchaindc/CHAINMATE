@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
+import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
@@ -200,6 +201,9 @@ function ProfileContent() {
       )}
 
       {error && <ErrorNote message={error} className="mt-6" />}
+
+      {/* Nimiq wallet binding — real provider flow, server-verified link. */}
+      <NimiqWalletCard playerId={playerId} />
 
       {/* Stats */}
       <StatTiles

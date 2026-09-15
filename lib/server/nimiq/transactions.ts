@@ -1,0 +1,491 @@
+// Server-only module — never import from client components.
+
+/**
+ * Nimiq transaction verification — Phase 1C.
+ *
+ * Verifies a REAL on-chain transaction through the configured Nimiq node
+ * before anything may consume it. The on-chain transaction and the player's
+ * server-side wallet binding (Phase 1B) are the ONLY authorities; nothing the
+ * client sends — sender, recipient, amount, network, status, confirmations —
+ * is trusted.
+ *
+ * EXACT CONFIRMATION CALCULATION
+ * ------------------------------
+ *   confirmations = currentBlockHeight − txBlockHeight + 1
+ *
+ * (A transaction in the newest block has 1 confirmation — the same convention
+ * Nimiq's explorer uses. The boundary is INCLUSIVE: requiring N confirmations
+ * accepts a transaction when `confirmations >= N`.)
+ *
+ * REPLAY PROTECTION
+ * -----------------
+ * The consumption row is persisted ONLY after every verification check has
+ * passed, and the database's UNIQUE (network, tx_hash) constraint is the
+ * final durable guard: a duplicate insert (two racers verifying the same
+ * transaction) surfaces as a typed conflict error, never a double acceptance.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+  getServerNimiqRpcConfig,
+  type NimiqNetworkName,
+} from "@/lib/nimiq/config";
+import { toLuna, type NimiqMoneyError } from "@/lib/nimiq/format";
+import {
+  NimiqRpcError,
+  getBlockNumber,
+  getTransactionByHash,
+  type NimiqRpcTransaction,
+} from "@/lib/server/nimiq/rpc";
+
+/**
+ * The real node response carries fields beyond 1A's minimal interface
+ * (execution flags, networkId, and a nullable block height while pending).
+ * Declared structurally HERE rather than in 1A so Phase 1A stays untouched.
+ */
+interface NimiqTxWithProof extends Omit<NimiqRpcTransaction, "blockNumber"> {
+  blockNumber?: number | null;
+  flags?: number;
+  networkId?: number;
+}
+type GetTxByHash = (
+  hash: string,
+  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+) => Promise<NimiqTxWithProof | null>;
+type GetBlockHeight = (
+  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+) => Promise<number>;
+import { getLinkedWallet } from "@/lib/server/nimiq/service";
+import { canonicalAddress } from "@/lib/server/nimiq/verify";
+
+/** Typed verification failure categories, mapped to HTTP statuses. */
+export type NimiqTxErrorKind =
+  | "invalid-hash"
+  | "wallet-not-linked"
+  | "rpc-unavailable"
+  | "transaction-not-found"
+  | "wrong-network"
+  | "failed-transaction"
+  | "wrong-sender"
+  | "wrong-recipient"
+  | "wrong-amount"
+  | "insufficient-confirmations"
+  | "already-consumed"
+  | "malformed-rpc-response"
+  | "configuration-error";
+
+const STATUS_BY_KIND: Record<NimiqTxErrorKind, number> = {
+  "invalid-hash": 400,
+  "wallet-not-linked": 409,
+  "rpc-unavailable": 503,
+  "transaction-not-found": 404,
+  "wrong-network": 400,
+  "failed-transaction": 400,
+  "wrong-sender": 400,
+  "wrong-recipient": 400,
+  "wrong-amount": 400,
+  "insufficient-confirmations": 409,
+  "already-consumed": 409,
+  "malformed-rpc-response": 502,
+  "configuration-error": 503,
+};
+
+export class NimiqTxError extends Error {
+  readonly kind: NimiqTxErrorKind;
+  readonly status: number;
+  constructor(kind: NimiqTxErrorKind, message: string) {
+    super(message);
+    this.name = "NimiqTxError";
+    this.kind = kind;
+    this.status = STATUS_BY_KIND[kind];
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Types                                                               */
+/* ------------------------------------------------------------------ */
+
+/** 64 lowercase hex chars — the Nimiq transaction hash shape. */
+const TX_HASH_RE = /^[0-9a-f]{64}$/;
+
+export function normalizeTxHash(txHash: string): string {
+  const hash = txHash.trim().toLowerCase();
+  if (!TX_HASH_RE.test(hash)) {
+    throw new NimiqTxError("invalid-hash", "Transaction hash must be 64 hex characters");
+  }
+  return hash;
+}
+
+/** What the future caller (2B tournament service) defines; never the client. */
+export interface VerificationObligation {
+  /** The player whose LINKED wallet must be the sender. */
+  playerId: string;
+  /** Exact expected amount in luna (bigint — never a float). */
+  expectedAmountLuna: bigint;
+  /** Expected recipient; defaults to the configured treasury address. */
+  expectedRecipient?: string;
+  /** Expected network; defaults to the deployment's configured network. */
+  network?: NimiqNetworkName;
+  /** What the consumption row records; defaults to 'verification'. */
+  kind?: "verification" | "tournament_entry";
+  /** Reserved for Phase 2B; recorded on the consumption row when present. */
+  tournamentId?: string;
+}
+
+/** The verified, consumed transaction (mirror of the persisted row). */
+export interface VerifiedNimiqTransaction {
+  id: number | null;
+  network: NimiqNetworkName;
+  txHash: string;
+  playerId: string;
+  kind: string;
+  tournamentId: string | null;
+  sender: string;
+  recipient: string;
+  amountLuna: string;
+  blockNumber: number;
+  confirmations: number;
+  verifiedAt: number;
+}
+
+/** Minimal seam over the consumption store so tests can fake persistence. */
+export interface NimiqTxStore {
+  findByNetworkAndHash(network: string, txHash: string): Promise<VerifiedNimiqTransaction | null>;
+  insertConsumed(tx: Omit<VerifiedNimiqTransaction, "id" | "verifiedAt">): Promise<number>;
+  /**
+   * Phase 2B: every consumption row recorded for one tournament (used to
+   * compute the verified prize pool). Optional — existing seam impls and the
+   * Phase 1C tests keep working unchanged.
+   */
+  listByTournament?(tournamentId: string): Promise<VerifiedNimiqTransaction[]>;
+}
+
+/* ------------------------------------------------------------------ */
+/* Fast-store implementation of the seam (+ Supabase mirror)           */
+/* ------------------------------------------------------------------ */
+
+const STORE_KEY = "chainmate:nimiq:transactions";
+
+function readFileStore(): Record<string, VerifiedNimiqTransaction> {
+  const file = path.join(process.cwd(), ".data", "games.json");
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return (parsed[STORE_KEY] ?? {}) as Record<string, VerifiedNimiqTransaction>;
+  } catch {
+    return {};
+  }
+}
+
+function writeFileStore(map: Record<string, VerifiedNimiqTransaction>): void {
+  const dir = path.join(process.cwd(), ".data");
+  const file = path.join(dir, "games.json");
+  fs.mkdirSync(dir, { recursive: true });
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    // fresh store
+  }
+  parsed[STORE_KEY] = map;
+  fs.writeFileSync(file, JSON.stringify(parsed));
+}
+
+/** Process-wide lock so concurrent verifies cannot both pass replay checks. */
+const consumptionLocks = new Map<string, Promise<unknown>>();
+
+async function withConsumptionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = consumptionLocks.get(key) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  consumptionLocks.set(
+    key,
+    run.catch(() => undefined),
+  );
+  return run;
+}
+
+/**
+ * Durable consumption record. The Supabase UNIQUE (network, tx_hash) is the
+ * cross-instance final guard; the fast store + in-process lock is the
+ * single-instance fast path. Duplicate consumption ALWAYS resolves to a
+ * typed already-consumed error — never a silent double accept.
+ */
+export const fastStoreTxStore: NimiqTxStore = {
+  async findByNetworkAndHash(network, txHash) {
+    const map = readFileStore();
+    return map[`${network}:${txHash}`] ?? null;
+  },
+  async listByTournament(tournamentId) {
+    const map = readFileStore();
+    return Object.values(map).filter((row) => row.tournamentId === tournamentId);
+  },
+  async insertConsumed(tx) {
+    return withConsumptionLock(`${tx.network}:${tx.txHash}`, async () => {
+      const map = readFileStore();
+      const key = `${tx.network}:${tx.txHash}`;
+      if (map[key]) {
+        throw new NimiqTxError("already-consumed", "This transaction was already consumed");
+      }
+      const id = Date.now(); // monotonic-enough local id; Supabase bigserial is authoritative in prod
+      map[key] = { ...tx, id, verifiedAt: Date.now() };
+      writeFileStore(map);
+      // Best-effort durable mirror; its UNIQUE constraint is the real guard.
+      void mirrorConsumption({ ...tx, id, verifiedAt: map[key].verifiedAt });
+      return id;
+    });
+  },
+};
+
+async function mirrorConsumption(tx: VerifiedNimiqTransaction): Promise<void> {
+  try {
+    // Imported lazily: keeps the Supabase client out of test runs entirely.
+    const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
+    const { supabaseConfigured } = await import("@/lib/supabase/config");
+    if (!supabaseConfigured()) return;
+    const admin = getSupabaseAdmin();
+    if (!admin) return;
+    const { error } = await admin.from("nimiq_transactions").insert({
+      network: tx.network,
+      tx_hash: tx.txHash,
+      player_id: tx.playerId,
+      kind: tx.kind,
+      tournament_id: tx.tournamentId,
+      sender: tx.sender,
+      recipient: tx.recipient,
+      amount_luna: tx.amountLuna,
+      block_number: tx.blockNumber,
+      confirmations: tx.confirmations,
+    });
+    if (error) {
+      // Unique violation = another instance consumed it first: typed conflict.
+      if (/duplicate key|unique constraint|already exists/i.test(error.message)) {
+        throw new NimiqTxError("already-consumed", "This transaction was already consumed");
+      }
+      console.error(`[nimiq-tx] durable mirror failed: ${error.message}`);
+    }
+  } catch (err) {
+    if (err instanceof NimiqTxError) throw err;
+    console.error(
+      `[nimiq-tx] mirror error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Verification                                                        */
+/* ------------------------------------------------------------------ */
+
+export interface VerifyDeps {
+  rpc?: {
+    getTransactionByHash: GetTxByHash;
+    getBlockNumber: GetBlockHeight;
+  };
+  store?: NimiqTxStore;
+  /** Wallet lookup seam (defaults to the Phase 1B service). */
+  getLinkedWallet?: typeof getLinkedWallet;
+  now?: () => number;
+}
+
+/** Shape of a successfully verified (but not yet persisted) on-chain tx. */
+export interface OnChainVerification {
+  tx: NimiqTxWithProof;
+  blockHeight: number;
+  confirmations: number;
+  network: NimiqNetworkName;
+  sender: string;
+  recipient: string;
+  amountLuna: string;
+}
+
+/** Internal: run every check and return the on-chain facts. */
+async function verifyOnChain(
+  txHash: string,
+  obligation: VerificationObligation,
+  deps: VerifyDeps,
+): Promise<OnChainVerification> {
+  const network = obligation.network ?? "test";
+  // Read at call time (not import time) so per-process env changes and test
+  // isolation work; this is the same NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS that
+  // lib/nimiq/config.ts declares.
+  const configuredTreasury = (process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS ?? "").trim();
+  const expectedRecipient = canonicalAddress(
+    obligation.expectedRecipient ?? configuredTreasury,
+  );
+
+  if (!expectedRecipient) {
+    throw new NimiqTxError(
+      "configuration-error",
+      "NIMIQ_TREASURY_ADDRESS is not configured — cannot verify an incoming transaction",
+    );
+  }
+
+  // 1. The player's LINKED wallet (Phase 1B) — not any client-supplied sender.
+  const linked = await (deps.getLinkedWallet ?? getLinkedWallet)(obligation.playerId);
+  if (!linked) {
+    throw new NimiqTxError("wallet-not-linked", "No Nimiq wallet is linked to this account");
+  }
+
+  // 2. The real transaction from the configured node.
+  const rpc = deps.rpc ?? { getTransactionByHash, getBlockNumber };
+  let tx: NimiqTxWithProof | null;
+  try {
+    tx = await rpc.getTransactionByHash(txHash, { timeoutMs: 10_000 });
+  } catch (err) {
+    if (err instanceof NimiqRpcError) {
+      throw new NimiqTxError(
+        "rpc-unavailable",
+        "The Nimiq node could not be reached to verify this transaction",
+      );
+    }
+    throw err;
+  }
+  if (!tx || typeof tx !== "object" || typeof tx.hash !== "string" || !tx.hash) {
+    throw new NimiqTxError("transaction-not-found", "Transaction not found on the network");
+  }
+
+  // 3. Inclusion + execution success. A pending tx has no block height.
+  if (
+    typeof tx.blockNumber !== "number" ||
+    !Number.isFinite(tx.blockNumber) ||
+    tx.blockNumber < 0
+  ) {
+    throw new NimiqTxError(
+      "transaction-not-found",
+      "Transaction exists but is not yet included in a block",
+    );
+  }
+  const executionFailed =
+    // Nimiq RPC: a failed/partially-failed execution carries flags bit 1 (0b10).
+    typeof tx.flags === "number" && (tx.flags & 0b10) !== 0;
+  if (executionFailed) {
+    throw new NimiqTxError("failed-transaction", "Transaction execution failed on-chain");
+  }
+
+  // 4. Sender must be exactly the linked wallet (canonical compare).
+  const sender = canonicalAddress(String(tx.from ?? ""));
+  if (sender !== canonicalAddress(linked.address)) {
+    throw new NimiqTxError("wrong-sender", "Transaction sender does not match your linked wallet");
+  }
+
+  // 5. Recipient must be exactly the treasury (canonical compare).
+  const recipient = canonicalAddress(String(tx.to ?? ""));
+  if (recipient !== expectedRecipient) {
+    throw new NimiqTxError("wrong-recipient", "Transaction recipient is not the expected address");
+  }
+
+  // 6. Value must equal the obligation exactly — bigint luna, no floats.
+  let amountLuna: string;
+  try {
+    amountLuna = toLuna(tx.value as bigint | number | string).toString();
+  } catch (err) {
+    const moneyError = err as NimiqMoneyError;
+    throw new NimiqTxError(
+      "malformed-rpc-response",
+      `Node returned a non-integer value: ${moneyError?.message ?? "unknown"}`,
+    );
+  }
+  if (amountLuna !== obligation.expectedAmountLuna.toString()) {
+    throw new NimiqTxError("wrong-amount", "Transaction amount does not match the expected amount");
+  }
+
+  // 7. Confirmations, computed server-side from block heights. INCLUSIVE
+  //    boundary: a tx in the newest block has 1 confirmation, so requiring N
+  //    confirmations accepts confirmations >= N.
+  const config = getServerNimiqRpcConfig();
+  const required = config?.confirmationsRequired ?? 10;
+  let currentHeight: number;
+  try {
+    currentHeight = await rpc.getBlockNumber({ timeoutMs: 10_000 });
+  } catch (err) {
+    if (err instanceof NimiqRpcError) {
+      throw new NimiqTxError("rpc-unavailable", "Could not read the current chain height");
+    }
+    throw err;
+  }
+  if (typeof currentHeight !== "number" || !Number.isFinite(currentHeight)) {
+    throw new NimiqTxError("malformed-rpc-response", "Node returned an invalid block height");
+  }
+  const confirmations = currentHeight - tx.blockNumber + 1;
+  if (confirmations < required) {
+    throw new NimiqTxError(
+      "insufficient-confirmations",
+      `Transaction has ${Math.max(confirmations, 0)} confirmations, ${required} required`,
+    );
+  }
+
+  // 8. Network: the node's own networkId must match the expected network.
+  if (typeof tx.networkId === "number") {
+    const expectedId = network === "main" ? 42 : 5;
+    if (tx.networkId !== expectedId) {
+      throw new NimiqTxError(
+        "wrong-network",
+        `Transaction is on networkId ${tx.networkId}, expected ${expectedId} (${network})`,
+      );
+    }
+  }
+
+  return {
+    tx,
+    blockHeight: tx.blockNumber,
+    confirmations,
+    network,
+    sender,
+    recipient,
+    amountLuna,
+  };
+}
+
+/**
+ * Verify an incoming transaction end-to-end and record its consumption.
+ *
+ * Order is load-bearing: consumption is persisted ONLY after every check in
+ * verifyOnChain() has passed, so a failed verification leaves no trace and
+ * the transaction can be re-verified later (e.g. after more confirmations).
+ */
+export async function verifyIncomingTransaction(
+  txHashInput: string,
+  obligation: VerificationObligation,
+  deps: VerifyDeps = {},
+): Promise<VerifiedNimiqTransaction> {
+  const txHash = normalizeTxHash(txHashInput);
+
+  // Replay check first (fast, typed) — but the durable guard is the insert.
+  const store = deps.store ?? fastStoreTxStore;
+  const network = obligation.network ?? "test";
+  const existing = await store.findByNetworkAndHash(network, txHash);
+  if (existing) {
+    throw new NimiqTxError("already-consumed", "This transaction was already consumed");
+  }
+
+  const verified = await verifyOnChain(txHash, obligation, deps);
+
+  const inserted = await store.insertConsumed({
+    network: verified.network,
+    txHash,
+    playerId: obligation.playerId,
+    kind: obligation.kind ?? "verification",
+    tournamentId: obligation.tournamentId ?? null,
+    sender: verified.sender,
+    recipient: verified.recipient,
+    amountLuna: verified.amountLuna,
+    blockNumber: verified.blockHeight,
+    confirmations: verified.confirmations,
+  });
+
+  return {
+    id: inserted,
+    network: verified.network,
+    txHash,
+    playerId: obligation.playerId,
+    kind: obligation.kind ?? "verification",
+    tournamentId: obligation.tournamentId ?? null,
+    sender: verified.sender,
+    recipient: verified.recipient,
+    amountLuna: verified.amountLuna,
+    blockNumber: verified.blockHeight,
+    confirmations: verified.confirmations,
+    verifiedAt: Date.now(),
+  };
+}
