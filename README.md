@@ -231,6 +231,110 @@ To play on-chain instead, see [Playing on GenLayer](#playing-on-genlayer).
 
 ---
 
+## Nimiq production setup
+
+ChainMate's paid tournaments move **real NIM**: players pay entry fees from a
+Nimiq Pay wallet, the server verifies the on-chain transaction, and winners
+are paid from a treasury node. This section lists everything required to run
+that flow for real. All variable names below are exactly as read by the code
+(`lib/nimiq/config.ts`, `lib/server/nimiq/payout-config.ts`,
+`lib/server/nimiq/rpc.ts`) — see also `.env.example`.
+
+### 1. Supabase migrations
+
+Run the Nimiq migrations in the Supabase SQL editor, in filename order, after
+the base migrations (0001–0005) already applied for accounts:
+
+| Migration | Creates |
+| --- | --- |
+| `supabase/migrations/0007_nimiq_wallet_binding.sql` | `nimiq_wallet_bindings` + `nimiq_wallet_challenges` (one wallet per player, unique addresses, single-use signed challenges) |
+| `supabase/migrations/0008_nimiq_transactions.sql` | `nimiq_transactions` — the consumption ledger (a transaction hash can pay exactly once, per network) |
+| `supabase/migrations/0009_nimiq_tournament_economy.sql` | `tournament_payouts` — the payout state machine |
+| `supabase/migrations/0010_payout_dispatch.sql` | dispatch metadata + write-ahead `dispatching` state + payout-hash uniqueness |
+
+Until these are applied, wallet binding and paid entries return typed errors
+instead of touching money.
+
+### 2. Storage (KV) requirement
+
+Wallet bindings, the transaction-consumption ledger, the payout ledger and the
+tournament documents all live in the project storage abstraction: **Vercel KV
+(Upstash) when configured, otherwise the built-in `.data` file store**. Supabase
+acts as a durable mirror for recovery and for the cross-instance unique
+constraints. For production (multi-instance serverless), set:
+
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
+
+Without KV the money state is instance-local and does not survive cold starts.
+
+### 3. Verification RPC (entry payments)
+
+The server verifies every entry transaction through your own Nimiq node —
+there is deliberately no public endpoint default:
+
+- `NIMIQ_RPC_URL` — JSON-RPC endpoint of a **full or history node**
+  (`getTransactionByHash` requires the history index; a light node cannot
+  serve it)
+- `NIMIQ_RPC_BASIC_AUTH` — optional, `user:password` (HTTP Basic)
+- `NIMIQ_CONFIRMATIONS_REQUIRED` — confirmations before an entry counts
+  (default `10`)
+
+Run the node on the same network the app pays on (see §5) and keep the RPC
+behind Basic auth / a private network.
+
+### 4. Payout node (treasury)
+
+Payouts are broadcast by a **dedicated Nimiq node whose keystore holds the
+treasury hot key** (imported via `importRawKey` + `unlockAccount`). Configure:
+
+- `NIMIQ_PAYOUT_RPC_URL` — JSON-RPC endpoint of the payout node (unset =
+  payout dispatch is deliberately off, a typed 503)
+- `NIMIQ_PAYOUT_RPC_BASIC_AUTH` — optional, `user:password`
+- `NIMIQ_PAYOUT_TREASURY_ADDRESS` — the NQ… address the node signs from
+- `NIMIQ_PAYOUT_CONFIRMATIONS_REQUIRED` — default `10`
+
+**Security model:** treasury private keys live ONLY inside the payout node's
+keystore. They must never be placed in environment variables, application
+code, the browser bundle, or logs. Keep the payout RPC endpoint private
+(localhost/WireGuard + Basic auth); nothing in the app needs to know a key
+exists.
+
+### 5. Treasury address & network
+
+- `NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS` — (client) the address players pay to
+- `NIMIQ_TREASURY_ADDRESS` — (server) canonical authority for verification;
+  when set it wins over the client-side variable
+- `NEXT_PUBLIC_NIMIQ_NETWORK` — `test` (default) or `main`; must match both
+  nodes' networks
+- `NEXT_PUBLIC_NIMIQ_ENABLED` — `true` to show the Nimiq UI at all
+
+> **Set BOTH treasury variables to the SAME NQ… address.** The client pays
+> using the build-time value; the server credits entries against the server
+> value. A mismatch means real payments land in an address the server refuses
+> to credit. Payout dispatch independently fails closed if its treasury
+> address diverges.
+
+The default network is `test` (TestAlbatross, networkId 5) so a misconfiguration
+can never point money code at mainnet. For mainnet (networkId 42) set
+`NEXT_PUBLIC_NIMIQ_NETWORK=main` and run both nodes on mainnet.
+
+### 6. Nimiq Pay (client environment)
+
+The wallet UX runs inside the **Nimiq Pay mini-app host** — the SDK detects
+the injected provider at page load. In a plain browser tab the app correctly
+reports "wallet unavailable" and paid entry stays disabled; free tournaments
+never require a wallet.
+
+### 7. Rehearse on testnet first
+
+Testnet NIM is free from the faucet (`https://faucet.pos.nimiq-testnet.com`),
+so run the complete flow — link wallet → paid entry → verification →
+tournament → payout dispatch → on-chain verification — with
+`NEXT_PUBLIC_NIMIQ_NETWORK=test` before touching mainnet.
+
+---
+
 ## Playing on GenLayer
 
 The smart contract lives in [`contracts/chainmate.py`](contracts/chainmate.py)

@@ -27,8 +27,18 @@ export type { ErrorResponse, SignatureResult } from "@nimiq/mini-app-sdk";
 
 /** Normalized failure — what ErrorResponse and thrown Errors both become. */
 export interface NimiqWalletError {
-  kind: "timeout" | "user-rejected" | "provider" | "unknown";
+  kind: "timeout" | "user-rejected" | "provider" | "no-accounts" | "unknown";
   message: string;
+}
+
+/** Thrown by pickWalletAccount when the wallet reports no accounts. */
+export class NimiqNoAccountsError extends Error {
+  constructor() {
+    super(
+      "No Nimiq account is available in this wallet — create one in Nimiq Pay and try again.",
+    );
+    this.name = "NimiqNoAccountsError";
+  }
 }
 
 /** Discriminated result — the shape every wrapper function returns. */
@@ -94,6 +104,53 @@ export async function listNimiqAccounts(
   nimiq: Awaited<ReturnType<typeof sdkInit>>,
 ): Promise<NimiqResult<string[]>> {
   return guard(() => nimiq.listAccounts());
+}
+
+/**
+ * Connect action, end to end: init the provider and call listAccounts().
+ *
+ * Returns the provider plus the account the user chose (first account — the
+ * wallet's own ordering — the SDK exposes no explicit selection API), or a
+ * typed error:
+ *
+ *   - provider      → init() failed (host injected nothing usable)
+ *   - no-accounts   → provider is fine but holds zero accounts: a REAL state
+ *                     the UI must show ("create an account in Nimiq Pay"),
+ *                     not silently treat as a generic failure
+ *   - user-rejected / timeout / provider — from listAccounts() itself
+ *
+ * `deps.init` is a test seam: production callers omit it and get the real
+ * SDK init().
+ */
+export async function pickWalletAccount(
+  timeoutMs = 10_000,
+  deps: {
+    init?: (options?: { timeout?: number }) => Promise<
+      Awaited<ReturnType<typeof sdkInit>>
+    >;
+  } = {},
+): Promise<
+  NimiqResult<{ nimiq: Awaited<ReturnType<typeof sdkInit>>; account: string }>
+> {
+  const initFn = deps.init ?? sdkInit;
+  const connected = await guard(() => initFn({ timeout: timeoutMs }));
+  if (!connected.ok) {
+    return { ok: false, error: connected.error };
+  }
+  const accounts = await guard(() => connected.value.listAccounts());
+  if (!accounts.ok) {
+    return { ok: false, error: accounts.error };
+  }
+  if (accounts.value.length === 0) {
+    return {
+      ok: false,
+      error: {
+        kind: "no-accounts",
+        message: new NimiqNoAccountsError().message,
+      },
+    };
+  }
+  return { ok: true, value: { nimiq: connected.value, account: accounts.value[0] } };
 }
 
 /** Ask the wallet to sign a message (string or { message, isHex }). */

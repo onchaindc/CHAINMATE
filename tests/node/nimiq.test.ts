@@ -36,6 +36,7 @@ import {
 import {
   listNimiqAccounts,
   normalizeNimiqError,
+  pickWalletAccount,
   sendNimiqBasicTransaction,
   signNimiqMessage,
 } from "@/lib/nimiq/miniapp";
@@ -46,6 +47,12 @@ import {
   getTransactionByHash,
   sendBasicTransaction,
 } from "@/lib/server/nimiq/rpc";
+import { isNimiqEnabled } from "@/lib/nimiq/flag";
+import { init as sdkInit } from "@nimiq/mini-app-sdk";
+import {
+  classifyProviderState,
+  hasNimiqHost,
+} from "@/hooks/use-nimiq";
 
 /* ------------------------------------------------------------------ */
 /* format.ts — exact money                                             */
@@ -480,4 +487,135 @@ test("no bigint value ever reaches JSON.stringify (the exact pre-fix failure)", 
   assert.equal(hash, "f".repeat(64));
   const params = (lastBody?.params ?? null) as unknown[] | null;
   assert.equal(params?.[2], Number.MAX_SAFE_INTEGER);
+});
+
+/* ------------------------------------------------------------------ */
+/* flag.ts — wallet UI must be reachable by default                    */
+/* ------------------------------------------------------------------ */
+
+test("Nimiq feature flag defaults ON when the env var is unset", () => {
+  const saved = process.env.NEXT_PUBLIC_NIMIQ_ENABLED;
+  try {
+    delete process.env.NEXT_PUBLIC_NIMIQ_ENABLED;
+    assert.equal(
+      isNimiqEnabled(),
+      true,
+      "an unset flag must NOT hide the Connect Nimiq Wallet UI",
+    );
+  } finally {
+    if (saved === undefined) delete process.env.NEXT_PUBLIC_NIMIQ_ENABLED;
+    else process.env.NEXT_PUBLIC_NIMIQ_ENABLED = saved;
+  }
+});
+
+test("Nimiq feature flag: explicit enable, aliases, and opt-outs", () => {
+  const saved = process.env.NEXT_PUBLIC_NIMIQ_ENABLED;
+  try {
+    for (const on of ["true", "TRUE", "1", "yes", "anything-else"]) {
+      process.env.NEXT_PUBLIC_NIMIQ_ENABLED = on;
+      assert.equal(isNimiqEnabled(), true, `"${on}" enables`);
+    }
+    for (const off of ["false", "FALSE", "0", "off", "no", " Off "]) {
+      process.env.NEXT_PUBLIC_NIMIQ_ENABLED = off;
+      assert.equal(isNimiqEnabled(), false, `"${off}" disables`);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.NEXT_PUBLIC_NIMIQ_ENABLED;
+    else process.env.NEXT_PUBLIC_NIMIQ_ENABLED = saved;
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* use-nimiq.ts — provider detection decision core                     */
+/* ------------------------------------------------------------------ */
+
+test("classifyProviderState: init success is available regardless of host", () => {
+  assert.deepEqual(classifyProviderState(true, true, null), {
+    state: "available",
+    error: null,
+  });
+  // Inside a plain browser tab init() cannot succeed without a host, but the
+  // invariant still holds: a working provider means available.
+  assert.deepEqual(classifyProviderState(true, false, null), {
+    state: "available",
+    error: null,
+  });
+});
+
+test("classifyProviderState: failure inside a Nimiq host is retryable error, never web-unavailable", () => {
+  const err = { kind: "timeout" as const, message: "detection timed out" };
+  const settled = classifyProviderState(false, true, err);
+  assert.equal(settled.state, "error");
+  if (settled.state === "error") assert.equal(settled.error, err);
+
+  // No init error text: still an error, with a synthesized message.
+  const bare = classifyProviderState(false, true, null);
+  assert.equal(bare.state, "error");
+  if (bare.state === "error") assert.ok(bare.error.message.length > 0);
+});
+
+test("classifyProviderState: failure with no host is the plain-web case", () => {
+  const err = { kind: "timeout" as const, message: "detection timed out" };
+  const settled = classifyProviderState(false, false, err);
+  assert.equal(settled.state, "web-unavailable");
+  if (settled.state === "web-unavailable") assert.equal(settled.error, null);
+});
+
+test("hasNimiqHost sees neither injection outside a browser", () => {
+  // Node test process: no window at all.
+  assert.equal(hasNimiqHost(), false);
+});
+
+/* ------------------------------------------------------------------ */
+/* miniapp.ts — pickWalletAccount (connect action end to end)          */
+/* ------------------------------------------------------------------ */
+
+test("pickWalletAccount returns the provider and first account", async () => {
+  const provider = fakeProvider({
+    listAccounts: async () => ["NQ07 AAAA", "NQ08 BBBB"],
+  });
+  // Injected init() seam (ESM namespaces are frozen, so no monkey-patching):
+  // the wrapper must hand back exactly what init resolved plus the first
+  // listed account.
+  const picked = await pickWalletAccount(1_000, {
+    init: (async () => provider) as typeof sdkInit,
+  });
+  assert.ok(picked.ok);
+  if (picked.ok) {
+    assert.equal(picked.value.account, "NQ07 AAAA");
+    assert.equal(picked.value.nimiq, provider);
+  }
+});
+
+test("pickWalletAccount reports a typed empty-account state", async () => {
+  const picked = await pickWalletAccount(1_000, {
+    init: (async () =>
+      fakeProvider({ listAccounts: async () => [] })) as typeof sdkInit,
+  });
+  assert.equal(picked.ok, false);
+  if (!picked.ok) {
+    assert.equal(picked.error.kind, "no-accounts");
+    assert.match(picked.error.message, /create one in nimiq pay/i);
+  }
+});
+
+test("pickWalletAccount propagates init and listAccounts failures", async () => {
+  const failed = await pickWalletAccount(1_000, {
+    init: (async () => {
+      throw new Error("Nimiq provider was not injected. Are you running inside a Nimiq app?");
+    }) as typeof sdkInit,
+  });
+  assert.equal(failed.ok, false);
+  if (!failed.ok) assert.equal(failed.error.kind, "provider");
+
+  const rejected = await pickWalletAccount(1_000, {
+    init: (async () =>
+      fakeProvider({
+        listAccounts: async () => ({
+          error: { type: "USER_REJECTION", message: "User denied" },
+        }),
+      })) as typeof sdkInit,
+  });
+  assert.equal(rejected.ok, false);
+  if (!rejected.ok) assert.equal(rejected.error.kind, "user-rejected");
 });

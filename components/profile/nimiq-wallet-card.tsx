@@ -7,9 +7,15 @@
  * shortened bound address, and the real connect/unlink actions driven by the
  * Nimiq Pay provider flow. No fake states — everything rendered comes from
  * the server's binding record or the provider hook.
+ *
+ * The "Connect Nimiq Wallet" action is ALWAYS visible when the wallet is not
+ * bound (never hidden behind provider detection): tapping it either starts
+ * the real connect+bind flow, or — when no provider is reachable — triggers a
+ * provider re-check and shows the exact reason. A permanently disabled
+ * button teaches users nothing and makes Nimiq Pay look broken.
  */
 
-import { Link2, Loader2, Unlink, Wallet } from "lucide-react";
+import { Link2, Loader2, RefreshCw, Unlink, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import {
@@ -27,6 +33,8 @@ const BUSY_PHASES: ReadonlySet<WalletLinkPhase> = new Set([
 export function NimiqWalletCard({ playerId }: { playerId: string }) {
   const {
     provider,
+    providerError,
+    recheckProvider,
     wallet,
     loaded,
     phase,
@@ -36,12 +44,40 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
     unlink,
   } = useNimiqWallet(playerId);
 
-  // Feature off (or mounting before the flag is read): render nothing rather
-  // than a card advertising a disabled capability.
+  // Explicit opt-out only (NEXT_PUBLIC_NIMIQ_ENABLED=false/0/off/no): render
+  // nothing rather than a card advertising a disabled capability. An unset
+  // flag does NOT hide the card — the wallet must be connectable by default.
   if (!NIMIQ_ENABLED) return null;
 
   const busy = BUSY_PHASES.has(phase);
   const connected = wallet !== null;
+
+  // Detecting: not yet actionable. Unavailable (explicit config opt-out):
+  // no action exists. Everything else — including a failed detection inside
+  // Nimiq Pay — must keep the Connect button tappable so the user can retry.
+  const connectDisabled = busy || provider === "detecting" || provider === "unavailable";
+
+  const onConnect = () => {
+    setError(null);
+    if (provider === "available") {
+      void link();
+      return;
+    }
+    // web-unavailable / error: re-run detection first — inside Nimiq Pay a
+    // second attempt frequently succeeds once the host finished injecting.
+    recheckProvider();
+  };
+
+  const providerHint =
+    provider === "web-unavailable"
+      ? "Open ChainMate inside Nimiq Pay to connect your wallet."
+      : provider === "unavailable"
+        ? "Nimiq is disabled on this deployment."
+        : provider === "detecting"
+          ? "Looking for the Nimiq provider…"
+          : provider === "error"
+            ? (providerError?.message ?? "Nimiq wallet could not be reached.")
+            : null;
 
   return (
     <Panel className="mt-4 animate-fade-in-up px-4 py-3.5 [animation-delay:80ms]">
@@ -87,7 +123,7 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
             Unlink
           </Button>
         ) : (
-          <Button size="sm" disabled={busy || provider !== "available"} onClick={() => void link()}>
+          <Button size="sm" disabled={connectDisabled} onClick={onConnect}>
             {busy ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -96,7 +132,7 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
             ) : (
               <>
                 <Link2 className="h-3.5 w-3.5" aria-hidden />
-                Connect
+                Connect Nimiq Wallet
               </>
             )}
           </Button>
@@ -121,16 +157,20 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
         </div>
       )}
 
-      {provider !== "available" && !connected && (
-        <p className="mt-2 text-2xs text-muted-foreground">
-          {provider === "web-unavailable"
-            ? "Open ChainMate inside Nimiq Pay to connect your wallet."
-            : provider === "unavailable"
-              ? "Nimiq is disabled on this deployment."
-              : provider === "detecting"
-                ? "Looking for the Nimiq provider…"
-                : "Nimiq wallet could not be reached."}
-        </p>
+      {providerHint && !connected && (
+        <p className="mt-2 text-2xs text-muted-foreground">{providerHint}</p>
+      )}
+
+      {/* Retry affordance whenever detection failed but a host was seen. */}
+      {provider === "error" && !connected && !busy && (
+        <button
+          type="button"
+          onClick={recheckProvider}
+          className="mt-1.5 flex items-center gap-1 text-2xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden />
+          Retry connection
+        </button>
       )}
 
       {error && (

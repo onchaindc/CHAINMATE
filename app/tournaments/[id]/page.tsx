@@ -712,11 +712,23 @@ function PaidEntryPanel({
           {!entry.wallet.wallet ? (
             <Button
               size="sm"
-              disabled={entry.wallet.phase === "awaiting-wallet" || entry.wallet.phase === "verifying"}
-              onClick={() => void entry.wallet.link()}
+              disabled={
+                entry.wallet.phase === "awaiting-wallet" ||
+                entry.wallet.phase === "verifying"
+              }
+              onClick={() => {
+                if (entry.wallet.provider === "available") {
+                  void entry.wallet.link();
+                  return;
+                }
+                // Not available (web-unavailable / error): re-run detection —
+                // inside Nimiq Pay a second attempt often succeeds once the
+                // host finished injecting the provider.
+                entry.wallet.recheckProvider();
+              }}
             >
               <Wallet aria-hidden />
-              Link Nimiq wallet
+              Connect Nimiq Wallet
             </Button>
           ) : (
             <Button

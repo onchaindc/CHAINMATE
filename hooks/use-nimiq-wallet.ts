@@ -13,8 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
-  connectNimiq,
-  listNimiqAccounts,
+  pickWalletAccount,
   signNimiqMessage,
   type NimiqWalletError,
 } from "@/lib/nimiq/miniapp";
@@ -97,7 +96,9 @@ export function useNimiqWallet(playerId: string) {
         setError(
           provider.state === "web-unavailable"
             ? "Open ChainMate inside Nimiq Pay to connect your wallet."
-            : "Nimiq wallet is not available right now.",
+            : provider.state === "error" && provider.error
+              ? provider.error.message
+              : "Nimiq wallet is not available right now.",
         );
         setPhase("error");
         return;
@@ -118,16 +119,15 @@ export function useNimiqWallet(playerId: string) {
           body: JSON.stringify({ playerId }),
         });
 
-        // 2. Real wallet signature over the exact message bytes.
-        const connected = await connectNimiq();
-        if (!connected.ok) {
-          throw new Error(connected.error.message);
+        // 2. Connect the real wallet provider: init() + listAccounts(), with
+        //    the empty-account state surfaced as its own typed error.
+        const picked = await pickWalletAccount();
+        if (!picked.ok) {
+          throw new Error(picked.error.message);
         }
-        const accounts = await listNimiqAccounts(connected.value);
-        if (!accounts.ok) throw new Error(accounts.error.message);
-        const displayAccount = accounts.value[0];
+        const { nimiq: connected, account: displayAccount } = picked.value;
 
-        const signed = await signNimiqMessage(connected.value, {
+        const signed = await signNimiqMessage(connected, {
           message: challenge.message,
         });
         if (!signed.ok) {
@@ -160,7 +160,7 @@ export function useNimiqWallet(playerId: string) {
         setPhase("error");
       }
     },
-    [playerId, provider.state],
+    [playerId, provider.state, provider.error],
   );
 
   const unlink = useCallback(async () => {
