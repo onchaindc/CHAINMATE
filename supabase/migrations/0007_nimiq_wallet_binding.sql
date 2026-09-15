@@ -34,7 +34,7 @@ create index if not exists nimiq_wallet_bindings_network_idx
 -- random (32 bytes, hex-encoded), bound to one player + one network, and
 -- consumed exactly once within its short expiry window. Only the service role
 -- reads/writes this table: RLS is enabled with NO policies, so anon and
- * authenticated clients are denied while the API (service key) proceeds.
+-- authenticated clients are denied while the API (service key) proceeds.
 -- ---------------------------------------------------------------------------
 create table if not exists public.nimiq_wallet_challenges (
   nonce text primary key,

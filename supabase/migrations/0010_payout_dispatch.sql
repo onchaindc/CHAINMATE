@@ -41,6 +41,8 @@ alter table public.tournament_payouts
 --    (0009 declared the check inline, so its name is generated — look it up.)
 -- ---------------------------------------------------------------------------
 do $$
+declare
+  r record;
 begin
   if not exists (
     select 1 from pg_constraint
