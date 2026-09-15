@@ -44,6 +44,7 @@ import {
   getAccountByAddress,
   getBlockNumber,
   getTransactionByHash,
+  sendBasicTransaction,
 } from "@/lib/server/nimiq/rpc";
 
 /* ------------------------------------------------------------------ */
@@ -254,7 +255,6 @@ let serverUrl = "";
 let lastAuthHeader: string | null = null;
 let lastBody: { method: string; params: unknown } | null = null;
 let responseMode: "ok" | "rpc-error" | "http-500" | "slow" | "garbage" = "ok";
-
 before(async () => {
   server = createServer((req: IncomingMessage, res) => {
     let raw = "";
@@ -282,6 +282,7 @@ before(async () => {
         result = { address: (parsed.params as string[])[0], balance: "1500000" };
       else if (parsed.method === "getTransactionByHash")
         result = { hash: (parsed.params as string[])[0], from: "NQ07 F", to: "NQ07 T", value: "100000" };
+      else if (parsed.method === "sendBasicTransaction") result = "f".repeat(64);
       respond({ jsonrpc: "2.0", id: 1, result });
     });
   });
@@ -375,4 +376,108 @@ test("with no URL anywhere the client refuses rather than guessing an endpoint",
     if (saved === undefined) delete process.env.NIMIQ_RPC_URL;
     else process.env.NIMIQ_RPC_URL = saved;
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* sendBasicTransaction — bigint → JSON-number wire conversion          */
+/* ------------------------------------------------------------------ */
+
+test("sendBasicTransaction serializes exact luna bigints as JSON numbers positionally", async () => {
+  const hash = await sendBasicTransaction(
+    "NQ07 SENDER 0000 0000 0000 0000 0000 0000 0000 00",
+    "NQ07 RECIPI 0000 0000 0000 0000 0000 0000 0000 00",
+    1_500_000n,
+    138n,
+    123_456,
+    { url: serverUrl, timeoutMs: 2_000 },
+  );
+  assert.equal(hash, "f".repeat(64));
+  // The wire params must be numbers — JSON has no bigint — and the order
+  // must remain positional: [wallet, recipient, value, fee, vsh].
+  assert.equal(lastBody?.method, "sendBasicTransaction");
+  const params = lastBody?.params as unknown[];
+  assert.equal(typeof params[2], "number");
+  assert.equal(params[2], 1_500_000);
+  assert.equal(typeof params[3], "number");
+  assert.equal(params[3], 138);
+  assert.equal(params[4], 123_456);
+});
+
+test("sendBasicTransaction rejects unsafe luna values BEFORE any RPC request", async () => {
+  lastBody = null;
+  const unsafe = BigInt(Number.MAX_SAFE_INTEGER) + 1n; // 2^53 — beyond the node's Coin range
+  await assert.rejects(
+    () =>
+      sendBasicTransaction(
+        "NQ07 SENDER 0000 0000 0000 0000 0000 0000 0000 00",
+        "NQ07 RECIPI 0000 0000 0000 0000 0000 0000 0000 00",
+        unsafe,
+        0n,
+        1,
+        { url: serverUrl, timeoutMs: 2_000 },
+      ),
+    (err: unknown) =>
+      err instanceof NimiqRpcError && /exceeds the JSON-safe integer range/.test(err.message),
+  );
+  await assert.rejects(
+    () =>
+      sendBasicTransaction(
+        "NQ07 SENDER 0000 0000 0000 0000 0000 0000 0000 00",
+        "NQ07 RECIPI 0000 0000 0000 0000 0000 0000 0000 00",
+        1n,
+        unsafe,
+        1,
+        { url: serverUrl, timeoutMs: 2_000 },
+      ),
+    (err: unknown) => err instanceof NimiqRpcError && /Transaction fee/.test(err.message),
+  );
+  // Nothing reached the wire — the guard fires before the HTTP request.
+  assert.equal(lastBody, null);
+});
+
+test("sendBasicTransaction rejects negative luna and invalid vsh before RPC", async () => {
+  lastBody = null;
+  await assert.rejects(
+    () =>
+      sendBasicTransaction(
+        "NQ07 S",
+        "NQ07 R",
+        -1n,
+        0n,
+        1,
+        { url: serverUrl, timeoutMs: 2_000 },
+      ),
+    (err: unknown) => err instanceof NimiqRpcError && /Transaction value must be non-negative/.test(err.message),
+  );
+  await assert.rejects(
+    () =>
+      sendBasicTransaction(
+        "NQ07 S",
+        "NQ07 R",
+        1n,
+        0n,
+        1.5,
+        { url: serverUrl, timeoutMs: 2_000 },
+      ),
+    (err: unknown) => err instanceof NimiqRpcError && /validityStartHeight/.test(err.message),
+  );
+  assert.equal(lastBody, null);
+});
+
+test("no bigint value ever reaches JSON.stringify (the exact pre-fix failure)", async () => {
+  // Pre-fix, this call threw 'Do not know how to serialize a BigInt' inside
+  // rpcCall. The wire conversion is proven by the happy path above; here we
+  // pin the failure mode: a MAX_SAFE_INTEGER amount serializes cleanly and
+  // the node stub answers, so the full path completes without a TypeError.
+  const hash = await sendBasicTransaction(
+    "NQ07 S",
+    "NQ07 R",
+    BigInt(Number.MAX_SAFE_INTEGER),
+    0n,
+    42,
+    { url: serverUrl, timeoutMs: 2_000 },
+  );
+  assert.equal(hash, "f".repeat(64));
+  const params = (lastBody?.params ?? null) as unknown[] | null;
+  assert.equal(params?.[2], Number.MAX_SAFE_INTEGER);
 });

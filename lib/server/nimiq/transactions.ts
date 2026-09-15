@@ -42,12 +42,15 @@ import {
 
 /**
  * The real node response carries fields beyond 1A's minimal interface
- * (execution flags, networkId, and a nullable block height while pending).
- * Declared structurally HERE rather than in 1A so Phase 1A stays untouched.
+ * (the flattened executionResult, networkId, and a nullable block height
+ * while pending). Declared structurally HERE rather than in 1A so Phase 1A
+ * stays untouched. `executionResult` is the current RPC's authoritative
+ * execution verdict (ExecutedTransaction.executionResult, flattened onto the
+ * transaction object by the node).
  */
 interface NimiqTxWithProof extends Omit<NimiqRpcTransaction, "blockNumber"> {
   blockNumber?: number | null;
-  flags?: number;
+  executionResult?: unknown;
   networkId?: number;
 }
 type GetTxByHash = (
@@ -431,10 +434,16 @@ async function verifyOnChain(
       "Transaction exists but is not yet included in a block",
     );
   }
-  const executionFailed =
-    // Nimiq RPC: a failed/partially-failed execution carries flags bit 1 (0b10).
-    typeof tx.flags === "number" && (tx.flags & 0b10) !== 0;
-  if (executionFailed) {
+  // Execution verdict comes from the current RPC's explicit `executionResult`
+  // field (the old flags-bit heuristic misread the protocol's SIGNALING flag).
+  // Fail closed: a response without a boolean verdict can never verify.
+  if (typeof tx.executionResult !== "boolean") {
+    throw new NimiqTxError(
+      "malformed-rpc-response",
+      "Node response has no executionResult — execution outcome cannot be established, refusing verification",
+    );
+  }
+  if (!tx.executionResult) {
     throw new NimiqTxError("failed-transaction", "Transaction execution failed on-chain");
   }
 

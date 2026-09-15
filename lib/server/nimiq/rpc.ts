@@ -201,6 +201,26 @@ export interface SendBasicTransactionResult {
   hash: string;
 }
 
+/**
+ * The node's Coin type accepts JSON numbers up to 2^53 − 1 (its deserializer
+ * rejects anything ≥ 2^53), and JSON itself cannot carry bigint values —
+ * JSON.stringify throws "Do not know how to serialize a BigInt". Convert an
+ * exact luna bigint to a Number at the wire boundary ONLY, after proving the
+ * conversion is lossless. Anything outside the safe range is rejected here,
+ * before any HTTP request is made.
+ */
+function lunaToWire(luna: bigint, name: string): number {
+  if (luna < 0n) {
+    throw new NimiqRpcError(`${name} must be non-negative`);
+  }
+  if (luna > Number.MAX_SAFE_INTEGER) {
+    throw new NimiqRpcError(
+      `${name} ${luna} exceeds the JSON-safe integer range (2^53 - 1 luna) — refusing a lossy conversion`,
+    );
+  }
+  return Number(luna);
+}
+
 export async function sendBasicTransaction(
   wallet: string,
   recipient: string,
@@ -209,15 +229,16 @@ export async function sendBasicTransaction(
   validityStartHeight: number,
   overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
 ): Promise<string> {
-  if (valueLuna < 0n || feeLuna < 0n) {
-    throw new NimiqRpcError("Transaction value and fee must be non-negative");
-  }
+  // Value and fee cross as JSON numbers (the node's Coin wire type) — the
+  // bigint API stays at this function's boundary, serialization is exact.
+  const value = lunaToWire(valueLuna, "Transaction value");
+  const fee = lunaToWire(feeLuna, "Transaction fee");
   if (!Number.isSafeInteger(validityStartHeight) || validityStartHeight < 0) {
     throw new NimiqRpcError("validityStartHeight must be a non-negative safe integer");
   }
   const hash = await rpcCall<string>(
     "sendBasicTransaction",
-    [wallet, recipient, valueLuna, feeLuna, validityStartHeight],
+    [wallet, recipient, value, fee, validityStartHeight],
     overrides,
   );
   if (typeof hash !== "string" || !/^[0-9a-fA-F]{64}$/.test(hash)) {

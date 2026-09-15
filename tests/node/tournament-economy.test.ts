@@ -126,7 +126,7 @@ function makeWorld(opts?: { feeLuna?: bigint | null }) {
     },
   };
 
-  function validTx(over: Partial<{ value: string; to: string; from: string; flags: number; networkId: number; blockNumber: number | null }> = {}) {
+  function validTx(over: Partial<{ value: string; to: string; from: string; executionResult: boolean; networkId: number; blockNumber: number | null }> = {}) {
     seq += 1;
     return {
       hash: `a${seq.toString().padStart(63, "0")}`,
@@ -134,7 +134,7 @@ function makeWorld(opts?: { feeLuna?: bigint | null }) {
       to: TREASURY,
       value: FEE_LUNA.toString(),
       blockNumber: 990,
-      flags: 0,
+      executionResult: true,
       networkId: 5,
       ...over,
     };
@@ -328,7 +328,7 @@ test("failed execution and insufficient confirmations are retryable rejections",
   const w = makeWorld();
   const h1 = w.validTx().hash;
   w.deps.rpc = {
-    getTransactionByHash: async (hash: string) => ({ ...w.validTx({ flags: 0b10 }), hash }),
+    getTransactionByHash: async (hash: string) => ({ ...w.validTx({ executionResult: false }), hash }),
     getBlockNumber: async () => 1000,
   };
   await assert.rejects(

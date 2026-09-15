@@ -266,11 +266,12 @@ test("an expired WAL intent (vsh older than the validity window) fails safely fo
   const stale = plannedPayout({
     status: "dispatching",
     senderAddress: TREASURY,
-    validityStartHeight: 700, // height 1000 → age 300 > 180
+    // height 11,000 → age 10,000 > 7,200 (the real 120×60 validity window)
+    validityStartHeight: 1_000,
     dispatchAttempts: 1,
   });
   const { store } = memPayoutStore([stale]);
-  const node = makeNode({ height: 1000 });
+  const node = makeNode({ height: 11_000 });
   const signer = signerFrom(node);
   await assert.rejects(
     () => dispatch.dispatchPayout("tour_3b", "acct_w", { store, signer }),
@@ -283,6 +284,62 @@ test("an expired WAL intent (vsh older than the validity window) fails safely fo
   const row = await store.get("tour_3b", "acct_w");
   assert.equal(row?.status, "failed");
   assert.match(row?.failureReason ?? "", /expired/i);
+});
+
+test("a WAL intent inside the 7,200-block validity window still re-broadcasts (deterministic recovery)", async () => {
+  // Age 7,199 blocks: still mineable under the current Nimiq policy
+  // (transaction_validity_window 120 batches × 60 blocks per batch), so the
+  // ONLY safe action is the deterministic re-broadcast with the recorded vsh
+  // — failing it here would be premature and could orphan broadcast money.
+  const stillValid = plannedPayout({
+    status: "dispatching",
+    senderAddress: TREASURY,
+    validityStartHeight: 1_000 - 7_199, // height 1000 → age 7,199
+    dispatchAttempts: 1,
+  });
+  const { store } = memPayoutStore([stillValid]);
+  const node = makeNode({ height: 1_000 });
+  const sent = await dispatch.dispatchPayout("tour_3b", "acct_w", { store, signer: signerFrom(node) });
+  assert.equal(sent.status, "sent");
+  assert.equal(node.broadcasts.length, 1);
+  // Recovery re-broadcasts with the SAME recorded vsh → byte-identical tx.
+  assert.equal(node.broadcasts[0]?.vsh, 1_000 - 7_199);
+});
+
+test("the 7,200-block threshold is the exact boundary: age 7,200 re-broadcasts, 7,201 re-plans", async () => {
+  // age === threshold → `age > VSH_STALENESS_BLOCKS` is false → re-broadcast.
+  const boundary = plannedPayout({
+    status: "dispatching",
+    senderAddress: TREASURY,
+    validityStartHeight: 1_000 - 7_200, // height 1000 → age 7,200
+    dispatchAttempts: 1,
+  });
+  {
+    const { store } = memPayoutStore([boundary]);
+    const node = makeNode({ height: 1_000 });
+    const sent = await dispatch.dispatchPayout("tour_3b", "acct_w", { store, signer: signerFrom(node) });
+    assert.equal(sent.status, "sent");
+    assert.equal(node.broadcasts.length, 1);
+  }
+  // age = threshold + 1 → provably dead → typed failure for re-plan.
+  const pastWindow = plannedPayout({
+    status: "dispatching",
+    senderAddress: TREASURY,
+    validityStartHeight: 1_000 - 7_201, // height 1000 → age 7,201
+    dispatchAttempts: 1,
+  });
+  {
+    const { store } = memPayoutStore([pastWindow]);
+    const node = makeNode({ height: 1_000 });
+    await assert.rejects(
+      () => dispatch.dispatchPayout("tour_3b", "acct_w", { store, signer: signerFrom(node) }),
+      (err: unknown) =>
+        err instanceof payouts.PayoutTransitionError &&
+        err.status === 409 &&
+        /expired/i.test(err.message),
+    );
+    assert.equal(node.broadcasts.length, 0);
+  }
 });
 
 test("incomplete WAL intent cannot be recovered — typed failure, no broadcast", async () => {
@@ -463,7 +520,7 @@ function makeVerifyDeps(opts: {
     to: string;
     value: string;
     blockNumber: number | null;
-    flags: number;
+    executionResult: boolean;
   }> | null;
   height?: number;
   confirmationsRequired?: number;
@@ -479,7 +536,7 @@ function makeVerifyDeps(opts: {
         to: opts.payout.destinationAddress ?? WINNER,
         value: opts.payout.amountLuna,
         blockNumber: 991,
-        flags: 0,
+        executionResult: true,
         networkId: 5,
         ...(opts.onChainTx ?? {}),
       };
@@ -531,7 +588,7 @@ test("verification rejects a wrong recipient / wrong value / failed execution", 
   for (const bad of [
     { to: "NQ11" + "0".repeat(32) }, // wrong recipient
     { value: "1" }, // wrong value
-    { flags: 0b10 }, // failed execution
+    { executionResult: false }, // failed execution
   ]) {
     const sent = plannedPayout({ status: "sent", payoutTxHash: "e".repeat(64), sentAt: 1 });
     const { store } = memPayoutStore([sent]);

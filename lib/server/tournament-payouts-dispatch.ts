@@ -36,12 +36,15 @@
  * Deterministic re-broadcast with a reused vsh is the only sound strategy,
  * and it needs no scan at all.
  *
- * VSH LIFECYCLE BOUND: a vsh's validity window on Nimiq Albatross is 120
- * blocks (+60 batch protection, primitives/src/policy.rs). Once the chain
- * has moved ~180 blocks past a WAL vsh, that transaction can NEVER be
+ * VSH LIFECYCLE BOUND: a vsh's validity window on Nimiq Albatross is
+ * Policy::TRANSACTION_VALIDITY_WINDOW batches × BLOCKS_PER_BATCH blocks —
+ * 120 × 60 = 7,200 blocks (core-rs-albatross primitives/src/policy.rs,
+ * identical for MainAlbatross and TestAlbatross). Once the chain has moved
+ * past that window from a WAL vsh, a transaction carrying it can NEVER be
  * included — a stuck 'dispatching' row older than that is provably dead and
  * safe to fail for a re-plan with a FRESH vsh (nothing from it is in flight
- * on-chain).
+ * on-chain). Re-planning EARLIER than this would be unsafe: a tx broadcast
+ * under the recorded vsh could still be sitting in mempools waiting to mine.
  */
 
 import {
@@ -68,7 +71,7 @@ import {
 } from "@/lib/server/tournament-payouts";
 
 /** Re-plan a stuck WAL row once the chain is this far past its vsh. */
-const VSH_STALENESS_BLOCKS = 180; // 120 validity window + 60 batch protection
+const VSH_STALENESS_BLOCKS = 7_200; // 120 validity-window batches × 60 blocks per batch
 
 /** Payout fee: 0 luna (Albatross has no protocol-mandated minimum fee). */
 const PAYOUT_FEE_LUNA = 0n;
@@ -336,7 +339,7 @@ async function dispatchLocked(
     const age = (await currentHeight(deps, signer)) - payout.validityStartHeight;
     if (age > VSH_STALENESS_BLOCKS) {
       // The WAL vsh is provably dead: nothing broadcast under it can ever
-      // mine (120-block validity window + 60-block batch protection).
+      // mine (120-batch × 60-block validity window has fully passed).
       const failed: PayoutRecord = {
         ...payout,
         status: "failed",
@@ -565,8 +568,17 @@ export async function verifyOutgoingPayout(
       "Payout transaction amount does not match the payout record",
     );
   }
-  const flags = (tx as { flags?: unknown }).flags;
-  if (typeof flags === "number" && (flags & 0b10) !== 0) {
+  // Execution verdict from the current RPC's explicit `executionResult`
+  // field (the old flags-bit heuristic misread the protocol's SIGNALING
+  // flag). Fail closed: no boolean verdict → malformed response.
+  const executionResult = (tx as { executionResult?: unknown }).executionResult;
+  if (typeof executionResult !== "boolean") {
+    throw new PayoutDispatchError(
+      "malformed-response",
+      "Node response has no executionResult — payout outcome cannot be established, refusing verification",
+    );
+  }
+  if (!executionResult) {
     throw new PayoutDispatchError(
       "broadcast-failed",
       "Payout transaction failed on-chain execution",

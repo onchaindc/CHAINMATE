@@ -54,7 +54,7 @@ const PLAYER = "acct_p1";
 
 let seq = 0;
 
-function validTx(over: Partial<{ value: string; to: string; from: string; flags: number; networkId: number; blockNumber: number | null }> = {}) {
+function validTx(over: Partial<{ value: string; to: string; from: string; executionResult: boolean; networkId: number; blockNumber: number | null }> = {}) {
   seq += 1;
   return {
     hash: `a${seq.toString().padStart(63, "0")}`,
@@ -62,7 +62,7 @@ function validTx(over: Partial<{ value: string; to: string; from: string; flags:
     to: ENTRY_TREASURY,
     value: FEE_LUNA.toString(),
     blockNumber: 990,
-    flags: 0,
+    executionResult: true,
     networkId: 5,
     ...over,
   };
@@ -607,7 +607,7 @@ test("M1 (3B): payout verification refuses missing/mismatched network identity",
       to: LINKED,
       value: "1000",
       blockNumber: 991,
-      flags: 0,
+      executionResult: true,
       ...over,
     })) as unknown as typeof import("@/lib/server/nimiq/rpc").getTransactionByHash,
     getBlockNumber: (async () => 1000) as unknown as typeof import("@/lib/server/nimiq/rpc").getBlockNumber,

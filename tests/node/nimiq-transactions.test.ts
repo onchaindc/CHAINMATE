@@ -30,7 +30,7 @@ interface FakeTx {
   to: string;
   value: string;
   blockNumber: number | null;
-  flags?: number;
+  executionResult?: boolean;
   networkId?: number;
 }
 
@@ -121,7 +121,7 @@ function validTx(overrides: Partial<FakeTx> = {}): FakeTx {
     to: TREASURY_ADDRESS,
     value: "500000",
     blockNumber: 991, // currentHeight 1000 → 10 confirmations
-    flags: 0,
+    executionResult: true,
     networkId: 5,
     ...overrides,
   };
@@ -216,10 +216,31 @@ test("malformed RPC payloads map to transaction-not-found or malformed-rpc-respo
 /* ------------------------------------------------------------------ */
 
 test("failed on-chain execution is rejected", async () => {
-  const { deps } = makeDeps({ onChainTx: validTx({ flags: 0b10 }) });
+  const { deps } = makeDeps({ onChainTx: validTx({ executionResult: false }) });
   await assert.rejects(
     () => tx.verifyIncomingTransaction("3".repeat(64), BASE_OBLIGATION, deps),
     (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "failed-transaction" && err.status === 400,
+  );
+});
+
+test("a missing executionResult verdict fails closed as a malformed RPC response", async () => {
+  const { deps } = makeDeps({ onChainTx: validTx({ executionResult: undefined }) });
+  await assert.rejects(
+    () => tx.verifyIncomingTransaction("3".repeat(64), BASE_OBLIGATION, deps),
+    (err: unknown) =>
+      err instanceof tx.NimiqTxError &&
+      err.kind === "malformed-rpc-response" &&
+      err.status === 502 &&
+      /executionResult/.test(err.message),
+  );
+});
+
+test("a non-boolean executionResult verdict fails closed as a malformed RPC response", async () => {
+  const { deps } = makeDeps({ onChainTx: validTx({ executionResult: "true" as unknown as boolean }) });
+  await assert.rejects(
+    () => tx.verifyIncomingTransaction("3".repeat(64), BASE_OBLIGATION, deps),
+    (err: unknown) =>
+      err instanceof tx.NimiqTxError && err.kind === "malformed-rpc-response" && err.status === 502,
   );
 });
 
