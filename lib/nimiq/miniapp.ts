@@ -113,14 +113,17 @@ const KNOWN_ERROR_PATTERNS: Array<{
   message: string;
 }> = [
   {
-    // Nimiq Pay fails the send when the wallet has not finished syncing the
-    // account/chain ("Failed to send payment transaction: Something went
-    // wrong syncing your account"). The raw string tells the user nothing
-    // actionable — say what actually happened instead.
+    // Nimiq Pay fails the send when its wallet is not on the network the
+    // payment targets ("Failed to send payment transaction: Something went
+    // wrong syncing your account"). Nimiq Pay runs MAINNET by default;
+    // ChainMate pays in TESTNET NIM, where the user's account has no state
+    // unless they switch. Nimiq's official FAQ documents the hidden dev
+    // menu: long-press the Settings button for 10 seconds, switch to
+    // Testnet, then claim funds via "Get free NIM".
     match: /syncing your account/i,
     kind: "provider",
     message:
-      "Nimiq Pay is still syncing your account. Open Nimiq Pay, wait for it to finish syncing (and check your connection), then try again.",
+      "Nimiq Pay is not on the testnet network this tournament pays in. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, then try again.",
   },
 ];
 
