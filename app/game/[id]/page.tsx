@@ -499,6 +499,15 @@ export default function GamePage() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
           {spectator && <Badge variant="secondary">spectating</Badge>}
+          {/* Escape hatch: the game fills the viewport, so a stuck player
+              needs an explicit way out that doesn't depend on browser chrome. */}
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+            Home
+          </Link>
         </div>
       </div>
 
@@ -561,8 +570,12 @@ export default function GamePage() {
           width band with a generous max width of its own, so on desktop you
           glance down to read the moves instead of sharing a column with them. */}
       <div className="flex min-h-0 flex-1 flex-col gap-5">
+        {/* No viewport-height cap on the width: the board is the gameplay, so
+            it fills the page width edge to edge (both ends) and simply grows
+            taller than the fold on shorter screens — the console below stays
+            reachable by scroll, which is exactly what the player asked for. */}
         <div
-          className="mx-auto flex w-full min-w-0 max-w-[min(100%,calc(100dvh-var(--nav-h)-var(--board-chrome)))] flex-col gap-2.5"
+          className="mx-auto flex w-full min-w-0 max-w-[100rem] flex-col gap-2.5"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the

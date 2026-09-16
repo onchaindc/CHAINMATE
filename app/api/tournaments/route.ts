@@ -44,6 +44,8 @@ interface CreateBody {
   maxPlayers?: number;
   swissRounds?: number;
   registrationClosesAt?: number | null;
+  /** Scheduled start (Unix ms) — the event opens registration at this time. */
+  scheduledStartAt?: number | null;
   /** Phase 2B: human NIM string ("5", "1.25") — parsed to exact luna server-side. */
   entryFeeNim?: string;
   /** Phase 2B: prize distribution preset (required when a fee is set). */
@@ -116,6 +118,8 @@ export async function POST(req: NextRequest) {
         typeof body.swissRounds === "number" ? Math.floor(body.swissRounds) : undefined,
       registrationClosesAt:
         typeof body.registrationClosesAt === "number" ? body.registrationClosesAt : null,
+      scheduledStartAt:
+        typeof body.scheduledStartAt === "number" ? body.scheduledStartAt : null,
       entryFeeLuna,
       prizePreset,
     });

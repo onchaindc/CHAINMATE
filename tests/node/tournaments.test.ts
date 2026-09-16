@@ -301,6 +301,61 @@ test("cancellation blocks joins and leaves", async () => {
   assert.ok(!leave.ok);
 });
 
+test("host delete removes a never-started tournament; started events are protected", async () => {
+  const host = pid("h8");
+  const doomed = await makeTournament(host);
+  await engine.transitionTournament(doomed.id, host, "registration");
+  await engine.joinTournament(doomed.id, pid("a"));
+
+  // Only the host can delete.
+  const notHost = await engine.deleteTournament(doomed.id, pid("a"));
+  assert.ok(!notHost.ok);
+
+  const res = await engine.deleteTournament(doomed.id, host);
+  assert.ok(res.ok);
+  const gone = await engine.getTournamentDetail(doomed.id);
+  assert.equal(gone, null);
+  const listed = await engine.listTournaments();
+  assert.ok(!listed.tournaments.some((t) => t.id === doomed.id));
+
+  // A running event cannot be deleted — end or cancel it instead.
+  const live = await makeTournament(host);
+  await startTournament(live, [pid("b"), pid("c")]);
+  const refused = await engine.deleteTournament(live.id, host);
+  assert.ok(!refused.ok);
+});
+
+test("scheduled start: future sits in draft, past due opens on read", async () => {
+  const host = pid("h9");
+  // Validation: past instant refused, and registration must close before start.
+  assert.match(
+    engine.validateTournamentInput({
+      name: "Late", format: "swiss", timeControl: "5 + 0", maxPlayers: 8,
+      scheduledStartAt: Date.now() - 1_000,
+    }) ?? "",
+    /scheduled start must be in the future/,
+  );
+  assert.match(
+    engine.validateTournamentInput({
+      name: "Inverted", format: "swiss", timeControl: "5 + 0", maxPlayers: 8,
+      scheduledStartAt: Date.now() + 60_000,
+      registrationClosesAt: Date.now() + 120_000,
+    }) ?? "",
+    /registration must close before the scheduled start/,
+  );
+
+  // Future schedule: still draft now, and joining is refused.
+  const doc = await makeTournament(host, { scheduledStartAt: Date.now() + 60_000 });
+  assert.equal(doc.status, "draft");
+  assert.ok(doc.scheduledStartAt != null);
+  const early = await engine.joinTournament(doc.id, pid("a"));
+  assert.ok(!early.ok);
+
+  // Host can always open registration manually before the schedule.
+  const opened = await engine.transitionTournament(doc.id, host, "registration");
+  assert.ok(opened.ok);
+});
+
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */

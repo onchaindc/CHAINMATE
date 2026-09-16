@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArrowRight, Crown, Loader2, Search, ShieldCheck, Swords, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { PageHeader } from "@/components/ui/page-header";
+import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { ErrorNote } from "@/components/ui/states";
 import { getGameBackend } from "@/lib/config";
 import { getStore } from "@/lib/store";
@@ -69,6 +69,9 @@ export default function CreateGamePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 py-14 sm:px-6 lg:py-20">
+      <BackLink href="/play" className="mb-4 self-start">
+        Back
+      </BackLink>
       <PageHeader
         align="center"
         eyebrow="New match"

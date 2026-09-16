@@ -59,6 +59,12 @@ export interface TournamentDocument {
   createdAt: number;
   /** When registration closes (null = manual close only). */
   registrationClosesAt: number | null;
+  /**
+   * Scheduled start (Unix ms). When set, the event auto-opens registration
+   * at this instant (DRAFT → REGISTRATION) and the UI counts down to it.
+   * Purely a convenience — the host can still open/start manually earlier.
+   */
+  scheduledStartAt: number | null;
   startedAt: number | null;
   completedAt: number | null;
   /** Current round while in progress (1-based). */
@@ -152,6 +158,7 @@ export interface TournamentIndexEntry {
   maxPlayers: number;
   creatorId: string;
   createdAt: number;
+  scheduledStartAt?: number | null;
   startedAt: number | null;
   completedAt: number | null;
   /** Phase 2B economy fields (additive). */
@@ -175,7 +182,8 @@ async function writeIndex(entries: TournamentIndexEntry[]): Promise<void> {
 }
 
 export async function upsertTournamentIndexEntry(doc: TournamentDocument): Promise<void> {
-  const entries = await readIndex();    const entry: TournamentIndexEntry = {
+  const entries = await readIndex();
+  const entry: TournamentIndexEntry = {
     id: doc.id,
     name: doc.name,
     format: doc.format,
@@ -184,6 +192,7 @@ export async function upsertTournamentIndexEntry(doc: TournamentDocument): Promi
     maxPlayers: doc.maxPlayers,
     creatorId: doc.creatorId,
     createdAt: doc.createdAt,
+    scheduledStartAt: doc.scheduledStartAt,
     startedAt: doc.startedAt,
     completedAt: doc.completedAt,
   };
@@ -253,6 +262,27 @@ export async function writeTournamentDoc(doc: TournamentDocument): Promise<void>
   }
 }
 
+/**
+ * Remove a tournament everywhere: the fast document, its index entry, and
+ * the durable Supabase mirror row (entries/matches/standings cascade or are
+ * ignored — the row is the recovery root, so deleting it removes the event
+ * from every list on the next cold start). Used by the host's Delete action
+ * for drafts/registrations that never started.
+ */
+export async function deleteTournamentDoc(id: string): Promise<void> {
+  await getGameStorage().delete(tournamentKey(id));
+  const entries = (await readIndex()).filter((e) => e.id !== id);
+  await writeIndex(entries);
+  if (supabaseConfigured()) {
+    try {
+      const admin = getSupabaseAdmin();
+      if (admin) await admin.from("tournaments").delete().eq("id", id);
+    } catch {
+      // Mirror is best-effort by design — the fast store stays authoritative.
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Supabase mirror                                                     */
 /* ------------------------------------------------------------------ */
@@ -280,6 +310,7 @@ async function upsertTournamentRow(doc: TournamentDocument): Promise<void> {
       status: doc.status,
       swiss_rounds: doc.swissRounds,
       registration_closes_at: iso(doc.registrationClosesAt),
+      scheduled_start_at: iso(doc.scheduledStartAt),
       started_at: iso(doc.startedAt),
       completed_at: iso(doc.completedAt),
       current_round: doc.currentRound,
@@ -388,6 +419,9 @@ async function listTournamentRowsFromSupabase(): Promise<TournamentDocument[]> {
     createdAt: row.created_at ? new Date(String(row.created_at)).getTime() : Date.now(),
     registrationClosesAt: row.registration_closes_at
       ? new Date(String(row.registration_closes_at)).getTime()
+      : null,
+    scheduledStartAt: row.scheduled_start_at
+      ? new Date(String(row.scheduled_start_at)).getTime()
       : null,
     startedAt: row.started_at ? new Date(String(row.started_at)).getTime() : null,
     completedAt: row.completed_at ? new Date(String(row.completed_at)).getTime() : null,

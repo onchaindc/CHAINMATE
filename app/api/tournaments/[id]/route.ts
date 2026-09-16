@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
+  deleteTournament,
   getTournamentDetail,
   joinTournament,
   leaveTournament,
@@ -44,6 +45,7 @@ interface ActionBody {
     | "start"
     | "complete"
     | "cancel"
+    | "delete"
     | "pair";
   playerId?: string;
 }
@@ -113,6 +115,11 @@ export async function POST(req: NextRequest, { params }: Params) {
         );
         if (!res.ok) return NextResponse.json({ error: res.error }, { status: 409 });
         return NextResponse.json({ ok: true });
+      }
+      case "delete": {
+        const res = await deleteTournament(id, acting.playerId);
+        if (!res.ok) return NextResponse.json({ error: res.error }, { status: 409 });
+        return NextResponse.json({ ok: true, deleted: true });
       }
       case "pair": {
         // Arena only: ask for a pairing while the event runs.

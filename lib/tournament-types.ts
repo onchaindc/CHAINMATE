@@ -167,6 +167,8 @@ export interface TournamentSummary {
   /** Number of non-withdrawn entries (denormalised for the list view). */
   playerCount: number;
   registrationClosesAt: number | null;
+  /** Scheduled start (Unix ms) — countdown shown while it is in the future. */
+  scheduledStartAt?: number | null;
   startedAt: number | null;
   completedAt: number | null;
   createdAt: number;
@@ -217,4 +219,6 @@ export type TournamentCreateError =
   | "timeControl must look like '10 + 0'"
   | "maxPlayers must be an integer 2–128"
   | "swiss rounds must be an integer 1–11"
-  | "registration window invalid";
+  | "registration window invalid"
+  | "scheduled start must be in the future"
+  | "registration must close before the scheduled start";

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowRight,
+  CalendarClock,
   Coins,
   Crown,
   Loader2,
@@ -13,13 +14,14 @@ import {
   ShieldCheck,
   Swords,
   Timer,
+  Trash2,
   Trophy,
   UserMinus,
   UserPlus,
   Wallet,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { PageHeader, SectionLabel } from "@/components/ui/page-header";
+import { BackLink, PageHeader, SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
@@ -73,6 +75,7 @@ function friendlyError(err: unknown): string {
 
 export default function TournamentDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = typeof params.id === "string" ? params.id : "";
   const identity = useIdentity();
 
@@ -204,12 +207,32 @@ export default function TournamentDetailPage() {
     s.status === "registration" && !joined && s.playerCount < s.maxPlayers;
   const canLeave = s.status === "registration" && joined && !entry.busy;
   const full = s.playerCount >= s.maxPlayers;
+  const scheduled = s.scheduledStartAt ?? null;
+  const scheduledFuture = scheduled != null && scheduled > Date.now();
+  const canDelete = isHost && (s.status === "draft" || s.status === "registration");
   const showStandings =
     s.status === "in_progress" || s.status === "completed" || detail.standings.some((r) => r.played > 0);
   const winnerRow = detail.standings.find((r) => r.playerId === s.winnerId);
 
+  /** Host delete: confirm, then remove the event and go back to the list. */
+  const deleteTournament = async () => {
+    if (!window.confirm("Delete this tournament? Players who joined will see it's gone. This cannot be undone.")) return;
+    setBusy("delete");
+    setActionError(null);
+    try {
+      await tournamentApi.action(id, identity.playerId, "delete");
+      router.push("/tournaments");
+    } catch (err) {
+      setActionError(friendlyError(err));
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+      <BackLink href="/tournaments" className="mb-4">
+        Back to tournaments
+      </BackLink>
       {/* ---------- Header ---------- */}
       <PageHeader
         eyebrow={FORMAT_LABEL[s.format]}
@@ -227,7 +250,7 @@ export default function TournamentDetailPage() {
                 Join
               </Button>
             )}
-            {canLeave && !isPaid && (
+            {canLeave && (
               <Button
                 variant="outline"
                 size="sm"
@@ -293,6 +316,12 @@ export default function TournamentDetailPage() {
             Round {s.currentRound ?? 0}/{s.totalRounds}
           </span>
         ) : null}
+        {scheduledFuture && s.status === "draft" && (
+          <span className="inline-flex items-center gap-1 font-sans text-2xs font-semibold uppercase tracking-wider text-primary">
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden />
+            Opens {new Date(scheduled).toLocaleString()}
+          </span>
+        )}
         {s.registrationClosesAt && s.status === "registration" && (
           <span>Closes {new Date(s.registrationClosesAt).toLocaleString()}</span>
         )}
@@ -383,6 +412,22 @@ export default function TournamentDetailPage() {
                 Cancel
               </Button>
             )}
+            {canDelete && (
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={busy !== null}
+                onClick={() => void deleteTournament()}
+                title="Remove this tournament entirely"
+              >
+                {busy === "delete" ? (
+                  <Loader2 className="animate-spin" aria-hidden />
+                ) : (
+                  <Trash2 aria-hidden />
+                )}
+                Delete
+              </Button>
+            )}
             {s.status === "completed" && s.winnerId && (
               <span className="inline-flex items-center gap-1.5 text-sm text-primary">
                 <Crown className="h-4 w-4" aria-hidden />
@@ -453,11 +498,12 @@ export default function TournamentDetailPage() {
         </section>
       )}
 
-      {/* ---------- Standings ---------- */}
+      {/* ---------- Standings — the live tournament leaderboard. Visible as
+          soon as the event goes live and until it is concluded (and after). */}
       {showStandings && (
         <section className="animate-fade-in-up mt-8 [animation-delay:120ms]">
           <SectionLabel live={s.status === "in_progress"}>
-            Standings
+            {s.status === "completed" ? "Final standings" : "Leaderboard"}
             <span className="ml-2 font-sans text-2xs normal-case tracking-normal text-muted-foreground/70">
               {s.format === "knockout" ? "by bracket position" : "1 / ½ / 0"}
             </span>

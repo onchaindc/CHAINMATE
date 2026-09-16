@@ -21,6 +21,7 @@ import {
   roundLabel,
 } from "@/lib/tournament-standings";
 import {
+  deleteTournamentDoc,
   getTournamentDoc,
   listTournamentDocs,
   newMatchId,
@@ -72,6 +73,12 @@ export interface CreateTournamentInput {
   maxPlayers: number;
   swissRounds?: number;
   registrationClosesAt?: number | null;
+  /**
+   * Scheduled start (Unix ms) — when the event should go live. While it is
+   * in the future the tournament sits in DRAFT and opens registration
+   * automatically at that instant; the host can always open it early.
+   */
+  scheduledStartAt?: number | null;
   /** Phase 2B: exact entry fee in luna (omit or 0n for a free tournament). */
   entryFeeLuna?: bigint;
   /** Phase 2B: prize distribution preset — required for paid tournaments. */
@@ -114,6 +121,21 @@ export function validateTournamentInput(
       (input.registrationClosesAt as number) < Date.now())
   ) {
     return "registration window invalid";
+  }
+  if (
+    input.scheduledStartAt !== undefined &&
+    input.scheduledStartAt !== null &&
+    (!Number.isFinite(input.scheduledStartAt) ||
+      (input.scheduledStartAt as number) < Date.now())
+  ) {
+    return "scheduled start must be in the future";
+  }
+  if (
+    input.scheduledStartAt != null &&
+    input.registrationClosesAt != null &&
+    input.registrationClosesAt > input.scheduledStartAt
+  ) {
+    return "registration must close before the scheduled start";
   }
   // Phase 2B economy validation. entryFeeLuna arrives as an exact bigint
   // (already parsed from the human NIM string server-side); 0/absent = free.
@@ -165,6 +187,7 @@ export async function createTournament(
     swissRounds: input.format === "swiss" ? input.swissRounds ?? SWISS_DEFAULT_ROUNDS : null,
     createdAt: now,
     registrationClosesAt: input.registrationClosesAt ?? null,
+    scheduledStartAt: input.scheduledStartAt ?? null,
     startedAt: null,
     completedAt: null,
     currentRound: 0,
@@ -447,6 +470,36 @@ async function leaveTournamentInner(
   entry.leftAt = Date.now();
   await writeTournamentDoc(doc);
   return { ok: true, doc };
+}
+
+/**
+ * Host deletes a tournament that never started (draft or registration).
+ * The event is removed entirely — list, detail, durable mirror — rather
+ * than parked in CANCELLED, because "no longer wish to host" means it
+ * should never have existed. Started events cannot be deleted: their
+ * games and standings are real records.
+ */
+export async function deleteTournament(
+  tournamentId: string,
+  playerId: string,
+): Promise<TransitionResult> {
+  return withTournamentLock(tournamentId, async () => {
+    const doc = await getTournamentDoc(tournamentId);
+    if (!doc) return { ok: false, error: "Tournament not found" };
+    if (doc.creatorId !== playerId) {
+      return { ok: false, error: "Only the host can delete the tournament" };
+    }
+    if (doc.status === "in_progress" || isTournamentTerminal(doc.status)) {
+      return {
+        ok: false,
+        error: doc.status === "in_progress"
+          ? "The tournament is running — end or cancel it instead"
+          : `Tournament is ${doc.status}`,
+      };
+    }
+    await deleteTournamentDoc(tournamentId);
+    return { ok: true, doc };
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1028,6 +1081,41 @@ async function completeTournamentInner(
 /* Reads for the API                                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Open registration for any scheduled tournament whose start time has
+ * arrived (DRAFT → REGISTRATION, host-free). Called from the list and
+ * detail reads, which poll every few seconds — the closest thing this app
+ * has to a background scheduler, and good enough: the event opens within
+ * one poll of its scheduled instant without any cron infrastructure.
+ */
+async function openDueTournaments(): Promise<void> {
+  let docs: TournamentDocument[];
+  try {
+    docs = await listTournamentDocs({ status: "draft", limit: 50 });
+  } catch {
+    return; // reads must never fail because of the scheduler
+  }
+  const now = Date.now();
+  for (const doc of docs) {
+    if (doc.scheduledStartAt == null || doc.scheduledStartAt > now) continue;
+    // Lock under the per-document lock; a host opening it manually first
+    // simply makes this a no-op.
+    try {
+      await withTournamentLock(doc.id, async () => {
+        const fresh = await getTournamentDoc(doc.id);
+        if (!fresh || fresh.status !== "draft") return;
+        if (fresh.scheduledStartAt == null || fresh.scheduledStartAt > Date.now()) return;
+        const won = await transitionTournamentStatus(fresh.id, fresh.status, "registration");
+        if (!won) return;
+        fresh.status = "registration";
+        await writeTournamentDoc(fresh);
+      });
+    } catch {
+      // One bad tournament must not block the rest of the list.
+    }
+  }
+}
+
 export async function getTournamentDetail(
   tournamentId: string,
   viewerId?: string,
@@ -1041,6 +1129,7 @@ export async function getTournamentDetail(
   entryNames: Record<string, string>;
   payouts?: TournamentPayoutLine[];
 } | null> {
+  await openDueTournaments();
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) return null;
   const entrants = activeEntries(doc);
@@ -1126,6 +1215,7 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
     status: doc.status,
     playerCount,
     registrationClosesAt: doc.registrationClosesAt,
+    scheduledStartAt: doc.scheduledStartAt,
     startedAt: doc.startedAt,
     completedAt: doc.completedAt,
     createdAt: doc.createdAt,
@@ -1143,6 +1233,7 @@ export async function listTournaments(opts?: {
   status?: TournamentStatus;
   limit?: number;
 }): Promise<{ tournaments: TournamentSummary[]; players: Record<string, string> }> {
+  await openDueTournaments();
   const docs = await listTournamentDocs({ status: opts?.status, limit: opts?.limit });
   const summaries: TournamentSummary[] = [];
   const playerIds = new Set<string>();

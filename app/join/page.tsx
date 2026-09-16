@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PageHeader } from "@/components/ui/page-header";
+import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { ErrorNote } from "@/components/ui/states";
 import { getGameBackend } from "@/lib/config";
 import { getStoreForId } from "@/lib/store";
@@ -51,6 +51,9 @@ export default function JoinGamePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 py-14 sm:px-6 lg:py-20">
+      <BackLink href="/play" className="mb-4 self-start">
+        Back
+      </BackLink>
       <PageHeader
         align="center"
         eyebrow="Invite"

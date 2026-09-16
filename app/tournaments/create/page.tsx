@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Coins, Loader2, Swords } from "lucide-react";
+import { CalendarClock, Coins, Loader2, Swords } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/page-header";
+import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { ErrorNote } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
@@ -56,6 +56,8 @@ export default function CreateTournamentPage() {
   const [timeControl, setTimeControl] = useState<string>("10 + 0");
   const [maxPlayers, setMaxPlayers] = useState(8);
   const [swissRounds, setSwissRounds] = useState(5);
+  /** Schedule — datetime-local string; empty means "open now". */
+  const [startsAt, setStartsAt] = useState("");
   const [entryFeeNim, setEntryFeeNim] = useState("");
   const [prizePreset, setPrizePreset] = useState<"winner" | "top3" | "top5">("winner");
   const [busy, setBusy] = useState(false);
@@ -67,6 +69,17 @@ export default function CreateTournamentPage() {
     setBusy(true);
     setError(null);
     try {
+      const scheduled = startsAt ? new Date(startsAt).getTime() : null;
+      if (startsAt && (!scheduled || Number.isNaN(scheduled))) {
+        setError("Pick a valid date and time for the schedule (or clear it).");
+        setBusy(false);
+        return;
+      }
+      if (scheduled != null && scheduled <= Date.now()) {
+        setError("The schedule must be in the future.");
+        setBusy(false);
+        return;
+      }
       const { id } = await tournamentApi.create(
         {
           name: name.trim(),
@@ -75,6 +88,7 @@ export default function CreateTournamentPage() {
           timeControl,
           maxPlayers,
           swissRounds: format === "swiss" ? swissRounds : undefined,
+          scheduledStartAt: scheduled,
           ...(paid ? { entryFeeNim: entryFeeNim.trim(), prizePreset } : {}),
         },
         identity.playerId,
@@ -88,6 +102,9 @@ export default function CreateTournamentPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 lg:py-16">
+      <BackLink href="/tournaments" className="mb-4">
+        Back to tournaments
+      </BackLink>
       <PageHeader
         eyebrow="Free to enter"
         title="Host a tournament"
@@ -200,6 +217,24 @@ export default function CreateTournamentPage() {
               </select>
             </label>
           </div>
+
+          <label className="block">
+            <span className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <CalendarClock className="h-3 w-3" aria-hidden />
+              Schedule <span className="font-normal normal-case tracking-normal">(optional)</span>
+            </span>
+            <input
+              type="datetime-local"
+              value={startsAt}
+              onChange={(e) => setStartsAt(e.target.value)}
+              className="mt-1.5 w-full rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50 [color-scheme:dark] sm:max-w-xs"
+            />
+            <span className="mt-1 block text-2xs leading-relaxed text-muted-foreground">
+              {startsAt
+                ? `Registration opens automatically on ${new Date(startsAt).toLocaleString()}.`
+                : "Leave empty to open registration yourself, right away."}
+            </span>
+          </label>
 
           {format === "swiss" && (
             <label className="block">

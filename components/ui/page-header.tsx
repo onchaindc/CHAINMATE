@@ -1,4 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -110,5 +112,33 @@ export function SectionLabel({
       </h2>
       {aside && <p className="text-2xs text-muted-foreground">{aside}</p>}
     </div>
+  );
+}
+
+/**
+ * The quiet "← back to …" line above a page heading. Every drill-in page
+ * (a tournament, the host form) gets one so a deep link is never a trap —
+ * one click returns to the list you came from.
+ */
+export function BackLink({
+  href,
+  children,
+  className,
+}: {
+  href: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
+        className,
+      )}
+    >
+      <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+      {children}
+    </Link>
   );
 }

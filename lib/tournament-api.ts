@@ -81,6 +81,7 @@ export type TournamentAction =
   | "start"
   | "complete"
   | "cancel"
+  | "delete"
   | "pair";
 
 export interface CreateTournamentPayload {
@@ -90,6 +91,8 @@ export interface CreateTournamentPayload {
   timeControl: string;
   maxPlayers: number;
   swissRounds?: number;
+  /** Scheduled start (Unix ms) — registration opens automatically then. */
+  scheduledStartAt?: number | null;
   /** Phase 2B: human NIM string ("5", "1.25"). Omit for a free tournament. */
   entryFeeNim?: string;
   /** Phase 2B: required when entryFeeNim is set. */
