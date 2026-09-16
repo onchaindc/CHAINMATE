@@ -334,6 +334,81 @@ test("nimiqErrorMessage prefixes payment failures readably", () => {
   assert.ok(capped.startsWith('{"reason":'));
 });
 
+test("syncing-your-account wallet failure maps to an actionable message", () => {
+  // The exact raw shape Nimiq Pay produced for the send failure.
+  assert.deepEqual(
+    normalizeNimiqError(new Error(
+      "Failed to send payment transaction: Something went wrong syncing your account",
+    )),
+    {
+      kind: "provider",
+      message:
+        "Nimiq Pay is still syncing your account. Open Nimiq Pay, wait for it to finish syncing (and check your connection), then try again.",
+    },
+  );
+  // Same mapping through the payment prefix used by the entry UI.
+  assert.equal(
+    nimiqPaymentFailureMessage(
+      new Error(
+        "Failed to send payment transaction: Something went wrong syncing your account",
+      ),
+    ),
+    "Nimiq payment failed: Nimiq Pay is still syncing your account. Open Nimiq Pay, wait for it to finish syncing (and check your connection), then try again.",
+  );
+  // Ordinary errors are untouched by the pattern mapping.
+  assert.equal(
+    normalizeNimiqError(new Error("insufficient funds")).message,
+    "insufficient funds",
+  );
+});
+
+test("waitForNimiqConsensus is fail-open in every unsupported path", async () => {
+  const { waitForNimiqConsensus } = await import("@/lib/nimiq/miniapp");
+  // Provider without the method at all: proceed immediately.
+  assert.equal(await waitForNimiqConsensus({} as never, 50), true);
+  // Method exists but throws (e.g. "No RPC URL configured"): proceed.
+  assert.equal(
+    await waitForNimiqConsensus({
+      isConsensusEstablished: async () => {
+        throw new Error("No RPC URL configured");
+      },
+    } as never, 50),
+    true,
+  );
+  // Non-boolean response: treated as established, proceed.
+  assert.equal(
+    await waitForNimiqConsensus({
+      isConsensusEstablished: async () => undefined as unknown as boolean,
+    } as never, 50),
+    true,
+  );
+});
+
+test("waitForNimiqConsensus waits while not established, then proceeds", async () => {
+  const { waitForNimiqConsensus } = await import("@/lib/nimiq/miniapp");
+  let calls = 0;
+  const start = Date.now();
+  const result = await waitForNimiqConsensus({
+    isConsensusEstablished: async () => {
+      calls += 1;
+      return calls >= 3; // false, false, then true
+    },
+  } as never, 5_000);
+  assert.equal(result, true);
+  assert.equal(calls, 3);
+  assert.ok(Date.now() - start >= 500, "should have polled with 250ms gaps");
+});
+
+test("waitForNimiqConsensus returns true after timeout without throwing", async () => {
+  const { waitForNimiqConsensus } = await import("@/lib/nimiq/miniapp");
+  const start = Date.now();
+  const result = await waitForNimiqConsensus({
+    isConsensusEstablished: async () => false,
+  } as never, 60);
+  assert.equal(result, true);
+  assert.ok(Date.now() - start >= 50, "should have waited out the timeout");
+});
+
 test("nimiqPaymentFailureMessage wraps real messages without masking them", () => {
   assert.equal(
     nimiqPaymentFailureMessage(new Error("insufficient funds")),
