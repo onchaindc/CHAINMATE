@@ -23,6 +23,7 @@ import { useCallback, useState } from "react";
 
 import {
   connectNimiq,
+  nimiqPaymentFailureMessage,
   sendNimiqBasicTransaction,
 } from "@/lib/nimiq/miniapp";
 import { parseNim } from "@/lib/nimiq/format";
@@ -95,7 +96,13 @@ export function useTournamentEntry(playerId: string) {
         await tournamentApi.submitEntryTx(tournamentId, playerId, txHash);
         setPhase("joined");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Payment failed");
+        // Normalize every failure into a human-readable message — the Nimiq
+        // host adapter throws/resolves raw structured payloads, and the SDK's
+        // own transport can build Error instances whose message is literally
+        // "[object Object]". The original value is preserved on the console
+        // for debugging and never swallowed.
+        console.warn("[nimiq] payment flow failed:", err);
+        setError(nimiqPaymentFailureMessage(err));
         setPhase("error");
       }
     },
@@ -106,7 +113,6 @@ export function useTournamentEntry(playerId: string) {
     setPhase("idle");
     setError(null);
   }, []);
-
   return {
     wallet,
     phase,

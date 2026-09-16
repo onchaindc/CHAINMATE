@@ -35,6 +35,8 @@ import {
 } from "@/lib/nimiq/config";
 import {
   listNimiqAccounts,
+  nimiqErrorMessage,
+  nimiqPaymentFailureMessage,
   normalizeNimiqError,
   pickWalletAccount,
   sendNimiqBasicTransaction,
@@ -251,6 +253,112 @@ test("normalizeNimiqError maps thrown SDK errors", () => {
   assert.equal(normalizeNimiqError({ error: { type: "WALLET", message: "User rejected the request" } }).kind, "user-rejected");
   assert.equal(normalizeNimiqError({ error: { type: "", message: "odd failure" } }).kind, "provider");
   assert.equal(normalizeNimiqError("boom").kind, "unknown");
+});
+
+/* ------------------------------------------------------------------ */
+/* Error normalization — every shape the Nimiq host can produce        */
+/* ------------------------------------------------------------------ */
+
+test("normalizeNimiqError never yields '[object Object]' for any error shape", () => {
+  const shapes: unknown[] = [
+    new Error("plain failure"),
+    new Error("[object Object]"), // SDK transport: new Error(structured payload)
+    "boom",
+    "",
+    42,
+    true,
+    null,
+    undefined,
+    {},
+    { error: "insufficient funds" }, // bare-string error variant
+    { error: { message: "User rejected the request" } },
+    { error: { type: "WALLET", message: "User rejected the request" } },
+    { error: { code: -32000, message: "Account is locked" } }, // JSON-RPC style
+    { error: { data: { reason: "fee too low" } } }, // structured data, no message
+    { error: null },
+    { error: 7 },
+    { reason: "fee too low", code: 42 }, // raw thrown object
+    { message: "direct message field" },
+    { foo: "bar" },
+  ];
+  for (const shape of shapes) {
+    const normalized = normalizeNimiqError(shape);
+    assert.ok(normalized.message.length > 0, `empty message for: ${JSON.stringify(shape)}`);
+    assert.ok(
+      !normalized.message.includes("[object Object]"),
+      `mangled message for ${JSON.stringify(shape)}: ${normalized.message}`,
+    );
+    assert.ok(
+      ["timeout", "user-rejected", "provider", "no-accounts", "unknown"].includes(normalized.kind),
+    );
+  }
+});
+
+test("normalizeNimiqError extracts real messages from structured payloads", () => {
+  // JSON-RPC style error with code + message.
+  assert.deepEqual(normalizeNimiqError({ error: { code: -32000, message: "Account is locked" } }), {
+    kind: "provider",
+    message: "Account is locked",
+  });
+  // Structured data instead of message.
+  assert.deepEqual(normalizeNimiqError({ error: { data: { reason: "fee too low" } } }), {
+    kind: "provider",
+    message: '{"reason":"fee too low"}',
+  });
+  // Bare-string error variant.
+  assert.equal(
+    normalizeNimiqError({ error: "insufficient funds" }).message,
+    "The Nimiq wallet rejected the request: insufficient funds",
+  );
+  // Raw thrown object with a message field.
+  assert.equal(normalizeNimiqError({ message: "direct message field" }).message, "direct message field");
+  // Raw thrown object without one is serialized, not stringified.
+  assert.equal(normalizeNimiqError({ reason: "fee too low" }).message, '{"reason":"fee too low"}');
+  // An Error instance built around an object still surfaces the cause.
+  const caused = new Error("[object Object]");
+  (caused as { cause?: unknown }).cause = { error: { message: "insufficient balance" } };
+  assert.equal(normalizeNimiqError(caused).message, "insufficient balance");
+  // Truly empty input gets an honest default, not an empty string.
+  assert.equal(normalizeNimiqError(undefined).message, "The Nimiq wallet request failed");
+});
+
+test("nimiqErrorMessage prefixes payment failures readably", () => {
+  assert.equal(
+    nimiqErrorMessage({ error: { type: "WALLET", message: "User rejected the request" } }),
+    "User rejected the request",
+  );
+  // Long payloads are capped, never flooding the UI.
+  const big = { reason: "x".repeat(1000) };
+  const capped = nimiqErrorMessage(big);
+  assert.ok(capped.length <= 310, `message not capped: ${capped.length}`);
+  assert.ok(capped.startsWith('{"reason":'));
+});
+
+test("nimiqPaymentFailureMessage wraps real messages without masking them", () => {
+  assert.equal(
+    nimiqPaymentFailureMessage(new Error("insufficient funds")),
+    "Nimiq payment failed: insufficient funds",
+  );
+  // The already-mangled transport error is replaced, not echoed.
+  const mangled = new Error("[object Object]");
+  const out = nimiqPaymentFailureMessage(mangled);
+  assert.ok(!out.includes("[object Object]"), `echoed the mangled text: ${out}`);
+  assert.ok(out.startsWith("Nimiq payment failed:"));
+  // Structured host payloads keep their real content under the prefix.
+  assert.equal(
+    nimiqPaymentFailureMessage({ error: { message: "insufficient balance" } }),
+    "Nimiq payment failed: insufficient balance",
+  );
+  // Raw objects are serialized under the prefix.
+  assert.equal(
+    nimiqPaymentFailureMessage({ reason: "fee too low" }),
+    'Nimiq payment failed: {"reason":"fee too low"}',
+  );
+  // User rejections keep their classification through the payment prefix.
+  assert.equal(
+    nimiqPaymentFailureMessage({ error: { type: "WALLET", message: "User rejected the request" } }),
+    "Nimiq payment failed: User rejected the request",
+  );
 });
 
 /* ------------------------------------------------------------------ */

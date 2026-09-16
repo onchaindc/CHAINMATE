@@ -47,35 +47,158 @@ export type NimiqResult<T> =
   | { ok: false; error: NimiqWalletError };
 
 function isErrorResponse(value: unknown): value is ErrorResponse {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "error" in value &&
-    typeof (value as ErrorResponse).error?.message === "string"
-  );
+  if (typeof value !== "object" || value === null || !("error" in value)) return false;
+  const inner = (value as { error: unknown }).error;
+  if (typeof inner === "object" && inner !== null) return true;
+  // Some hosts/versions send the error payload as a bare string.
+  return typeof inner === "string" && inner.length > 0;
 }
 
-/** Convert an SDK ErrorResponse or thrown Error into a NimiqWalletError. */
-export function normalizeNimiqError(err: unknown): NimiqWalletError {
-  if (isErrorResponse(err)) {
-    const type = err.error.type ?? "";
-    const message = err.error.message || "The Nimiq wallet rejected the request";
-    const kind: NimiqWalletError["kind"] = /reject|denied|cancel/i.test(`${type} ${message}`)
-      ? "user-rejected"
-      : /timed?\s*out|timeout/i.test(`${type} ${message}`)
-        ? "timeout"
-        : "provider";
-    return { kind, message };
+/**
+ * Human-readable text from an unknown value, without ever emitting the
+ * useless "[object Object]". Error instances use their message; plain
+ * objects are serialized to JSON (best-effort, with a hard cap so a huge
+ * payload can never flood the UI); primitives use their string form.
+ * Secrets never pass through here — inputs are wallet/provider error
+ * payloads, and the cap plus JSON.stringify keep them textual.
+ */
+function describeUnknown(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value.length > 0 ? value : null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Error) {
+    // An Error constructed around an object (the SDK's own RPC transport can
+    // do `new Error(r.error.data || …)`) carries the useless literal text
+    // "[object Object]" — recover what it actually means from `cause`, or
+    // replace the string with something honest.
+    if (value.message && value.message !== "[object Object]") return value.message;
+    const cause = (value as { cause?: unknown }).cause;
+    if (cause !== undefined) {
+      const causeText = describeUnknown(cause);
+      if (causeText) return causeText;
+    }
+    if (value.message === "[object Object]") {
+      return "The Nimiq wallet reported an unspecified error";
+    }
+    return value.message || value.name;
   }
-  const message = err instanceof Error ? err.message : String(err);
+  if (typeof value === "object") {
+    // Error-like plain objects ({ message: "…" }) are a common host throw
+    // shape — extract the field rather than serializing the wrapper.
+    const messageField = (value as { message?: unknown }).message;
+    if (typeof messageField === "string" && messageField.length > 0) {
+      return messageField;
+    }
+    try {
+      const json = JSON.stringify(value);
+      if (typeof json === "string" && json.length > 0) {
+        return json.length > 300 ? `${json.slice(0, 300)}…` : json;
+      }
+    } catch {
+      /* circular or otherwise unserializable — fall through */
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Convert an SDK ErrorResponse or thrown value into a NimiqWalletError.
+ *
+ * The SDK's host adapter does not guarantee an Error instance: Nimiq Pay
+ * resolves ErrorResponse objects for some methods and THROWS raw structured
+ * objects (and the SDK's own RPC transport does
+ * `new Error(r.error.data || r.error.message)` — where `data` can itself be
+ * an object, whose string form is exactly "[object Object]"). Every shape
+ * must land in a readable message; the original is never swallowed.
+ */
+export function normalizeNimiqError(err: unknown): NimiqWalletError {
+  // Shape 1: ErrorResponse — { error: { type, message } } (declared SDK type)
+  //          or { error: "…" } (observed bare-string variant).
+  if (isErrorResponse(err)) {
+    const inner = (err as { error: unknown }).error;
+    if (typeof inner === "object" && inner !== null) {
+      const rec = inner as { type?: unknown; message?: unknown; data?: unknown };
+      // Prefer a readable message; fall back through type, then data.
+      const rawMessage = describeUnknown(rec.message) ?? describeUnknown(rec.data) ?? "";
+      const type = typeof rec.type === "string" ? rec.type : describeUnknown(rec.type) ?? "";
+      const message = rawMessage || `The Nimiq wallet rejected the request${type ? ` (${type})` : ""}`;
+      const combined = `${type} ${message}`;
+      const kind: NimiqWalletError["kind"] = /reject|denied|cancel/i.test(combined)
+        ? "user-rejected"
+        : /timed?\s*out|timeout/i.test(combined)
+          ? "timeout"
+          : "provider";
+      return { kind, message };
+    }
+    const message = `The Nimiq wallet rejected the request: ${inner as string}`;
+    return /reject|denied|cancel/i.test(inner as string)
+      ? { kind: "user-rejected", message }
+      : { kind: "provider", message };
+  }
+
+  // Shape 2: anything thrown or resolved that is not an ErrorResponse —
+  // Error instances, plain objects, strings, null/undefined.
+  // An Error instance built around a structured payload (the SDK's own RPC
+  // transport does `new Error(r.error.data || r.error.message)`, where data
+  // can be an object) carries the real failure in `cause` — recurse into it
+  // so the structured branch's extraction and classification apply.
+  if (err instanceof Error) {
+    const cause = (err as { cause?: unknown }).cause;
+    if (
+      (err.message === "[object Object]" || err.message === "") &&
+      cause !== undefined &&
+      cause !== err
+    ) {
+      return normalizeNimiqError(cause);
+    }
+  }
+  const message = describeUnknown(err) ?? "The Nimiq wallet request failed";
   const kind: NimiqWalletError["kind"] = /not injected|running inside/i.test(message)
     ? "provider"
     : "unknown";
   return { kind, message };
 }
 
+/**
+ * Human-readable message for any wallet/provider failure shape. This is what
+ * UI surfaces render: never "[object Object]", never an empty string.
+ */
+export function nimiqErrorMessage(err: unknown): string {
+  return normalizeNimiqError(err).message;
+}
+
+/**
+ * User-facing message for a payment-flow failure: the same normalization,
+ * with the "Nimiq payment failed:" prefix the entry UI shows. An
+ * already-mangled "[object Object]" (the SDK's RPC transport builds
+ * `new Error(structuredPayload)`, so the damage can exist before we see it)
+ * is replaced with an honest description instead of being echoed.
+ */
+export function nimiqPaymentFailureMessage(err: unknown): string {
+  if (err instanceof Error && err.message === "[object Object]") {
+    return "Nimiq payment failed: the wallet reported an unspecified error. Try again — if it repeats, the wallet may not support this transaction.";
+  }
+  const message = nimiqErrorMessage(err);
+  if (!message || message === "[object Object]") {
+    return "Nimiq payment failed: the wallet reported an unspecified error.";
+  }
+  return /nimiq payment failed/i.test(message)
+    ? message
+    : `Nimiq payment failed: ${message}`;
+}
+
 function toResult<T>(value: T | ErrorResponse): NimiqResult<T> {
   if (isErrorResponse(value)) return { ok: false, error: normalizeNimiqError(value) };
+  // A success channel value can still be an unusable stub (an empty object
+  // or a null where a tx hash was expected). Fail loudly rather than handing
+  // the caller a value it cannot use — "0" would be a falsy-but-real hash.
+  if (value === null || value === undefined) {
+    return {
+      ok: false,
+      error: normalizeNimiqError(value),
+    };
+  }
   return { ok: true, value };
 }
 
@@ -84,7 +207,13 @@ async function guard<T>(fn: () => Promise<T | ErrorResponse>): Promise<NimiqResu
   try {
     return toResult(await fn());
   } catch (err) {
-    return { ok: false, error: normalizeNimiqError(err) };
+    const error = normalizeNimiqError(err);
+    // Keep the original throwable visible for debugging (requirement 5):
+    // the normalized message is for humans, the raw value for the console.
+    if (error.kind === "unknown" || error.kind === "provider") {
+      console.warn("[nimiq] provider call failed:", err);
+    }
+    return { ok: false, error };
   }
 }
 
