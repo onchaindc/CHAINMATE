@@ -94,7 +94,6 @@ export function EndGameModal({
   const report = displaySummary(game);
   const showingFallback = isFallbackSummary(game);
   const analysisDone = !!game.analysis;
-  const isHostedGame = game.backend === "hosted";
   /* A missing analysis is worth retrying unless something already reported it
      as impossible on this deployment — no signing key, no AI key. Retrying
      those would fail identically every time. */
@@ -246,26 +245,22 @@ export function EndGameModal({
 
           {/* Where that report came from, and what is still coming. Saying so
               matters: the fallback and the analysis read alike, and a player
-              should be able to tell whether the validators have spoken. */}
+              should be able to tell whether the deeper report has landed. */}
           {analysisDone ? (
             <p className="mt-2.5 flex items-center gap-1.5 text-2xs font-medium text-primary">
               <Sparkles className="h-3 w-3" aria-hidden />
-              {isHostedGame ? "Analysed on GenLayer by validator consensus" : "AI analysis"}
+              Analysis ready
             </p>
           ) : analyzing ? (
             <p className="mt-2.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-              {isHostedGame
-                ? "Running deeper analysis on GenLayer…"
-                : "Writing a deeper analysis…"}
+              Analyzing the game…
             </p>
           ) : showingFallback ? (
             <div className="mt-2.5">
               <p className="text-2xs leading-snug text-muted-foreground">
                 {game.analysisError
-                  ? `Automatic match report. ${
-                      isHostedGame ? "On-chain analysis" : "AI analysis"
-                    } didn't complete: ${game.analysisError}`
+                  ? `Automatic match report. Analysis unavailable — ${game.analysisError}`
                   : "Automatic match report."}
               </p>
               {retryable && (
@@ -276,7 +271,7 @@ export function EndGameModal({
                   size="sm"
                 >
                   <Sparkles aria-hidden />
-                  {isHostedGame ? "Retry on-chain analysis" : "Retry analysis"}
+                  Retry analysis
                 </Button>
               )}
             </div>

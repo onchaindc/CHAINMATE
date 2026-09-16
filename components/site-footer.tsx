@@ -18,7 +18,7 @@ export function SiteFooter() {
         <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
           <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
           <span>
-            ChainMate — chess, refereed by an intelligent contract on GenLayer.
+            ChainMate — chess with fair play enforced and a report on how every game was won.
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-5 text-sm text-muted-foreground">
@@ -40,14 +40,6 @@ export function SiteFooter() {
           <Link href="/profile" className="transition-colors hover:text-foreground">
             Profile
           </Link>
-          <a
-            href="https://docs.genlayer.com"
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-foreground"
-          >
-            GenLayer docs
-          </a>
           <a
             href="https://github.com/onchaindc/CHAINMATE"
             target="_blank"

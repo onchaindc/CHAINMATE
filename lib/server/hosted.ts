@@ -1052,7 +1052,7 @@ async function runAnalysis(id: string, analyzer: GameAnalyzer): Promise<GameStat
     next = {
       ...next,
       analysisError:
-        "On-chain analysis isn't configured on this deployment (no GenLayer signing key).",
+        "Game analysis isn't available on this deployment.",
       updatedAt: Date.now(),
     };
     await writeGame(next);

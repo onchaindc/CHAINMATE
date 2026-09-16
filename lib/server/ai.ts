@@ -31,7 +31,7 @@ export async function runAi(prompt: string): Promise<string> {
         {
           role: "system",
           content:
-            "You are ChainMate, a chess commentator for a GenLayer-powered chess dApp. " +
+            "You are ChainMate, a chess commentator. " +
             "You write vivid, accurate, concise analysis in the style of a chess broadcast. " +
             "Reply with plain text only.",
         },

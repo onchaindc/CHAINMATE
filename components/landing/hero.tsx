@@ -17,7 +17,7 @@ export function Hero() {
         <div className="animate-fade-in-up max-w-xl">
           <p className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-            Secured by GenLayer
+            Fair play, enforced
           </p>
           <h1 className="font-display mt-6 text-4xl font-bold leading-[1.06] tracking-tight text-balance sm:text-5xl lg:text-[3.4rem]">
             Play chess.
@@ -25,9 +25,9 @@ export function Hero() {
             <span className="text-primary">Think deeper.</span>
           </h1>
           <p className="mt-5 max-w-md text-base leading-relaxed text-muted-foreground">
-            Competitive chess with intelligent analysis. Every move is validated
-            by an intelligent contract on GenLayer, and every game ends with a
-            clear report on how it was won.
+            Competitive chess with intelligent analysis. Every move is checked
+            as it&rsquo;s played, and every game ends with a clear report on
+            how it was won.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {isAuthed ? (

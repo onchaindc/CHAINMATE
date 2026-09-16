@@ -278,7 +278,7 @@ export default function GamePage() {
       ? "This game only exists in the browser that created it. Open that tab, or start a new game."
       : isHostedGameId(id)
         ? "No game with this id. The link may be expired or mistyped."
-        : "Not found on-chain. It may still be finalising.";
+        : "Game not found. It may still be finalising.";
     return (
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
         <AlertCircle className="h-9 w-9 text-destructive" aria-hidden />
@@ -338,7 +338,7 @@ export default function GamePage() {
 
   const aiHint = aiEnabled
     ? null
-    : "Set NEXT_PUBLIC_AI_ENABLED=true and an AI_API_KEY to unlock deeper LLM commentary.";
+    : "Turn on AI commentary in the deployment settings to unlock deeper analysis.";
 
   const playerName = (playerId: string) => {
     // The computer opponent is a named player, chess.com-style.
@@ -439,10 +439,10 @@ export default function GamePage() {
           </div>
         )}
         <div className="flex items-center justify-between">
-          <dt className="text-muted-foreground">Backend</dt>
+          <dt className="text-muted-foreground">Mode</dt>
           <dd className="capitalize text-foreground/85">
             {game.backend === "genlayer"
-              ? "On-chain"
+              ? "Online"
               : game.backend === "hosted"
                 ? "Online"
                 : "Local"}
@@ -482,7 +482,7 @@ export default function GamePage() {
           </h1>
           <p className="text-2xs text-muted-foreground">
             {game.backend === "genlayer"
-              ? "On-chain match"
+              ? "Online match"
               : game.backend === "local"
                 ? "Local match"
                 : "Online match"}

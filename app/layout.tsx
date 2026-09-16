@@ -37,7 +37,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "ChainMate — Play chess. Think deeper.",
   description:
-    "Competitive chess with intelligent analysis. Every move validated by an intelligent contract on GenLayer, with AI commentary and post-game reports.",
+    "Competitive chess with intelligent analysis, AI commentary and post-game reports.",
   icons: {
     icon: "/favicon.svg",
   },

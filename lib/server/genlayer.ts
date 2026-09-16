@@ -102,7 +102,7 @@ export function getSigner(which: 1 | 2) {
       : process.env.GENLAYER_PRIVATE_KEY_2 ?? process.env.GENLAYER_PRIVATE_KEY;
   if (!key) {
     throw new Error(
-      `GENLAYER_PRIVATE_KEY${which === 2 ? "_2" : ""} is not set — add it in the project's environment settings to play on-chain.`,
+      `GENLAYER_PRIVATE_KEY${which === 2 ? "_2" : ""} is not set — add it in the project's environment settings.`,
     );
   }
   return createAccount(key as `0x${string}`);
@@ -150,7 +150,7 @@ function receiptError(receipt: GenLayerTransaction): string {
     return stderr.trim();
   }
   const resultName = receipt.resultName ?? "unknown result";
-  return `transaction ended with ${resultName}`;
+  return `the request ended unexpectedly (${resultName})`;
 }
 
 async function waitForWrite(hash: `0x${string}`, label: string): Promise<GenLayerTransaction> {
@@ -162,10 +162,19 @@ async function waitForWrite(hash: `0x${string}`, label: string): Promise<GenLaye
     retries: 60,
   });
   if (receipt.txExecutionResultName === ExecutionResult.FINISHED_WITH_ERROR) {
-    throw new Error(`On-chain ${label} failed: ${receiptError(receipt)}`);
+    // User-facing: this message lands in the game page's error banner.
+    throw new Error(`${label} failed: ${receiptError(receipt)}`);
   }
   return receipt;
 }
+
+/** Friendly labels for the write paths whose errors reach the UI banner. */
+const ACTION_LABELS: Record<string, string> = {
+  create_game: "Creating the game",
+  join_game: "Joining the game",
+  submit_move: "Playing that move",
+  resign_game: "Resigning",
+};
 
 async function writeGame(
   address: string,
@@ -182,7 +191,7 @@ async function writeGame(
     args,
     value: BigInt(0),
   });
-  await waitForWrite(hash, functionName);
+  await waitForWrite(hash, ACTION_LABELS[functionName] ?? "Game action");
   return readGameRaw(address);
 }
 
@@ -191,15 +200,15 @@ export async function deployChainMate(): Promise<{ address: string; myId: string
   const client = getReadClient();
   const account = getSigner(1);
   const hash = await client.deployContract({ account, code: contractSource() });
-  const receipt = await waitForWrite(hash, "deploy");
+  const receipt = await waitForWrite(hash, "Creating the game");
   const decoded = receipt.txDataDecoded as DecodedDeployData | undefined;
   const contractAddress = decoded?.contractAddress;
   if (!contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
     // Never fall back to the tx hash: a hash is not a contract address, so
     // the game id would be dead and every read would report "Game not found".
     throw new Error(
-      "Could not determine the deployed contract address from the deploy receipt. " +
-        "The GenLayer RPC may be misconfigured or the deployment is still finalising — please retry.",
+      "Could not determine the game's address from the server response. " +
+        "The game service may be misconfigured or still finalising — please retry.",
     );
   }
   return { address: contractAddress, myId: account.address };
@@ -300,11 +309,11 @@ export async function analyzeGameOnChain(game: {
     account,
     code: analyzerContractSource(),
   });
-  const deployReceipt = await waitForWrite(deployHash, "deploy analyzer");
+  const deployReceipt = await waitForWrite(deployHash, "Preparing the analysis");
   const decoded = deployReceipt.txDataDecoded as DecodedDeployData | undefined;
   const analyzerAddress = decoded?.contractAddress;
   if (!analyzerAddress || !/^0x[0-9a-fA-F]{40}$/.test(analyzerAddress)) {
-    throw new Error("Could not determine analyzer contract address from deploy receipt");
+    throw new Error("Could not start the analysis — the analysis service did not respond with a valid session");
   }
   console.log(`[genlayer:analyze] deployed analyzer at ${analyzerAddress} (deploy tx ${deployHash})`);
 
@@ -320,7 +329,7 @@ export async function analyzeGameOnChain(game: {
     args: [movesJson, game.status, game.winner],
     value: BigInt(0),
   });
-  await waitForWrite(loadHash, "load_game");
+  await waitForWrite(loadHash, "Preparing the analysis");
   console.log(`[genlayer:analyze] game data loaded (load_game tx ${loadHash}), generating analysis...`);
 
   // Step 3: Generate analysis (this is the slow part — GenLayer LLM consensus)
@@ -332,7 +341,7 @@ export async function analyzeGameOnChain(game: {
     value: BigInt(0),
   });
   console.log(`[genlayer:analyze] generate_analysis submitted (tx ${analyzeHash}), waiting for validator consensus...`);
-  await waitForWrite(analyzeHash, "generate_analysis");
+  await waitForWrite(analyzeHash, "Writing the analysis");
   console.log(`[genlayer:analyze] analysis generated (generate_analysis tx ${analyzeHash}), reading summary...`);
 
   // Step 4: Read the summary
@@ -344,7 +353,7 @@ export async function analyzeGameOnChain(game: {
   })) as string;
 
   if (!summary || typeof summary !== "string" || summary.length < 20) {
-    throw new Error("GenLayer analysis returned empty or invalid summary");
+    throw new Error("The analysis came back empty or incomplete");
   }
 
   console.log(

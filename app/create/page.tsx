@@ -75,7 +75,7 @@ export default function CreateGamePage() {
         title="Create a game"
         description={
           backend === "genlayer"
-            ? "Deploys a fresh contract. You play White."
+            ? "Setting up your game. You play White."
             : "You play White. Share the link to invite Black."
         }
         className="w-full"
@@ -245,7 +245,7 @@ export default function CreateGamePage() {
             {busy ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden />
-                {backend === "genlayer" ? "Deploying contract…" : "Creating game…"}
+                {backend === "genlayer" ? "Setting up the game…" : "Creating game…"}
               </>
             ) : (
               <>
@@ -257,7 +257,7 @@ export default function CreateGamePage() {
 
           {backend === "genlayer" && (
             <p className="text-center text-2xs leading-snug text-muted-foreground/70">
-              Testnet deployment can take a few seconds.
+              Setting up a game can take a few seconds.
             </p>
           )}
         </CardContent>

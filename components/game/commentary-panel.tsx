@@ -23,7 +23,7 @@ export function CommentaryPanel({
   aiHint,
   onRetry,
 }: CommentaryPanelProps) {
-  const statusLabel = aiStatus === "analyzing" ? "analyzing" : aiStatus === "ready" ? "ready" : aiEnabled ? "LLM enhanced" : "engine";
+  const statusLabel = aiStatus === "analyzing" ? "analyzing" : aiStatus === "ready" ? "ready" : aiEnabled ? "AI enhanced" : "engine";
 
   return (
     <div className="border-t border-border/60">
@@ -69,7 +69,9 @@ export function CommentaryPanel({
                   {entry.side}
                 </span>
                 <Badge variant="secondary" className="ml-auto px-1.5 py-0 text-2xs">
-                  {entry.source === "chain" ? "chain" : "engine"}
+                  {/* `chain` is the internal source id for contract-produced
+                      notes; users just see where the note's depth came from. */}
+                  {entry.source === "chain" ? "AI" : "engine"}
                 </Badge>
               </div>
               <p className="mt-1 text-xs leading-relaxed text-foreground/85">{entry.text}</p>
@@ -89,7 +91,7 @@ export function CommentaryPanel({
             <div className="flex items-center gap-2">
               <img src="/logo-mark.svg" alt="" className="h-3.5 w-3.5" />
               <span className="text-2xs font-semibold uppercase tracking-wider text-primary">
-                LLM insight
+                AI insight
               </span>
               <Badge variant="gold" className="ml-auto px-1.5 py-0 text-2xs">
                 ready

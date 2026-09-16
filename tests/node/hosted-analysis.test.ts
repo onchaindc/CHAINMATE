@@ -216,7 +216,7 @@ test("without signing keys the game is marked unavailable, not silently fallen b
 
   assert.equal(calls.length, 0, "no analysis should be attempted without keys");
   assert.equal(result.analysis, undefined);
-  assert.match(result.analysisError!, /GenLayer signing key/);
+  assert.match(result.analysisError!, /Game analysis isn't available on this deployment/);
   assert.ok(result.summary.length > 0);
 });
 

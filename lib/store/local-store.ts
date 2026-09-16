@@ -333,7 +333,7 @@ export class LocalGameStore implements GameStore {
       // deployment, so record it and stop asking rather than retrying forever.
       return this.save({
         ...game,
-        analysisError: data.error || `AI analysis failed (${res.status})`,
+        analysisError: data.error || `analysis request failed (${res.status})`,
       });
     } catch (err) {
       // The rule-based summary written at game end stays on screen.

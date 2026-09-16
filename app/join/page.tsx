@@ -70,7 +70,7 @@ export default function JoinGamePage() {
                 id="game-id"
                 placeholder={
                   backend === "genlayer"
-                    ? "0x1a2b3c… or the full game link"
+                    ? "Game link or id"
                     : "hosted_ab12cd or the full game link"
                 }
                 value={value}
