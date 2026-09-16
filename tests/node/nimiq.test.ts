@@ -343,7 +343,7 @@ test("syncing-your-account wallet failure maps to an actionable message", () => 
     {
       kind: "provider",
       message:
-        "Nimiq Pay is still syncing your account. Open Nimiq Pay, wait for it to finish syncing (and check your connection), then try again.",
+        "Nimiq Pay is not on the testnet network this tournament pays in. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, then try again.",
     },
   );
   // Same mapping through the payment prefix used by the entry UI.
@@ -353,7 +353,7 @@ test("syncing-your-account wallet failure maps to an actionable message", () => 
         "Failed to send payment transaction: Something went wrong syncing your account",
       ),
     ),
-    "Nimiq payment failed: Nimiq Pay is still syncing your account. Open Nimiq Pay, wait for it to finish syncing (and check your connection), then try again.",
+    "Nimiq payment failed: Nimiq Pay is not on the testnet network this tournament pays in. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, then try again.",
   );
   // Ordinary errors are untouched by the pattern mapping.
   assert.equal(
@@ -444,7 +444,7 @@ let server: Server;
 let serverUrl = "";
 let lastAuthHeader: string | null = null;
 let lastBody: { method: string; params: unknown } | null = null;
-let responseMode: "ok" | "rpc-error" | "http-500" | "slow" | "garbage" = "ok";
+let responseMode: "ok" | "rpc-error" | "http-500" | "slow" | "garbage" | "v2-wrapped" | "v2-not-found" = "ok";
 before(async () => {
   server = createServer((req: IncomingMessage, res) => {
     let raw = "";
@@ -461,6 +461,12 @@ before(async () => {
       if (responseMode === "garbage") return respond(undefined, 200); // body null after parse
       if (responseMode === "rpc-error")
         return respond({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: "Method not found" } });
+      if (responseMode === "v2-not-found")
+        return respond({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32603, message: "Internal error", data: `Transaction not found: ${(parsed.params as string[])[0]}` },
+        });
       if (responseMode === "slow") {
         setTimeout(() => respond({ jsonrpc: "2.0", id: 1, result: 1 }), 300);
         return;
@@ -473,6 +479,10 @@ before(async () => {
       else if (parsed.method === "getTransactionByHash")
         result = { hash: (parsed.params as string[])[0], from: "NQ07 F", to: "NQ07 T", value: "100000" };
       else if (parsed.method === "sendBasicTransaction") result = "f".repeat(64);
+      if (responseMode === "v2-wrapped") {
+        // Real Nimiq v2 nodes wrap every success as { data, metadata }.
+        return respond({ jsonrpc: "2.0", id: 1, result: { data: result, metadata: null } });
+      }
       respond({ jsonrpc: "2.0", id: 1, result });
     });
   });
@@ -525,6 +535,42 @@ test("RPC error objects become NimiqRpcError with the code", async () => {
       () => getBlockNumber({ url: serverUrl, timeoutMs: 2_000 }),
       (err: unknown) => err instanceof NimiqRpcError && err.code === -32601 && /Method not found/.test(err.message),
     );
+  } finally {
+    responseMode = "ok";
+  }
+});
+
+test("Nimiq v2 {data, metadata} wrapper is unwrapped transparently", async () => {
+  // Verified live against rpc.testnet.nimiqwatch.com: a current v2 node
+  // answers getBlockNumber with {"result":{"data":N,"metadata":null}} and
+  // never the bare value.
+  responseMode = "v2-wrapped";
+  try {
+    const height = await getBlockNumber({ url: serverUrl, timeoutMs: 2_000 });
+    assert.equal(height, 1_234_567);
+    const account = await getAccountByAddress("NQ07 0000 0000 0000 0000 0000 0000 0000 0000", {
+      url: serverUrl,
+      timeoutMs: 2_000,
+    });
+    assert.ok(account);
+    assert.equal(account.balance, "1500000");
+    const tx = await getTransactionByHash("abc123", { url: serverUrl, timeoutMs: 2_000 });
+    assert.ok(tx);
+    assert.equal(tx.hash, "abc123");
+  } finally {
+    responseMode = "ok";
+  }
+});
+
+test("v2 'Transaction not found' error maps to null instead of throwing", async () => {
+  // Real node behavior probed live: unknown hashes come back as a JSON-RPC
+  // error {code:-32603, data:"Transaction not found: <hash>"} — NOT a null
+  // result. The client translates that specific error to null so callers
+  // keep their "null = pending/unknown" contract.
+  responseMode = "v2-not-found";
+  try {
+    const tx = await getTransactionByHash("b".repeat(64), { url: serverUrl, timeoutMs: 2_000 });
+    assert.equal(tx, null);
   } finally {
     responseMode = "ok";
   }

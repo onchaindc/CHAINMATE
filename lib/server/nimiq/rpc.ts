@@ -129,7 +129,31 @@ async function rpcCall<T>(
   }
 
   if (payload.error) {
+    // Nimiq v2 nodes report unknown transactions/accounts as JSON-RPC errors,
+    // not null results (verified against the live testnet node:
+    // {code:-32603, data:"Transaction not found: <hash>"}). Our callers
+    // (getTransactionByHash / getAccountByAddress) define "not found" as
+    // null, so translate those specific errors instead of failing the call.
+    const errorData = typeof payload.error.data === "string" ? payload.error.data : "";
+    if (payload.error.code === -32603 && /not found/i.test(errorData)) {
+      return null as T;
+    }
     throw new NimiqRpcError(payload.error.message || "Nimiq RPC error", payload.error.code);
+  }
+
+  // Nimiq v2 (Albatross) nodes wrap every successful result as
+  // { data: T, metadata: … } — verified live: getBlockNumber returns
+  // {"data":11604878,"metadata":null}. Unwrap transparently so callers see
+  // the plain value. A v1-style bare result (or an already-unwrapped one)
+  // passes through unchanged.
+  const result = payload.result as unknown;
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "data" in result &&
+    ("metadata" in result)
+  ) {
+    return (result as { data: unknown }).data as T;
   }
   return payload.result as T;
 }
