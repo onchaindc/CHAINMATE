@@ -35,6 +35,7 @@ import {
 import { toLuna, type NimiqMoneyError } from "@/lib/nimiq/format";
 import {
   NimiqRpcError,
+  getAccountByAddress,
   getBlockNumber,
   getTransactionByHash,
   type NimiqRpcTransaction,
@@ -328,6 +329,8 @@ export interface VerifyDeps {
   rpc?: {
     getTransactionByHash: GetTxByHash;
     getBlockNumber: GetBlockHeight;
+    /** Account lookup seam (defaults to the real RPC). Optional for compat. */
+    getAccountByAddress?: (address: string, o?: { timeoutMs?: number }) => Promise<unknown>;
   };
   store?: NimiqTxStore;
   /** Wallet lookup seam (defaults to the Phase 1B service). */
@@ -383,7 +386,12 @@ async function verifyOnChain(
   }
 
   // 2. The real transaction from the configured node.
-  const rpc = deps.rpc ?? { getTransactionByHash, getBlockNumber };
+  const rpc = deps.rpc ?? {
+    getTransactionByHash,
+    getBlockNumber,
+    getAccountByAddress: (address: string, o?: { timeoutMs?: number }) =>
+      getAccountByAddress(address, o),
+  };
   let tx: NimiqTxWithProof | null;
   try {
     tx = await rpc.getTransactionByHash(txHash, { timeoutMs: 10_000 });
@@ -451,23 +459,35 @@ async function verifyOnChain(
   }
 
   // 4. Sender must be exactly the linked wallet (canonical compare).
-  //    Show both addresses on mismatch: Nimiq Pay users can hold several
-  //    accounts (and the wallet picks its own sending account), so the most
-  //    common cause is paying from a different account than the linked one.
-  //    The tx may also come from a contract account (e.g. an HTLC the payer
-  //    set up) — name that explicitly so it is not mistaken for a bug here.
+  //    REALITY CHECK (observed live, testnet): Nimiq Pay's sendBasicTransaction
+  //    pays FROM HTLC wrapper contracts the user's wallet creates around its
+  //    own funds (listAccounts() returns the identity address, but the actual
+  //    payer is a contract whose `sender`/creator IS the linked wallet — and
+  //    only the creator's key can create such a contract or reclaim it). So a
+  //    direct mismatch is NOT immediately fatal: if the paying account is a
+  //    contract owned by the linked wallet, the payment is legitimately the
+  //    linked wallet's — accept it. Everything else stays rejected, now with
+  //    both addresses named in Nimiq Pay's spaced display form.
   const sender = canonicalAddress(String(tx.from ?? ""));
-  if (sender !== canonicalAddress(linked.address)) {
-    const fromType = (tx as { fromType?: unknown }).fromType;
-    const txType = typeof fromType === "number" ? fromType : null;
-    const typeHint =
-      txType !== null && txType !== 0
-        ? " The paying account is a contract-type account (e.g. an HTLC), not your basic wallet account."
-        : "";
-    throw new NimiqTxError(
-      "wrong-sender",
-      `Transaction sender ${friendlyAddress(sender)} does not match your linked wallet ${friendlyAddress(linked.address)}.${typeHint} In Nimiq Pay, switch to the exact account you linked to ChainMate and pay from it.`,
-    );
+  const linkedCanonical = canonicalAddress(linked.address);
+  if (sender !== linkedCanonical) {
+    const creator = await contractCreatorFor(sender, rpc.getAccountByAddress);
+    if (creator !== null && canonicalAddress(creator) === linkedCanonical) {
+      // Owned contract payment (Nimiq Pay style) — verified: only the linked
+      // key could have created this contract, and its funds route back to the
+      // linked wallet on timeout/reclaim.
+    } else {
+      const fromType = (tx as { fromType?: unknown }).fromType;
+      const txType = typeof fromType === "number" ? fromType : null;
+      const typeHint =
+        txType !== null && txType !== 0
+          ? " The paying account is a contract-type account, but not one created by your linked wallet."
+          : "";
+      throw new NimiqTxError(
+        "wrong-sender",
+        `Transaction sender ${friendlyAddress(sender)} does not match your linked wallet ${friendlyAddress(linked.address)}.${typeHint} In Nimiq Pay, switch to the exact account you linked to ChainMate and pay from it.`,
+      );
+    }
   }
 
   // 5. Recipient must be exactly the treasury (canonical compare).
@@ -546,6 +566,36 @@ function friendlyAddress(address: string): string {
   const compact = canonicalAddress(address);
   if (compact.length !== 36) return compact || "(unknown)";
   return `${compact.slice(0, 4)} ${(compact.slice(4).match(/.{1,4}/g) ?? []).join(" ")}`;
+}
+
+/**
+ * If `account` is a contract account created by a user wallet (HTLC or
+ * vesting), return its creator address; anything else returns null.
+ * Fail closed: any lookup error (missing RPC config, node down, malformed
+ * body) returns null, which routes to the plain wrong-sender rejection.
+ */
+async function contractCreatorFor(
+  account: string,
+  lookup?: NonNullable<VerifyDeps["rpc"]>["getAccountByAddress"],
+): Promise<string | null> {
+  if (!lookup) return null;
+  try {
+    const raw = await lookup(account, { timeoutMs: 10_000 });
+    if (!raw || typeof raw !== "object") return null;
+    const acct = raw as {
+      type?: number | string;
+      sender?: unknown;
+      owner?: unknown;
+    };
+    const type = typeof acct.type === "number" ? acct.type : String(acct.type ?? "").toLowerCase();
+    const isContract =
+      type === 2 || type === 3 || type === "htlc" || type === "vesting";
+    if (!isContract) return null;
+    const creator = acct.sender ?? acct.owner;
+    return typeof creator === "string" && creator ? creator : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyIncomingTransaction(

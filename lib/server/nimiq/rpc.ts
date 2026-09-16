@@ -52,6 +52,10 @@ export interface NimiqRpcAccount {
   address: string;
   balance: number | string;
   type?: number | string;
+  /** HTLC creator address (v2 field) — present on htlc accounts. */
+  sender?: string;
+  /** Vesting owner address (v2 field) — present on vesting accounts. */
+  owner?: string;
 }
 
 export interface NimiqRpcTransaction {

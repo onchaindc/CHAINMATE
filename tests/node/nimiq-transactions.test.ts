@@ -48,6 +48,8 @@ function makeDeps(options: {
   rpcError?: Error;
   consumed?: Map<string, TxModule.VerifiedNimiqTransaction>;
   treasury?: string;
+  /** Account objects served by the fake getAccountByAddress, keyed by compact address. */
+  accounts?: Record<string, unknown>;
 }) {
   const consumed = options.consumed ?? new Map();
   const store: TxModule.NimiqTxStore = {
@@ -67,6 +69,12 @@ function makeDeps(options: {
   if (options.treasury !== undefined) {
     process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = options.treasury;
   }
+  const accounts = options.accounts ?? {};
+  const lookupAccount = async (address: string): Promise<unknown> => {
+    const key = canonical(address);
+    if (!(key in accounts)) throw new Error("account not found");
+    return accounts[key];
+  };
   const rpc = options.rpcError
     ? {
         getTransactionByHash: async (): Promise<never> => {
@@ -75,6 +83,7 @@ function makeDeps(options: {
         getBlockNumber: async (): Promise<never> => {
           throw options.rpcError!;
         },
+        getAccountByAddress: lookupAccount,
       }
     : {
         getTransactionByHash: async (hash: string): Promise<FakeTx | null> => {
@@ -85,6 +94,7 @@ function makeDeps(options: {
           return { ...rest, hash: templateHash === "" ? "" : hash };
         },
         getBlockNumber: async (): Promise<number> => options.currentHeight ?? 1000,
+        getAccountByAddress: lookupAccount,
       };
   return {
     deps: {
@@ -298,7 +308,67 @@ test("wrong sender from a contract-type account gets the contract hint", async (
     (err: unknown) =>
       err instanceof tx.NimiqTxError &&
       err.kind === "wrong-sender" &&
-      err.message.includes("contract-type account"),
+      err.message.includes("not one created by your linked wallet"),
+  );
+});
+
+test("a payment from an HTLC contract CREATED BY the linked wallet is accepted", async () => {
+  // Verified live on testnet: Nimiq Pay's sendBasicTransaction pays from HTLC
+  // wrapper contracts whose creator (`sender` field) is the linked wallet —
+  // only the linked key could create it or reclaim its funds.
+  const HTLC = "NQ83S0796YS4DGCLVBV8449NJJ57TC0P0TVH";
+  const { deps, consumed } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ83 S079 6YS4 DGCL VBV8 449N JJ57 TC0P 0TVH",
+      fromType: 2,
+    } as unknown as Partial<FakeTx>),
+    accounts: {
+      [HTLC]: {
+        address: HTLC,
+        balance: 21999800000,
+        type: "htlc",
+        sender: LINKED_ADDRESS, // creator = linked wallet
+        totalAmount: 22000000000,
+      },
+    },
+  });
+  const result = await tx.verifyIncomingTransaction("d".repeat(64), BASE_OBLIGATION, deps);
+  assert.equal(result.amountLuna, "500000");
+  assert.equal(consumed.size, 1);
+});
+
+test("a payment from a contract created by someone ELSE is still rejected", async () => {
+  const HTLC = "NQ83S0796YS4DGCLVBV8449NJJ57TC0P0TVH";
+  const { deps } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ83 S079 6YS4 DGCL VBV8 449N JJ57 TC0P 0TVH",
+      fromType: 2,
+    } as unknown as Partial<FakeTx>),
+    accounts: {
+      [HTLC]: {
+        address: HTLC,
+        type: "htlc",
+        sender: "NQ54FTGYF6VJEJPUNSMNRA5Q0K218EQTQ05P", // someone else
+      },
+    },
+  });
+  await assert.rejects(
+    () => tx.verifyIncomingTransaction("c".repeat(64), BASE_OBLIGATION, deps),
+    (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "wrong-sender",
+  );
+});
+
+test("contract-ownership lookup failure fails closed (plain wrong-sender)", async () => {
+  const { deps } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ83 S079 6YS4 DGCL VBV8 449N JJ57 TC0P 0TVH",
+      fromType: 2,
+    } as unknown as Partial<FakeTx>),
+    // No `accounts` entry: the fake lookup throws, as a down node would.
+  });
+  await assert.rejects(
+    () => tx.verifyIncomingTransaction("b".repeat(64), BASE_OBLIGATION, deps),
+    (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "wrong-sender",
   );
 });
 
