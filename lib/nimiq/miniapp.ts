@@ -103,6 +103,28 @@ function describeUnknown(value: unknown): string | null {
 }
 
 /**
+ * Known wallet failures whose raw text is misleading or empty. Matched on
+ * the combined type+message; when one matches, its real-cause text is used
+ * instead. The original payload still reaches the console via guard().
+ */
+const KNOWN_ERROR_PATTERNS: Array<{
+  match: RegExp;
+  kind: NimiqWalletError["kind"];
+  message: string;
+}> = [
+  {
+    // Nimiq Pay fails the send when the wallet has not finished syncing the
+    // account/chain ("Failed to send payment transaction: Something went
+    // wrong syncing your account"). The raw string tells the user nothing
+    // actionable — say what actually happened instead.
+    match: /syncing your account/i,
+    kind: "provider",
+    message:
+      "Nimiq Pay is still syncing your account. Open Nimiq Pay, wait for it to finish syncing (and check your connection), then try again.",
+  },
+];
+
+/**
  * Convert an SDK ErrorResponse or thrown value into a NimiqWalletError.
  *
  * The SDK's host adapter does not guarantee an Error instance: Nimiq Pay
@@ -122,8 +144,10 @@ export function normalizeNimiqError(err: unknown): NimiqWalletError {
       // Prefer a readable message; fall back through type, then data.
       const rawMessage = describeUnknown(rec.message) ?? describeUnknown(rec.data) ?? "";
       const type = typeof rec.type === "string" ? rec.type : describeUnknown(rec.type) ?? "";
+      const combined = `${type} ${rawMessage}`;
+      const known = KNOWN_ERROR_PATTERNS.find((p) => p.match.test(combined));
+      if (known) return { kind: known.kind, message: known.message };
       const message = rawMessage || `The Nimiq wallet rejected the request${type ? ` (${type})` : ""}`;
-      const combined = `${type} ${message}`;
       const kind: NimiqWalletError["kind"] = /reject|denied|cancel/i.test(combined)
         ? "user-rejected"
         : /timed?\s*out|timeout/i.test(combined)
@@ -154,6 +178,8 @@ export function normalizeNimiqError(err: unknown): NimiqWalletError {
     }
   }
   const message = describeUnknown(err) ?? "The Nimiq wallet request failed";
+  const known = KNOWN_ERROR_PATTERNS.find((p) => p.match.test(message));
+  if (known) return { kind: known.kind, message: known.message };
   const kind: NimiqWalletError["kind"] = /not injected|running inside/i.test(message)
     ? "provider"
     : "unknown";
@@ -288,6 +314,39 @@ export async function signNimiqMessage(
   message: string | { message: string; isHex?: boolean },
 ): Promise<NimiqResult<SignatureResult>> {
   return guard(() => nimiq.sign(message));
+}
+
+/**
+ * Best-effort pre-flight for transaction sending: Nimiq Pay cannot build a
+ * transaction before its chain/account sync has finished (message signing
+ * needs no consensus — sending does, which is why binding works and paying
+ * then fails with the wallet's opaque "syncing your account" error).
+ *
+ * IMPORTANT: `isConsensusEstablished` is NOT part of the SDK's
+ * WALLET_METHODS set — on an in-app provider with no RPC URL configured it
+ * throws "No RPC URL configured", so this check must never be load-bearing:
+ * any failure or `false` result skips silently and the send is attempted
+ * anyway (fail-open, matching the SDK's own opt-in design). It is a pure
+ * bonus when the provider supports it.
+ */
+export async function waitForNimiqConsensus(
+  nimiq: Awaited<ReturnType<typeof sdkInit>>,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  const method = (nimiq as { isConsensusEstablished?: () => Promise<boolean> })
+    .isConsensusEstablished;
+  if (typeof method !== "function") return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const established = await guard(async () => {
+      const r = await method.call(nimiq);
+      return typeof r === "boolean" ? r : true;
+    });
+    if (!established.ok) return true; // unsupported/broken: skip, don't block
+    if (established.value) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return true; // timed out: attempt the send anyway, let it fail with its real error
 }
 
 /** Sign + send a basic transaction. Value/fee are luna integers (bigint-safe). */

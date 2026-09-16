@@ -25,6 +25,7 @@ import {
   connectNimiq,
   nimiqPaymentFailureMessage,
   sendNimiqBasicTransaction,
+  waitForNimiqConsensus,
 } from "@/lib/nimiq/miniapp";
 import { parseNim } from "@/lib/nimiq/format";
 import { useNimiqWallet } from "@/hooks/use-nimiq-wallet";
@@ -87,14 +88,20 @@ export function useTournamentEntry(playerId: string) {
           throw new Error("NIM treasury is not configured for this deployment.");
         }
         // A malformed recipient makes the WALLET itself fail with a cryptic
-        // internal error ("Something went wrong syncing your account") far
-        // from the real cause. Validate the shape first and say what is
-        // actually wrong: Nimiq addresses are exactly 36 characters.
+        // internal error far from the real cause. Validate the shape first
+        // and say what is actually wrong: Nimiq addresses are exactly 36
+        // characters.
         if (!isPlausibleNimiqAddress(NIMIQ_TREASURY_ADDRESS)) {
           throw new Error(
             `The configured NIM treasury address is invalid (${NIMIQ_TREASURY_ADDRESS.replace(/\s/g, "").length} characters — Nimiq addresses are 36, e.g. NQxx XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX). The deployment operator must correct the treasury configuration.`,
           );
         }
+        // Best-effort sync/consensus pre-flight: Nimiq Pay cannot build a
+        // transaction until its account sync finishes — the same failure the
+        // wallet reports as "Something went wrong syncing your account".
+        // The helper is fail-open (never blocks when unsupported), so this
+        // only ever helps, never hurts.
+        await waitForNimiqConsensus(connected.value);
         const sent = await sendNimiqBasicTransaction(connected.value, {
           recipient: NIMIQ_TREASURY_ADDRESS,
           value: feeLuna,
