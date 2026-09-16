@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 export function SiteFooter() {
@@ -14,41 +13,8 @@ export function SiteFooter() {
 
   return (
     <footer className="border-t border-border/60">
-      <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 sm:flex-row sm:px-6">
-        <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-          <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
-          <span>
-            ChainMate — chess with fair play enforced and a report on how every game was won.
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-5 text-sm text-muted-foreground">
-          <Link href="/create" className="transition-colors hover:text-foreground">
-            Play
-          </Link>
-          <Link href="/join" className="transition-colors hover:text-foreground">
-            Join
-          </Link>
-          <Link href="/watch" className="transition-colors hover:text-foreground">
-            Watch
-          </Link>
-          <Link href="/games" className="transition-colors hover:text-foreground">
-            Games
-          </Link>
-          <Link href="/leaderboard" className="transition-colors hover:text-foreground">
-            Leaderboard
-          </Link>
-          <Link href="/profile" className="transition-colors hover:text-foreground">
-            Profile
-          </Link>
-          <a
-            href="https://github.com/onchaindc/CHAINMATE"
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono text-xs transition-colors hover:text-foreground"
-          >
-            onchaindc/CHAINMATE
-          </a>
-        </div>
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 text-center sm:px-6">
+        <p className="text-xs text-muted-foreground">Created by onchaindc</p>
       </div>
     </footer>
   );
