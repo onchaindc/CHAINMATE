@@ -118,14 +118,13 @@ function ProfileContent() {
   const country = stats?.country;
 
   return (
-    /* Two columns from `lg`: the identity/account stack on the left (the main
-       contents, nudged narrower), achievements + friends + games on the right.
-       The single max-w-3xl column was why the page scrolled for screens: every
-       box had the full width to itself and stacked one after another. The
-       narrower left column keeps the two sides from ever colliding, and the
-       right column spreads the boxes out so the pairing doesn't read compacted. */
+    /* Two columns from `lg`, starting right under the identity header. The
+       header deliberately sits ABOVE the grid: inside it, it became a grid
+       item, the account stack spilled into the right column, and achievements
+       drifted to a row of its own — a big hole under the name. Here the left
+       column is the account stack and the right column holds friends,
+       achievements and games from the same top line, so nothing floats. */
     <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 lg:py-14">
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start lg:gap-10">
       <ProfileHeader
         name={name}
         eyebrow="Your profile"
@@ -147,10 +146,13 @@ function ProfileContent() {
         </div>
       )}
 
+      {error && <ErrorNote message={error} className="mt-6" />}
+
+      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
       {/* ============ LEFT COLUMN — the main contents ============ */}
       <div className="min-w-0 space-y-6">
       {/* Optional country — editable, shown as a flag next to the name */}
-      <Panel className="mt-6 flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms] lg:mt-0">
+      <Panel className="flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms]">
         <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <label
           htmlFor="country"
