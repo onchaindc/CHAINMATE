@@ -13,11 +13,9 @@ import { Button } from "@/components/ui/button";
  */
 export function WaitingPanel({
   gameId,
-  local,
   challenge,
 }: {
   gameId: string;
-  local?: boolean;
   challenge?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
@@ -49,18 +47,12 @@ export function WaitingPanel({
         </span>
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">
-            {challenge
-              ? "Challenge sent"
-              : local
-                ? "Local game — this browser only"
-                : "Game created — invite your opponent"}
+            {challenge ? "Challenge sent" : "Game created — invite your opponent"}
           </h3>
           <p className="text-xs text-muted-foreground">
             {challenge
               ? "They've been notified wherever they are in ChainMate. The board starts the moment they accept."
-              : local
-                ? "Open the link in another tab or browser on this machine to play Black."
-                : "Send this link to a friend — they join as Black from any device, no account needed."}
+              : "Send this link to a friend — they join as Black from any device, no account needed."}
           </p>
         </div>
       </div>

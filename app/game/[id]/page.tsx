@@ -24,30 +24,28 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BoardSettings } from "@/components/game/board-settings";
 import { CaptureTray } from "@/components/game/capture-tray";
 import { ChessBoard } from "@/components/game/chess-board";
-import { CommentaryPanel } from "@/components/game/commentary-panel";
 import { EndGameModal } from "@/components/game/end-game-modal";
 import { MoveHistory } from "@/components/game/move-history";
 import { PlayerCard } from "@/components/game/player-card";
 import { StatusBar } from "@/components/game/status-bar";
 import { WaitingPanel } from "@/components/game/waiting-panel";
-import { useAiCommentary } from "@/hooks/use-ai-commentary";
 import { useAiOpponent } from "@/hooks/use-ai-opponent";
 import { useBoardPrefs } from "@/hooks/use-board-prefs";
 import { useClocks } from "@/hooks/use-clocks";
 import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
+import { getStore } from "@/lib/store";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
 import { describeResult } from "@/lib/game-result";
 import { AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type MobileTab = "moves" | "analysis" | "info";
+type MobileTab = "moves" | "info";
 
 const MOBILE_TABS: { id: MobileTab; label: string }[] = [
-  { id: "moves", label: "Moves" },
-  { id: "analysis", label: "Analysis" },
-  { id: "info", label: "Match" },
+  { id: "moves", label: "Move history" },
+  { id: "info", label: "Match info" },
 ];
 
 export default function GamePage() {
@@ -80,18 +78,25 @@ export default function GamePage() {
     analyzing,
   } = useGame(id);
 
-  const { insight, status: aiStatus, retry: retryAnalysis, enabled: aiEnabled } = useAiCommentary(game);
   const isAiGame = game?.opponent === AI_PLAYER_ID;
   useAiOpponent({ game, submitAiMove, disabled: busy !== null });
 
   const gameOver = game ? isGameOver(game.status) : false;
 
   /* ------------------------------------------------------------------ */
-  /* State-aware replay: when the game ends, the board becomes a replay  */
-  /* on the same URL. ?replay=1 links land the same way.                 */
+  /* Board-time travel. `ply` is how many moves of the recorded game the
+     board shows; null means "live". After the game ends it becomes a full
+     replay (?replay=1 links land the same way). WHILE THE GAME IS LIVE it
+     powers the step-back control: a player who missed the opponent's move
+     rewinds the board to see it, then follows the moves forward to catch
+     up. Any new move snaps the board back to live, and making your own
+     move while stepped back is blocked (the input targets the live
+     position, not the one on screen). */
   /* ------------------------------------------------------------------ */
   const [ply, setPly] = useState<number | null>(null);
   const replayMode = gameOver && ply !== null;
+  /** Stepped back during a live game — board shows history, moves disabled. */
+  const reviewing = !gameOver && ply !== null && game !== null && ply < game.moves.length;
 
   useEffect(() => {
     if (game && gameOver && ply === null) {
@@ -99,18 +104,30 @@ export default function GamePage() {
     }
   }, [game, gameOver, ply]);
 
-  // Keyboard navigation while replaying (←/→/Home/End).
+  // A new move arriving while reviewing snaps the board back to live —
+  // the player has seen what they needed; play continues on the real position.
   useEffect(() => {
-    if (!replayMode || !game) return;
+    if (!game || gameOver || ply === null) return;
+    if (ply > game.moves.length) setPly(game.moves.length);
+    else if (ply === game.moves.length) setPly(null);
+  }, [game?.moves.length, gameOver]); // eslint-disable-line react-hooks/exhaustive-deps -- ply intentionally read once per move-count change
+
+  // Keyboard navigation while replaying or reviewing (←/→/Home/End).
+  useEffect(() => {
+    if ((!replayMode && !reviewing) || !game) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") setPly((p) => Math.max(0, (p ?? 0) - 1));
-      else if (e.key === "ArrowRight") setPly((p) => Math.min(game.moves.length, (p ?? 0) + 1));
+      if (e.key === "ArrowLeft") setPly((p) => Math.max(0, (p ?? game.moves.length) - 1));
+      else if (e.key === "ArrowRight")
+        setPly((p) => {
+          const next = Math.min(game.moves.length, (p ?? 0) + 1);
+          return next >= game.moves.length && !gameOver ? null : next; // forward past live = live
+        });
       else if (e.key === "Home") setPly(0);
-      else if (e.key === "End") setPly(game.moves.length);
+      else if (e.key === "End") setPly(gameOver ? game.moves.length : null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [replayMode, game]);
+  }, [replayMode, reviewing, game, gameOver]);
 
   const boardRef = useRef<HTMLDivElement>(null);
   const startReplay = useCallback(() => {
@@ -148,7 +165,8 @@ export default function GamePage() {
   }, [game?.fen]);
 
   /* ------------------------------------------------------------------ */
-  /* Post-game modal: appears automatically when the game ends — once.    */
+  /* Post-game modal: appears once, ~1.5s AFTER the final move so the     */
+  /* player actually sees the checkmate land before the popup covers it.  */
   /* ------------------------------------------------------------------ */
   const [resultOpen, setResultOpen] = useState(false);
   /**
@@ -157,16 +175,23 @@ export default function GamePage() {
    * become true again, so a player who dismissed it got it back seconds later
    * — and a late poll landing an older snapshot made it flicker between
    * results. The result banner below stays put regardless, so closing the
-   * modal never loses the information.
+   * modal never loses the information. Once dismissed it stays dismissed:
+   * the timer only ever fires once per result.
    */
   const announcedResult = useRef<string | null>(null);
+  const modalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!game || !gameOver) return;
     const key = `${game.id}:${game.status}`;
     if (announcedResult.current === key) return;
     announcedResult.current = key;
-    setResultOpen(true);
-  }, [game, gameOver]);
+    // Let the final position breathe: the mating move is on the board and
+    // the banner is up before the celebration covers it.
+    modalTimer.current = setTimeout(() => setResultOpen(true), 1500);
+    return () => {
+      if (modalTimer.current) clearTimeout(modalTimer.current);
+    };
+  }, [game?.id, game?.status, gameOver]); // eslint-disable-line react-hooks/exhaustive-deps -- key narrows the trigger
 
   /* ------------------------------------------------------------------ */
   /* Mobile: the match console shows one section at a time.              */
@@ -313,7 +338,11 @@ export default function GamePage() {
     waiting && Boolean(game.invited) && game.invited !== myId;
   /** Waiting, and this viewer really can sit down as Black. */
   const canJoinAsBlack = waiting && mySide === null && !challengeToSomeoneElse;
-  const interactive = !waiting && !gameOver && mySide !== null && myTurn && busy !== "move";
+  /* Reviewing a past position mid-game locks the board: the input would
+     otherwise target the live position while the player is looking at an
+     older one. Follow the moves back to live to keep playing. */
+  const interactive =
+    !waiting && !gameOver && !reviewing && mySide !== null && myTurn && busy !== "move";
   const baseOrientation: "white" | "black" = mySide === "black" ? "black" : "white";
   const orientation: "white" | "black" = flipped
     ? baseOrientation === "white"
@@ -335,10 +364,6 @@ export default function GamePage() {
   const drawOfferFromMe = drawOffer !== undefined && drawOffer.by === myId;
   const drawOfferFromOpponent =
     drawOffer !== undefined && mySide !== null && drawOffer.by !== myId;
-
-  const aiHint = aiEnabled
-    ? null
-    : "Turn on AI commentary in the deployment settings to unlock deeper analysis.";
 
   const playerName = (playerId: string) => {
     // The computer opponent is a named player, chess.com-style.
@@ -396,25 +421,15 @@ export default function GamePage() {
     );
   };
 
-  const currentPly = replayMode ? (ply ?? 0) - 1 : game.moves.length - 1;
+  const currentPly = replayMode || reviewing ? (ply ?? 0) - 1 : game.moves.length - 1;
   const movesSection = (
     <MoveHistory
       moves={game.moves}
       currentPly={currentPly}
-      /* Jumping the board is only offered once the game is over. Mid-game the
-         board has to show the position the players are actually playing —
-         anything else invites a move from a position that no longer exists. */
-      onSelectPly={gameOver ? (p) => setPly(p) : undefined}
-    />
-  );
-  const analysisSection = (
-    <CommentaryPanel
-      entries={game.commentary}
-      aiInsight={insight}
-      aiStatus={aiStatus}
-      aiEnabled={aiEnabled}
-      aiHint={aiHint}
-      onRetry={retryAnalysis}
+      /* Clicking a move walks the board to that moment — live or after the
+         game. While it's your turn the input is locked until you follow the
+         moves back to live (the banner under the board says so). */
+      onSelectPly={(p) => setPly(p >= game.moves.length ? (gameOver ? p : null) : p)}
     />
   );
 
@@ -441,11 +456,7 @@ export default function GamePage() {
         <div className="flex items-center justify-between">
           <dt className="text-muted-foreground">Mode</dt>
           <dd className="capitalize text-foreground/85">
-            {game.backend === "genlayer"
-              ? "Online"
-              : game.backend === "hosted"
-                ? "Online"
-                : "Local"}
+            {isAiGame ? "vs Computer" : "Online"}
           </dd>
         </div>
         {game.endedAt && (
@@ -481,11 +492,7 @@ export default function GamePage() {
             {gameOver ? "Match report" : "Chess match"}
           </h1>
           <p className="text-2xs text-muted-foreground">
-            {game.backend === "genlayer"
-              ? "Online match"
-              : game.backend === "local"
-                ? "Local match"
-                : "Online match"}
+            {isAiGame ? "vs Computer" : "Online match"}
             {game.timeControl ? ` · ${game.timeControl}` : ""}
           </p>
         </div>
@@ -547,12 +554,15 @@ export default function GamePage() {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1fr)_400px]">
-        {/* Board column — the visual anchor. Its width is capped by the space
-            left over vertically, which is what keeps the whole column inside
-            one viewport at any window size. */}
+      {/* The board is the gameplay — it gets the whole row and sizes to the
+          viewport height (minus nav, header, cards and controls) so it is as
+          large as the screen allows. The match console — move history and game
+          info, the analysis panel is gone — sits BELOW the board as a full-
+          width band with a generous max width of its own, so on desktop you
+          glance down to read the moves instead of sharing a column with them. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-5">
         <div
-          className="mx-auto flex w-full min-w-0 max-w-[640px] flex-col gap-2.5 lg:max-w-[min(100%,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]"
+          className="mx-auto flex w-full min-w-0 max-w-[min(100%,calc(100dvh-var(--nav-h)-var(--board-chrome)))] flex-col gap-2.5"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
@@ -617,11 +627,71 @@ export default function GamePage() {
             </div>
           )}
 
-          {/* Live actions */}
+          {/* Live actions — or, while stepped back, the review controls. The
+              review row replaces the action row entirely: pieces can't be
+              moved from a past position, so the row's job is to get you back
+              to the present. */}
           {!replayMode && (
             <div className="shrink-0 space-y-1.5">
+              {reviewing ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/[0.06] px-3 py-2">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setPly(Math.max(0, (ply ?? 0) - 1))}
+                      disabled={ply === 0}
+                      aria-label="Previous move"
+                    >
+                      <ChevronLeft aria-hidden />
+                    </Button>
+                    <span className="min-w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
+                      {ply} / {game.moves.length}
+                    </span>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setPly(ply === game.moves.length - 1 ? null : ply! + 1)}
+                      aria-label="Next move"
+                    >
+                      <ChevronRight aria-hidden />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setPly(0)}
+                      disabled={ply === 0}
+                      aria-label="Back to the start"
+                    >
+                      <SkipBack aria-hidden />
+                    </Button>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => setPly(null)}
+                    className="gap-1.5"
+                  >
+                    <SkipForward aria-hidden />
+                    Back to live
+                  </Button>
+                </div>
+              ) : (
+              <>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-1">
+                  {/* Step back through the moves while the game is live — catch
+                      up on what you missed, then jump forward to the present. */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={game.moves.length === 0}
+                    onClick={() => setPly(game.moves.length - 1)}
+                    className="gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    aria-label="Review previous moves"
+                  >
+                    <SkipBack className="h-3.5 w-3.5" aria-hidden />
+                    Back
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -748,16 +818,17 @@ export default function GamePage() {
                               ? "Your turn — click a piece, then a destination."
                               : ""}
               </p>
+              </>
+            )}
             </div>
           )}
         </div>
 
-        {/* Match console */}
-        <div className="flex min-h-0 min-w-0 flex-col gap-3 lg:overflow-y-auto lg:pr-1">
+        {/* Match console — full width beneath the board. */}
+        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:max-w-4xl">
           {waiting && mySide === "white" && (
             <WaitingPanel
               gameId={game.id}
-              local={isLocalGameId(game.id)}
               challenge={Boolean(game.invited)}
             />
           )}
@@ -803,19 +874,8 @@ export default function GamePage() {
               ))}
             </div>
 
-            {/* Desktop: everything stacked, internally scrollable */}
-            <div className="hidden lg:block">
-              {movesSection}
-              {analysisSection}
-              {gameInfo}
-            </div>
-
-            {/* Mobile: active tab only */}
-            <div className="lg:hidden">
-              {mobileTab === "moves" && movesSection}
-              {mobileTab === "analysis" && analysisSection}
-              {mobileTab === "info" && gameInfo}
-            </div>
+            {movesSection}
+            {gameInfo}
           </div>
         </div>
       </div>
@@ -830,12 +890,23 @@ export default function GamePage() {
           analyzing={analyzing || busy === "summary"}
           onGenerateSummary={generateSummary}
           onRematch={
-            game.backend === "hosted" && !isAiGame
+            isAiGame
               ? async () => {
-                  const next = await rematch();
+                  // Fresh game against the same computer opponent, same level
+                  // and clock. The colour draw is random again, exactly like
+                  // starting from the AI page.
+                  const next = await getStore("local").createAiGame(
+                    game.aiDifficulty ?? "casual",
+                    game.timeControl ? { timeControl: game.timeControl } : undefined,
+                  );
                   router.push(`/game/${next.id}`);
                 }
-              : undefined
+              : game.backend === "hosted"
+                ? async () => {
+                    const next = await rematch();
+                    router.push(`/game/${next.id}`);
+                  }
+                : undefined
           }
           onReplay={() => {
             setResultOpen(false);

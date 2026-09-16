@@ -177,7 +177,10 @@ export class LocalGameStore implements GameStore {
     return this.save(game);
   }
 
-  async createAiGame(difficulty: AiDifficulty = "casual"): Promise<GameState> {
+  async createAiGame(
+    difficulty: AiDifficulty = "casual",
+    options?: CreateGameOptions,
+  ): Promise<GameState> {
     const now = Date.now();
     const id = `${LOCAL_GAME_PREFIX}${randomHex(6)}`;
     const game: GameState = {
@@ -192,6 +195,11 @@ export class LocalGameStore implements GameStore {
       summary: "",
       backend: "local",
       aiDifficulty: difficulty,
+      // A real clock for solo play — 10+0 unless a caller says otherwise. The
+      // clock machinery (stamped moves, maybeResolveTimeout, the flag-fall
+      // trigger on the game page) is backend-agnostic, so a timed AI game
+      // behaves exactly like a timed human one.
+      timeControl: options?.timeControl,
       createdAt: now,
       updatedAt: now,
       startedAt: now,

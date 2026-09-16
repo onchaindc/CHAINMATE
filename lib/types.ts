@@ -254,7 +254,7 @@ export interface CreateGameOptions {
 export interface GameStore {
   createGame(options?: CreateGameOptions): Promise<GameState>;
   /** Start a single-player game against the built-in on-device AI. */
-  createAiGame(difficulty?: AiDifficulty): Promise<GameState>;
+  createAiGame(difficulty?: AiDifficulty, options?: CreateGameOptions): Promise<GameState>;
   joinGame(id: string): Promise<GameState>;
   getGame(id: string): Promise<GameState | null>;
   submitMove(id: string, from: string, to: string, promotion?: string): Promise<GameState>;

@@ -31,10 +31,13 @@ import { cn } from "@/lib/utils";
  * play without an account.
  */
 
+const TIME_CONTROLS = ["No clock", "5 + 0", "10 + 0", "15 + 10"] as const;
+
 export default function SoloPage() {
   const router = useRouter();
   const { pieceSet } = useBoardPrefs();
   const [difficulty, setDifficulty] = useState<AiDifficulty>(normalizeAiDifficulty());
+  const [timeControl, setTimeControl] = useState<string>("10 + 0");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,13 +67,16 @@ export default function SoloPage() {
     setBusy(true);
     setError(null);
     try {
-      const game = await getStore("local").createAiGame(difficulty);
+      const game = await getStore("local").createAiGame(
+        difficulty,
+        timeControl === "No clock" ? undefined : { timeControl },
+      );
       router.push(`/game/${game.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start the game");
       setBusy(false);
     }
-  }, [router, difficulty]);
+  }, [router, difficulty, timeControl]);
 
   return (
     /* A wider page: the roster + board pair read as a narrow strip in the
@@ -147,6 +153,33 @@ export default function SoloPage() {
             {selected.blurb}
           </p>
 
+          {/* Clock — off by default for casual practice, one tap for a timed
+              game. Same controls the online play box uses. */}
+          <div
+            className="mt-4 grid grid-cols-4 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+            role="radiogroup"
+            aria-label="Time control"
+          >
+            {TIME_CONTROLS.map((tc) => (
+              <button
+                key={tc}
+                type="button"
+                role="radio"
+                aria-checked={timeControl === tc}
+                disabled={busy}
+                onClick={() => setTimeControl(tc)}
+                className={cn(
+                  "rounded-md px-2 py-2 font-mono text-xs tabular-nums transition-all disabled:opacity-60",
+                  timeControl === tc
+                    ? "bg-card font-semibold text-foreground shadow-sm ring-1 ring-primary/30"
+                    : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
+                )}
+              >
+                {tc}
+              </button>
+            ))}
+          </div>
+
           {error && (
             <ErrorNote
               title="Could not start the game"
@@ -170,7 +203,7 @@ export default function SoloPage() {
           </Button>
 
           <p className="mt-3 text-center font-mono text-2xs uppercase tracking-wider text-muted-foreground sm:text-left">
-            You play either colour — the board picks for you · Unrated · No clock
+            You play either colour — the board picks for you · Unrated
           </p>
         </div>
 
