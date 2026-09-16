@@ -171,16 +171,6 @@ export function SiteNav() {
               {menuOpen ? <X aria-hidden /> : <Menu aria-hidden />}
             </button>
           )}
-
-          {!onLanding && (
-            <span
-              className="ml-1 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/80 xl:flex"
-              title="ChainMate watches over every game"
-            >
-              <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
-              Fair play, enforced
-            </span>
-          )}
         </nav>
       </div>
 

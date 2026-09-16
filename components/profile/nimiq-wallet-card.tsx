@@ -139,7 +139,11 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
         )}
       </div>
 
-      {/* Replacement flow: an explicit second tap replaces the bound wallet. */}
+      {/* Replacement flow: an explicit second tap replaces the bound wallet.
+          The button stays enabled outside Nimiq Pay too — tapping it there runs
+          the same re-detect-and-connect path as the main button (a second
+          attempt inside Nimiq Pay often succeeds once the host finished
+          injecting), so it never reads as a dead control. */}
       {connected && wallet && (
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/50 pt-2">
           <p className="text-2xs text-muted-foreground">
@@ -148,8 +152,15 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
           </p>
           <button
             type="button"
-            disabled={busy || provider !== "available"}
-            onClick={() => void link({ replace: true })}
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              if (provider === "available") {
+                void link({ replace: true });
+              } else {
+                recheckProvider();
+              }
+            }}
             className="text-2xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
           >
             Replace wallet…

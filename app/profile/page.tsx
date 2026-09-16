@@ -118,7 +118,14 @@ function ProfileContent() {
   const country = stats?.country;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+    /* Two columns from `lg`: the identity/account stack on the left (the main
+       contents, nudged narrower), achievements + friends + games on the right.
+       The single max-w-3xl column was why the page scrolled for screens: every
+       box had the full width to itself and stacked one after another. The
+       narrower left column keeps the two sides from ever colliding, and the
+       right column spreads the boxes out so the pairing doesn't read compacted. */
+    <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 lg:py-14">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start lg:gap-10">
       <ProfileHeader
         name={name}
         eyebrow="Your profile"
@@ -140,8 +147,10 @@ function ProfileContent() {
         </div>
       )}
 
+      {/* ============ LEFT COLUMN — the main contents ============ */}
+      <div className="min-w-0 space-y-6">
       {/* Optional country — editable, shown as a flag next to the name */}
-      <Panel className="mt-6 flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms]">
+      <Panel className="mt-6 flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms] lg:mt-0">
         <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <label
           htmlFor="country"
@@ -244,62 +253,72 @@ function ProfileContent() {
         showTrend
         className="mt-4 [animation-delay:120ms]"
       />
+      </div>
 
-      {/* Achievements */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:140ms]">
-        <SectionLabel
-          aside={
-            stats && stats.achievements.length > 0
-              ? `${stats.achievements.length}/10 unlocked`
-              : undefined
-          }
-        >
-          Achievements
-        </SectionLabel>
-        <div className="mt-3">
-          {stats ? (
-            <AchievementGrid stats={stats} />
-          ) : (
-            <LoadingRows className="px-0 py-0" rowClassName="h-16 rounded-lg" />
-          )}
+      {/* ============ RIGHT COLUMN ============ */}
+      <div className="min-w-0 space-y-10">
+        {/* Achievements — up beside the stats instead of a full screen down */}
+        <div className="animate-fade-in-up [animation-delay:140ms]">
+          <SectionLabel
+            aside={
+              stats && stats.achievements.length > 0
+                ? `${stats.achievements.length}/10 unlocked`
+                : undefined
+            }
+          >
+            Achievements
+          </SectionLabel>
+          <div className="mt-3">
+            {stats ? (
+              <AchievementGrid stats={stats} />
+            ) : (
+              <LoadingRows className="px-0 py-0" rowClassName="h-16 rounded-lg" />
+            )}
+          </div>
+        </div>
+
+        {/* Recent games — below achievements, with the friends panel between
+            them so the pairing breathes instead of stacking tight. On `lg` the
+            two columns start together, so this lands mid-page rather than at
+            the very bottom. */}
+        <div className="animate-fade-in-up [animation-delay:180ms]">
+          <SectionLabel>Recent games</SectionLabel>
+          <Panel className="mt-3">
+            {games === null ? (
+              <LoadingRows />
+            ) : games.length === 0 ? (
+              <EmptyState
+                icon={Gamepad2}
+                title="No games yet"
+                description="Your games appear here."
+                action={{ href: "/create", label: "Create a game" }}
+                className="py-14"
+              />
+            ) : (
+              <div className="divide-y divide-border/50 px-2 py-2">
+                {games.slice(0, 10).map((game) => (
+                  <GameRow
+                    key={game.id}
+                    game={game}
+                    me={game.backend === "local" ? localMe : playerId}
+                    /* Local games are never rated, so they hold the column open
+                       with a blank rather than claiming a delta of zero. */
+                    delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
+                    names={game.backend === "local" ? undefined : names}
+                  />
+                ))}
+              </div>
+            )}
+          </Panel>
         </div>
       </div>
-
-      {/* Friends + player search */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
-        <FriendsPanel store={hostedStore} />
       </div>
 
-      {/* Recent games */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:180ms]">
-        <SectionLabel>Recent games</SectionLabel>
-        <Panel className="mt-3">
-          {games === null ? (
-            <LoadingRows />
-          ) : games.length === 0 ? (
-            <EmptyState
-              icon={Gamepad2}
-              title="No games yet"
-              description="Your games appear here."
-              action={{ href: "/create", label: "Create a game" }}
-              className="py-14"
-            />
-          ) : (
-            <div className="divide-y divide-border/50 px-2 py-2">
-              {games.slice(0, 10).map((game) => (
-                <GameRow
-                  key={game.id}
-                  game={game}
-                  me={game.backend === "local" ? localMe : playerId}
-                  /* Local games are never rated, so they hold the column open
-                     with a blank rather than claiming a delta of zero. */
-                  delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                  names={game.backend === "local" ? undefined : names}
-                />
-              ))}
-            </div>
-          )}
-        </Panel>
+      {/* Friends + player search — full width beneath both columns, so the
+          search input gets the room it deserves and the right column doesn't
+          grow an endless tail. */}
+      <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
+        <FriendsPanel store={hostedStore} />
       </div>
 
       {/* Danger zone — delete account */}
