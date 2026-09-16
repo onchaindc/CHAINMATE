@@ -43,7 +43,7 @@ export function BoardVisual() {
   const grid = fenGrid();
 
   return (
-    <div className="relative mx-auto w-full max-w-md">
+    <div className="relative mx-auto w-full max-w-xl">
       <div
         className="grid aspect-square grid-cols-8 overflow-hidden rounded-lg shadow-elevation-3 ring-1 ring-border/60"
         role="img"
