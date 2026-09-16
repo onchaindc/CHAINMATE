@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowRight,
   CalendarClock,
+  CheckCircle2,
   Coins,
   Crown,
   Loader2,
@@ -126,6 +127,53 @@ export default function TournamentDetailPage() {
   const entry = useTournamentEntry(identity.playerId);
   /** Reload recovery armed until the first detail load decides on it. */
   const [resumeChecked, setResumeChecked] = useState(false);
+  /**
+   * A payment that JUST verified on-chain. Showed as a full confirmation
+   * banner (not the quiet one-liner) so the moment the money leaves the
+   * wallet the player sees unmistakably that the seat was bought — no more
+   * “did I just get robbed?” after a successful payment.
+   */
+  const [justConfirmed, setJustConfirmed] = useState(false);
+  /**
+   * An entrant who clicked Leave while their payment was still pending.
+   * They ARE out of the tournament (their seat is gone), but their NIM may
+   * still be on-chain pending confirmations — so the confirmation banner
+   * must say that instead of silently vanishing with their money.
+   */
+  const [pendingRejoin, setPendingRejoin] = useState(false);
+
+  // The confirmation moment: the entry flips to paid (the refresh after
+  // onJoined lands it). Fires only on the false→paid TRANSITION — a player
+  // reloading a tournament they already paid for must not get the receipt
+  // banner again.
+  const confirmedPaid =
+    !!detail &&
+    detail.myRole === "entrant" &&
+    detail.summary.status === "registration" &&
+    detail.entries.some((e) => e.playerId === identity.playerId && e.paid);
+  const celebrateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const celebrate = useCallback(() => {
+    setJustConfirmed(true);
+    if (celebrateTimer.current) clearTimeout(celebrateTimer.current);
+    celebrateTimer.current = setTimeout(() => setJustConfirmed(false), 12000);
+  }, []);
+  const prevPaidRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    const prev = prevPaidRef.current;
+    prevPaidRef.current = confirmedPaid;
+    if (confirmedPaid && prev === false) celebrate();
+  }, [confirmedPaid, celebrate]);
+  // Leaving with an unverified payment: keep the tx hash so it can still be
+  // verified (and shown) — the payment itself is not undone by leaving.
+  const stillJoined = detail?.myRole === "entrant";
+  useEffect(() => {
+    if (!stillJoined) {
+      if (entry.pendingTxHash) setPendingRejoin(true);
+      else setPendingRejoin(false);
+    } else {
+      setPendingRejoin(false); // back in — the normal entry UI takes over
+    }
+  }, [stillJoined, entry.pendingTxHash]);
 
   /** Host-only payout dispatch/verify — crash-safe on the server. */
   const runPayoutAction = async (action: "dispatch" | "verify", targetPlayerId: string) => {
@@ -341,6 +389,42 @@ export default function TournamentDetailPage() {
 
       {actionError && <ErrorNote message={actionError} className="mt-4" />}
 
+      {/* ---------- Payment confirmation (the receipt) ---------- */}
+      {isPaid && (justConfirmed || pendingRejoin) && (
+        <div
+          className={cn(
+            "animate-fade-in-up mt-4 rounded-lg border px-4 py-3.5",
+            pendingRejoin
+              ? "border-warning/40 bg-warning/5"
+              : "border-primary/40 bg-primary/10",
+          )}
+          role="status"
+        >
+          <div className="flex items-center gap-3">
+            {pendingRejoin ? (
+              <Coins className="h-5 w-5 shrink-0 text-warning" aria-hidden />
+            ) : (
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+            )}
+            <div className="min-w-0">
+              <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tracking-tight">
+                {pendingRejoin
+                  ? "Payment left your wallet — but you left the tournament"
+                  : "Payment confirmed — you're in!"}
+                <span className="font-mono tabular-nums text-foreground/80">
+                  {displayNim(entryFeeLuna)} NIM
+                </span>
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {pendingRejoin
+                  ? "The transaction is still on-chain. If it verifies, rejoin below or verify your payment — already-sent funds are never charged twice."
+                  : `${displayNim(entryFeeLuna)} NIM received from your linked wallet and verified on-chain. Your seat is secured.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ---------- Paid entry panel (Phase 2B) ---------- */}
       {isPaid && isNimiqEnabled() && (
         <PaidEntryPanel
@@ -349,8 +433,10 @@ export default function TournamentDetailPage() {
           joined={joined}
           paymentPending={myPaymentPending}
           entry={entry}
+          celebrating={justConfirmed}
           onJoined={() => {
             storePendingTx(id, null);
+            celebrate(); // the receipt — the load() below flips the data to paid
             void load();
           }}
         />
@@ -732,6 +818,7 @@ function PaidEntryPanel({
   joined,
   paymentPending,
   entry,
+  celebrating,
   onJoined,
 }: {
   detail: TournamentDetailPayload;
@@ -739,13 +826,17 @@ function PaidEntryPanel({
   joined: boolean;
   paymentPending: boolean;
   entry: ReturnType<typeof useTournamentEntry>;
+  /** A payment JUST verified — the big receipt banner above owns the moment. */
+  celebrating: boolean;
   onJoined: () => void;
 }) {
   const s = detail.summary;
   const fee = displayNim(entryFeeLuna);
 
-  // Joined + paid: quiet confirmation.
+  // Joined + paid: quiet confirmation. While the celebratory receipt banner
+  // is up this stays silent — one clear confirmation beats two at once.
   if (joined && !paymentPending) {
+    if (celebrating) return null;
     return (
       <div className="animate-fade-in-up mt-4 flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
         <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />

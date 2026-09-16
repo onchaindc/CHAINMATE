@@ -285,7 +285,7 @@ export default function GamePage() {
     return (
       <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 lg:py-5">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
+          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,56rem,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="aspect-square w-full" />
             <Skeleton className="h-14 w-full" />
@@ -563,19 +563,22 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* The board is the gameplay — it gets the whole row and sizes to the
-          viewport height (minus nav, header, cards and controls) so it is as
-          large as the screen allows. The match console — move history and game
-          info, the analysis panel is gone — sits BELOW the board as a full-
-          width band with a generous max width of its own, so on desktop you
-          glance down to read the moves instead of sharing a column with them. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-5">
-        {/* No viewport-height cap on the width: the board is the gameplay, so
-            it fills the page width edge to edge (both ends) and simply grows
-            taller than the fold on shorter screens — the console below stays
-            reachable by scroll, which is exactly what the player asked for. */}
+      {/* Board and match console share one row on desktop: the board is a
+          square, so its size is capped by the space left over VERTICALLY (nav,
+          header, player cards, controls — see --board-chrome in globals.css) —
+          that is the largest fully-visible board the screen allows. The
+          leftover width goes to the match console, which scrolls inside
+          itself. Nothing here exceeds the viewport, and no horizontal space
+          is wasted on empty margins either. Below `lg` it stacks: a phone
+          cannot fit a usable board and a readable console at once. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-8">
+        {/* The board column's WIDTH is the viewport-height budget on desktop:
+            a square board can never be wider than the height it is allowed,
+            or it overflows the fold. It is also capped at 56rem so on very
+            tall monitors the match console keeps a readable column instead of
+            being squeezed to nothing. Mobile stays width-driven. */}
         <div
-          className="mx-auto flex w-full min-w-0 max-w-[100rem] flex-col gap-2.5"
+          className="mx-auto flex w-full min-w-0 flex-col gap-2.5 lg:h-full lg:w-[min(100%,56rem,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))] lg:flex-none"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
@@ -837,8 +840,10 @@ export default function GamePage() {
           )}
         </div>
 
-        {/* Match console — full width beneath the board. */}
-        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:max-w-4xl">
+        {/* Match console — beside the board on desktop, filling the leftover
+            width; below the board on mobile. It scrolls inside itself so the
+            page never scrolls a live game out from under the player. */}
+        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[60rem] lg:flex-1 lg:overflow-y-auto lg:pb-1">
           {waiting && mySide === "white" && (
             <WaitingPanel
               gameId={game.id}
