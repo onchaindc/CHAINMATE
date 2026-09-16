@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { blake2b } from "@noble/hashes/blake2b";
-import { sha512 } from "@noble/hashes/sha2";
+import { sha256, sha512 } from "@noble/hashes/sha2";
 import * as ed from "@noble/ed25519";
 
 if (!ed.etc.sha512Async) ed.etc.sha512Async = async (m: Uint8Array) => sha512(m);
@@ -67,8 +67,15 @@ async function keypair(): Promise<{ privateKey: Uint8Array; publicKeyHex: string
   return { privateKey, publicKeyHex };
 }
 
+/**
+ * Sign exactly the way a real Nimiq wallet does: Ed25519 over
+ * SHA-256("\x16Nimiq Signed Message:\n" + byteLength + message) — the
+ * WalletAccount::prepare_message_for_signature convention from
+ * nimiq/core-rs-albatross (mirrored in lib/server/nimiq/verify.ts).
+ */
 async function signHex(message: string, privateKey: Uint8Array): Promise<string> {
-  const sig = await ed.signAsync(new TextEncoder().encode(message), privateKey);
+  const signed = verify.nimiqMessageSigningHash(message);
+  const sig = await ed.signAsync(signed, privateKey);
   return Array.from(sig, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -150,6 +157,74 @@ test("challenge messages are deterministic in the exact format", () => {
   assert.equal(
     message,
     `chainmate-link:test:acct_x:${"ab".repeat(32)}:1726000000000`,
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* Nimiq signing convention — the real wallet wire format              */
+/* ------------------------------------------------------------------ */
+
+test("nimiqMessageSigningHash reproduces the exact wallet framing", async () => {
+  // Independent reimplementation of WalletAccount::prepare_message_for_signature
+  // (nimiq/core-rs-albatross wallet/src/wallet_account.rs):
+  //   prefix || ascii(byteLength) || message, hashed with SHA-256.
+  const message = "chainmate-link:test:acct_x:ab:1726000000000";
+  const msgBytes = new TextEncoder().encode(message);
+  const expected = sha256(
+    Uint8Array.from([
+      ...new TextEncoder().encode("\x16Nimiq Signed Message:\n"),
+      ...new TextEncoder().encode(String(msgBytes.byteLength)),
+      ...msgBytes,
+    ]),
+  );
+  const actual = verify.nimiqMessageSigningHash(message);
+  assert.equal(actual.byteLength, 32);
+  assert.deepEqual(Array.from(actual), Array.from(expected));
+
+  // Prefix constant: 0x16 = 22 = the byte length of the REMAINING prefix
+  // ("Nimiq Signed Message:\n"), the Bitcoin-style length tag — 23 total.
+  assert.equal(verify.NIMIQ_SIGN_MESSAGE_PREFIX.length, 23);
+  assert.equal(verify.NIMIQ_SIGN_MESSAGE_PREFIX.charCodeAt(0), 22);
+});
+
+test("a REAL Nimiq-Pay-convention signature verifies (regression: raw-bytes bug)", async () => {
+  const { privateKey, publicKeyHex } = await keypair();
+  const message = verify.challengeMessage({
+    network: "test",
+    playerId: "acct_wallet_convention",
+    nonce: "cd".repeat(32),
+    issuedAt: 1726000000000,
+  });
+  const walletSignature = await signHex(message, privateKey); // wallet convention
+  const ok = await verify.verifyChallengeSignature({
+    message,
+    signatureHex: walletSignature,
+    publicKeyHex,
+  });
+  assert.equal(ok, true, "server must verify what Nimiq Pay actually signs");
+});
+
+test("a RAW-BYTES signature (the old broken assumption) is rejected", async () => {
+  const { privateKey, publicKeyHex } = await keypair();
+  const message = "chainmate-link:test:acct_raw:ab:1726000000000";
+  const rawSig = await ed.signAsync(new TextEncoder().encode(message), privateKey);
+  const rawHex = Array.from(rawSig, (b) => b.toString(16).padStart(2, "0")).join("");
+  const ok = await verify.verifyChallengeSignature({
+    message,
+    signatureHex: rawHex,
+    publicKeyHex,
+  });
+  assert.equal(ok, false, "raw-message signatures must never verify");
+});
+
+test("the wallet framing binds byteLength — a different message cannot verify", async () => {
+  const { privateKey, publicKeyHex } = await keypair();
+  const signed = "chainmate-link:test:acct_x:ab:1726000000000";
+  const other = "chainmate-link:test:acct_x:ab:1726000000001"; // same length
+  const sig = await signHex(signed, privateKey);
+  assert.equal(
+    await verify.verifyChallengeSignature({ message: other, signatureHex: sig, publicKeyHex }),
+    false,
   );
 });
 
