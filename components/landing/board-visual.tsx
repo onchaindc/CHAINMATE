@@ -43,17 +43,22 @@ export function BoardVisual() {
   const grid = fenGrid();
 
   return (
-    <div className="relative mx-auto w-full max-w-xl">
+    /* Sized to the space actually available on screen — capped by the column
+       width AND by the viewport height (it's square), so it fills tall screens
+       instead of floating small, without ever overflowing short ones. */
+    <div className="relative mx-auto aspect-square w-full max-w-[min(44rem,calc(100dvh-13rem))]">
       <div
-        className="grid aspect-square grid-cols-8 overflow-hidden rounded-lg shadow-elevation-3 ring-1 ring-border/60"
+        className="grid h-full w-full grid-cols-8 overflow-hidden rounded-lg shadow-elevation-3 ring-1 ring-border/60"
         role="img"
         aria-label="A chess position from a Giuoco Piano opening"
       >
         {grid.flatMap((row, r) =>
           row.map((piece, c) => {
             const dark = (r + c) % 2 === 1;
-            // Same square colours as the live board (components/game/chess-board.tsx)
-            // so the landing page and the product read as one surface.
+            // Fixed brand-gold squares, deliberately NOT the --board-* CSS
+            // variables those live-game themes recolour: a player's in-game
+            // board choice (walnut, slate, forest…) must not repaint the
+            // marketing board. Same hues as the gold theme in globals.css.
             const Piece = piece ? defaultPieces[pieceKey(piece)] : undefined;
             return (
               <div
@@ -61,8 +66,8 @@ export function BoardVisual() {
                 className="flex select-none items-center justify-center"
                 style={{
                   backgroundColor: dark
-                    ? "hsl(var(--board-dark))"
-                    : "hsl(var(--board-light))",
+                    ? "hsl(31 15% 36%)"
+                    : "hsl(41 48% 88%)",
                 }}
               >
                 {Piece ? <Piece /> : null}
