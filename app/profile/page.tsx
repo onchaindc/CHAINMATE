@@ -22,7 +22,7 @@ import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById } from "@/lib/utils";
-import { getIdentityToken } from "@/lib/identity";
+import { getIdentityToken, guestDisplayName } from "@/lib/identity";
 import { Input } from "@/components/ui/input";
 import { isPlayedGame, type GameState, type PlayerStats } from "@/lib/types";
 
@@ -109,7 +109,7 @@ function ProfileContent() {
   // account has no profiles row (identity.linked === false) a rename cannot
   // persist, so the banner below says so instead of letting this placeholder
   // look like a name that just refuses to change.
-  const name = identity.username || "Player";
+  const name = guestDisplayName(identity.username) || "Player";
   const rating = stats?.rating ?? identity.rating;
   const provisional = stats ? stats.games < 5 : false;
   const winRate =

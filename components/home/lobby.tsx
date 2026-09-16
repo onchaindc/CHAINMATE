@@ -186,7 +186,7 @@ export function Lobby() {
             Welcome back
           </p>
           <h1 className="font-display mt-3 truncate text-3xl font-bold tracking-tight">
-            {identity.username || "Player"}
+            {guestDisplayName(identity.username) || "Player"}
           </h1>
         </div>
         <dl className="flex items-center gap-5 sm:gap-7">

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, LogOut, Trophy } from "lucide-react";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
+import { guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,7 +41,7 @@ export function PlayerMenu() {
     return <span className="h-7 w-7 animate-pulse rounded-full bg-secondary/60" aria-hidden />;
   }
 
-  const name = identity.username || "Player";
+  const name = guestDisplayName(identity.username) || "Player";
   const isGuest = identity.isGuest;
 
   const close = () => setOpen(false);
