@@ -166,9 +166,11 @@ export function useNimiqWallet(playerId: string) {
   const unlink = useCallback(async () => {
     setError(null);
     try {
-      await api("/api/nimiq/wallet", {
+      // The DELETE route reads the identity from the query string (same
+      // contract as the GET above) — a JSON body is not parsed there, and
+      // omitting the query param yields "playerId is required".
+      await api(`/api/nimiq/wallet?playerId=${encodeURIComponent(playerId)}`, {
         method: "DELETE",
-        body: JSON.stringify({ playerId }),
       });
       setWallet(null);
       setPhase("idle");
