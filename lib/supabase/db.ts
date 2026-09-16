@@ -479,13 +479,22 @@ export async function claimWaitingRow(
   blackPlayerId: string,
   at: number,
   expectBlack = "",
+  /**
+   * Pool-only colour shuffle: the claimer takes White and `rowOwnerId` Black.
+   * The swap rides inside the same UPDATE that starts the game, so nobody can
+   * ever observe the pairing with one assignment and the game with the other.
+   */
+  claimerTakesWhite = false,
+  rowOwnerId = "",
 ): Promise<GameState | null> {
   const admin = getSupabaseAdmin();
   if (!admin) return null;
   const { data, error } = await admin
     .from("games")
     .update({
-      black_player_id: blackPlayerId,
+      ...(claimerTakesWhite
+        ? { white_player_id: blackPlayerId, black_player_id: rowOwnerId || expectBlack }
+        : { black_player_id: blackPlayerId }),
       status: "active",
       result: "active",
       started_at: at,
@@ -502,7 +511,9 @@ export async function claimWaitingRow(
   // challenge games are broadcast like any other live match once they begin.
   const started: GameState = {
     ...stored,
-    opponent: blackPlayerId,
+    ...(claimerTakesWhite
+      ? { creator: blackPlayerId, opponent: rowOwnerId || expectBlack }
+      : { opponent: blackPlayerId }),
     status: "active",
     visibility: "public",
     startedAt: at,

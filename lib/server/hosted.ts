@@ -1422,11 +1422,10 @@ async function gameForPair(
     }
 
     // Colours are decided by the pair, not by who called first — the two sides
-    // must agree. Alternating on generation keeps a pair that matches
-    // repeatedly from always drawing the same colours.
-    const [firstId, secondId] = [a, b].sort();
-    const white = generation % 2 === 0 ? firstId : secondId;
-    const black = white === firstId ? secondId : firstId;
+    // must agree. A coin flip shuffles who gets White: the same two players
+    // keep meeting, but the sides change from game to game.
+    const white = Math.random() < 0.5 ? a : b;
+    const black = white === a ? b : a;
     const game: GameState = {
       id,
       creator: white,
@@ -1620,7 +1619,22 @@ async function seekInPool(
     }
 
     for (const candidate of ranked) {
-      const game = await claimWaitingRow(candidate.row.id, playerId, now);
+      /* The colour for this pairing is a coin flip, decided before the claim so
+         both instances agree even if the claim response is lost. When the
+         claimer wins the flip they take White and the row's owner gets Black —
+         the swap rides inside the same atomic UPDATE (claimWaitingRow), so a
+         player can never end up reading one assignment while the game holds
+         the other. Players keep meeting each other but no longer always play
+         the same colour. */
+      const claimerTakesWhite = Math.random() < 0.5;
+      const game = await claimWaitingRow(
+        candidate.row.id,
+        playerId,
+        now,
+        "",
+        claimerTakesWhite,
+        candidate.row.white_player_id,
+      );
       if (!game) continue; // someone got there first — try the next candidate
       await writeGame(game);
       return { status: "matched", game };

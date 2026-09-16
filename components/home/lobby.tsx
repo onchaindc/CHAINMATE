@@ -178,7 +178,10 @@ export function Lobby() {
   const first = resume[0];
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 lg:py-14">
+    /* Wider page container: max-w-5xl left a dead margin on desktops while
+       every list inside scrolled or wrapped. max-w-6xl gives the two columns
+       room to breathe without ever stretching content on smaller screens. */
+    <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 lg:py-14">
       {/* Who you are, and where you stand. */}
       <div className="animate-fade-in-up flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="min-w-0">
@@ -205,14 +208,17 @@ export function Lobby() {
 
       {error && <ErrorNote message={error} className="mt-6" />}
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1.35fr_1fr] lg:items-start">
+      {/* A wider main column: the play box was the reason people visit this
+          page, and two narrow columns left it cramped while the sidebar had
+          room to spare. */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-[1.6fr_1fr] lg:items-start">
         <div className="min-w-0 space-y-6">
           {/* ---- Play. The reason the page exists. ---- */}
           <section className="animate-fade-in-up overflow-hidden rounded-xl border border-primary/25 bg-card/60">
             {first ? (
               /* An unfinished game outranks starting a new one — leaving it is
                  how a player loses on time without noticing. */
-              <div className="p-5">
+              <div className="p-5 sm:p-6">
                 <SectionLabel live>Game in progress</SectionLabel>
                 <p className="mt-3 text-sm text-muted-foreground">
                   {first.status === "waiting"
@@ -241,15 +247,15 @@ export function Lobby() {
                 )}
               </div>
             ) : (
-              <div className="p-5">
+              <div className="p-5 sm:p-6">
                 <SectionLabel>Play now</SectionLabel>
-                <p className="mt-3 text-sm text-muted-foreground">
+                <p className="mt-3 max-w-lg text-sm text-muted-foreground">
                   Pairs you with a live player near your rating. Rated, and it
                   counts towards the leaderboard.
                 </p>
 
                 <div
-                  className="mt-4 grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                  className="mt-4 grid max-w-md grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
                   role="radiogroup"
                   aria-label="Time control"
                 >
@@ -291,7 +297,7 @@ export function Lobby() {
                 ) : (
                   <Button
                     size="lg"
-                    className="mt-4 w-full"
+                    className="mt-4 w-full sm:w-auto sm:min-w-64 sm:px-10"
                     disabled={match.starting}
                     onClick={() => void match.start(timeControl)}
                   >
@@ -306,7 +312,7 @@ export function Lobby() {
 
                 {match.error && <ErrorNote message={match.error} className="mt-3" />}
 
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="mt-3 grid max-w-lg gap-2 sm:grid-cols-3">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />
                   <LobbyLink href="/solo" icon={Bot} label="Play the computer" />
                   <LobbyLink href="/join" icon={Link2} label="Join by link" />

@@ -23,9 +23,9 @@ import { cn } from "@/lib/utils";
  * nine-block column. The nav has always called Solo a destination; this is it
  * being one.
  *
- * There is exactly one control here. Everything else about a solo game — White,
- * unrated, untimed — is fixed, so it is stated once as a fact rather than
- * offered as five more things to configure.
+ * There is exactly one control here. Everything else about a solo game — your
+ * colour is drawn per game, unrated, untimed — is fixed, so it is stated once
+ * as a fact rather than offered as five more things to configure.
  *
  * No `RequireProfile`: solo games live in the on-device store, so a guest can
  * play without an account.
@@ -73,8 +73,11 @@ export default function SoloPage() {
   }, [router, difficulty]);
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-14 sm:px-6 lg:py-20">
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start lg:gap-12">
+    /* A wider page: the roster + board pair read as a narrow strip in the
+       middle of a wide window. max-w-6xl and a larger board column use the
+       screen without turning the page into a form. */
+    <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-6 lg:py-20">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] lg:items-start lg:gap-14">
         <div className="min-w-0">
           <PageHeader
             eyebrow="Solo"
@@ -95,7 +98,7 @@ export default function SoloPage() {
                     aria-checked={active}
                     onClick={() => setDifficulty(level.id)}
                     className={cn(
-                      "relative flex w-full items-baseline justify-between gap-4 px-4 py-3 text-left transition-colors",
+                      "relative flex w-full items-baseline justify-between gap-4 px-5 py-3.5 text-left transition-colors",
                       active ? "bg-primary/[0.06]" : "hover:bg-secondary/40",
                     )}
                   >
@@ -112,7 +115,7 @@ export default function SoloPage() {
                     )}
                     <span
                       className={cn(
-                        "truncate text-sm transition-colors",
+                        "truncate text-base transition-colors",
                         active
                           ? "font-medium text-foreground"
                           : "text-muted-foreground",
@@ -152,7 +155,7 @@ export default function SoloPage() {
             />
           )}
 
-          <Button onClick={play} disabled={busy} className="mt-4 w-full" size="lg">
+          <Button onClick={play} disabled={busy} className="mt-4 w-full sm:w-auto sm:min-w-72 sm:px-12" size="lg">
             {busy ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden />
@@ -166,26 +169,30 @@ export default function SoloPage() {
             )}
           </Button>
 
-          <p className="mt-3 text-center font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-            White · Unrated · No clock
+          <p className="mt-3 text-center font-mono text-2xs uppercase tracking-wider text-muted-foreground sm:text-left">
+            You play either colour — the board picks for you · Unrated · No clock
           </p>
         </div>
 
         {/* The board is the point of the app, so the screen shows one. Static —
             it is a preview, not a game — and gone below `lg`, where a phone is
-            better served by the roster alone than by a board it cannot use. */}
+            better served by the roster alone than by a board it cannot use.
+            Capped by viewport height so it fills tall screens without ever
+            pushing the roster off the top of a short one. */}
         <div
           className="animate-fade-in-up hidden [animation-delay:120ms] lg:block"
           aria-hidden
         >
-          <ChessBoard
-            fen={START_FEN}
-            orientation="white"
-            interactive={false}
-            inCheck={false}
-            onMove={() => {}}
-            pieceSet={pieceSet}
-          />
+          <div className="mx-auto w-full max-w-[min(38rem,calc(100dvh-16rem))]">
+            <ChessBoard
+              fen={START_FEN}
+              orientation="white"
+              interactive={false}
+              inCheck={false}
+              onMove={() => {}}
+              pieceSet={pieceSet}
+            />
+          </div>
         </div>
       </div>
     </div>
