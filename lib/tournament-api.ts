@@ -19,6 +19,24 @@ import type {
 
 interface ApiError {
   error?: string;
+  /** Server-defined failure category (e.g. "verification-failed"). */
+  kind?: string;
+}
+
+/**
+ * Error thrown for every non-OK tournament API response. Carries the server's
+ * typed failure `kind` so callers can distinguish a retryable condition
+ * (verification still pending) from a terminal one (wrong sender, replay).
+ */
+export class TournamentApiError extends Error {
+  readonly kind: string | null;
+  readonly status: number;
+  constructor(message: string, opts: { kind?: string | null; status?: number } = {}) {
+    super(message);
+    this.name = "TournamentApiError";
+    this.kind = opts.kind ?? null;
+    this.status = opts.status ?? 0;
+  }
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -33,7 +51,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & ApiError;
   if (!res.ok || data.error) {
-    throw new Error(data.error ?? `Request failed (${res.status})`);
+    throw new TournamentApiError(data.error ?? `Request failed (${res.status})`, {
+      kind: data.kind ?? null,
+      status: res.status,
+    });
   }
   return data;
 }
