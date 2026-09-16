@@ -79,9 +79,21 @@ export function useTournamentEntry(playerId: string) {
         // Real NIM transfer to the treasury. The RECIPIENT is the configured
         // treasury address from Phase 1A config — the same address the
         // server verifies against. Never a client-chosen address.
-        const { NIMIQ_TREASURY_ADDRESS } = await import("@/lib/nimiq/config");
+        const {
+          NIMIQ_TREASURY_ADDRESS,
+          isPlausibleNimiqAddress,
+        } = await import("@/lib/nimiq/config");
         if (!NIMIQ_TREASURY_ADDRESS) {
           throw new Error("NIM treasury is not configured for this deployment.");
+        }
+        // A malformed recipient makes the WALLET itself fail with a cryptic
+        // internal error ("Something went wrong syncing your account") far
+        // from the real cause. Validate the shape first and say what is
+        // actually wrong: Nimiq addresses are exactly 36 characters.
+        if (!isPlausibleNimiqAddress(NIMIQ_TREASURY_ADDRESS)) {
+          throw new Error(
+            `The configured NIM treasury address is invalid (${NIMIQ_TREASURY_ADDRESS.replace(/\s/g, "").length} characters — Nimiq addresses are 36, e.g. NQxx XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX). The deployment operator must correct the treasury configuration.`,
+          );
         }
         const sent = await sendNimiqBasicTransaction(connected.value, {
           recipient: NIMIQ_TREASURY_ADDRESS,
