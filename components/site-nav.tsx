@@ -60,6 +60,11 @@ export function SiteNav() {
   const identity = useIdentity();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  /* The homepage is a welcome, not a hub: its tabs stay out of the header
+     until the player has moved on from it (Play, sign-in, any other page).
+     Only the landing route hides them — everywhere else they render as usual. */
+  const onLanding = pathname === "/";
+
   const isAuthed =
     !identity.isGuest &&
     Boolean(identity.username && identity.username.trim().length > 0);
@@ -115,6 +120,7 @@ export function SiteNav() {
 
         <nav className="flex items-center gap-1 sm:gap-2">
           {links.map(({ href, label, hideBelow }) => {
+            if (onLanding) return null;
             const active = isActive(pathname, href);
             return (
               <Link
@@ -150,28 +156,33 @@ export function SiteNav() {
           </Link>
 
           {/* The overflow menu. Shown up to `lg`, because Leaderboard is still
-              hidden from the bar below that. */}
-          <button
-            type="button"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-expanded={menuOpen}
-            aria-controls="site-nav-menu"
-            aria-label={menuOpen ? "Close menu" : "Open menu"}
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "icon" }),
-              "lg:hidden",
-            )}
-          >
-            {menuOpen ? <X aria-hidden /> : <Menu aria-hidden />}
-          </button>
+              hidden from the bar below that. Nothing to open on the landing
+              page — its tabs are hidden too — so the button rests there. */}
+          {!onLanding && (
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen}
+              aria-controls="site-nav-menu"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "icon" }),
+                "lg:hidden",
+              )}
+            >
+              {menuOpen ? <X aria-hidden /> : <Menu aria-hidden />}
+            </button>
+          )}
 
-          <span
-            className="ml-1 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/80 xl:flex"
-            title="ChainMate watches over every game"
-          >
-            <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
-            Fair play, enforced
-          </span>
+          {!onLanding && (
+            <span
+              className="ml-1 hidden items-center gap-1.5 border-l border-border/70 pl-3 text-2xs font-medium uppercase tracking-wider text-muted-foreground/80 xl:flex"
+              title="ChainMate watches over every game"
+            >
+              <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
+              Fair play, enforced
+            </span>
+          )}
         </nav>
       </div>
 

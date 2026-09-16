@@ -8,22 +8,20 @@ import { cn } from "@/lib/utils";
 
 /**
  * The homepage. The promise on the left, one Play button, the board doing
- * the talking on the right. Signed-in players go to the lobby; visitors
- * start a guest game instantly — no walls between them and a board.
+ * the talking on the right — sized to the screen and vertically centred.
+ * Signed-in players go to the lobby; visitors start a guest game instantly.
  */
 export function Hero() {
   const identity = useIdentity();
   const isAuthed = !identity.isGuest && identity.username && identity.username.trim().length > 0;
 
   return (
-    <section className="relative">
-      <div className="mx-auto grid w-full max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.02fr_0.98fr] lg:py-20">
+    /* Full viewport height below the nav, contents centred in it — the board
+       sits in the middle of the screen, not floating near the top. */
+    <section className="relative lg:flex lg:min-h-[calc(100dvh-3.5rem)] lg:items-center">
+      <div className="mx-auto grid w-full max-w-7xl items-center gap-12 px-4 py-14 sm:px-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-10 lg:py-8">
         <div className="animate-fade-in-up max-w-xl">
-          <p className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-            Fair play, enforced
-          </p>
-          <h1 className="font-display mt-6 text-4xl font-bold leading-[1.06] tracking-tight text-balance sm:text-5xl lg:text-[3.4rem]">
+          <h1 className="font-display text-4xl font-bold leading-[1.06] tracking-tight text-balance sm:text-5xl lg:text-[3.4rem]">
             Play chess.
             <br />
             <span className="text-primary">Think deeper.</span>
