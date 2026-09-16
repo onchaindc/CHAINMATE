@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Play } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { BoardVisual } from "@/components/landing/board-visual";
 import { useIdentity } from "@/lib/identity-context";
 import { cn } from "@/lib/utils";
 
 /**
- * The homepage. One section: the promise and the buttons on the left, the
- * board doing the talking on the right — as large as its column allows.
+ * The homepage. The promise on the left, one Play button, the board doing
+ * the talking on the right. Signed-in players go to the lobby; visitors
+ * start a guest game instantly — no walls between them and a board.
  */
 export function Hero() {
   const identity = useIdentity();
@@ -28,67 +28,17 @@ export function Hero() {
             <br />
             <span className="text-primary">Think deeper.</span>
           </h1>
-          <p className="mt-5 max-w-md text-base leading-relaxed text-muted-foreground">
-            Competitive chess with intelligent analysis. Every move is checked
-            as it&rsquo;s played, and every game ends with a clear report on
-            how it was won.
-          </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            {isAuthed ? (
-              <>
-                <Link
-                  href="/play"
-                  className={cn(
-                    buttonVariants({ size: "lg" }),
-                    "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
-                  )}
-                >
-                  <Play className="h-4 w-4" aria-hidden />
-                  Play
-                </Link>
-                <Link
-                  href="/profile"
-                  className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-                >
-                  Profile
-                  <ArrowRight className="h-4 w-4" aria-hidden />
-                </Link>
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/auth"
-                  className={cn(
-                    buttonVariants({ size: "lg" }),
-                    "bg-primary text-primary-foreground shadow-lg shadow-primary/10 hover:bg-primary/90",
-                  )}
-                >
-                  Sign Up
-                  <ArrowRight className="h-4 w-4" aria-hidden />
-                </Link>
-                <Link
-                  href="/auth?mode=signin"
-                  className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-                >
-                  Sign In
-                </Link>
-                <Link
-                  href="/create"
-                  className={cn(
-                    buttonVariants({ variant: "ghost", size: "lg" }),
-                    "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  Play as Guest
-                </Link>
-              </>
-            )}
+          <div className="mt-9">
+            <Link
+              href={isAuthed ? "/play" : "/create"}
+              className={cn(
+                buttonVariants({ size: "lg" }),
+                "h-12 rounded-full bg-primary px-10 text-base font-medium text-primary-foreground transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/15 active:translate-y-0",
+              )}
+            >
+              Play
+            </Link>
           </div>
-          {!isAuthed && (
-            <p className="mt-3 text-2xs text-muted-foreground">
-              Sign up to save your rating, history and achievements across devices.
-            </p>
-          )}
         </div>
         <div className="animate-fade-in-up [animation-delay:100ms]">
           <BoardVisual />
