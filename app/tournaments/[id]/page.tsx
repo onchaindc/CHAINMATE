@@ -9,6 +9,7 @@ import {
   Crown,
   Loader2,
   Radio,
+  RefreshCw,
   ShieldCheck,
   Swords,
   Timer,
@@ -120,6 +121,8 @@ export default function TournamentDetailPage() {
   // Hooks before any early return (rules-of-hooks): the paid-entry flow is
   // only USED for paid tournaments, but it is always INSTANTIATED.
   const entry = useTournamentEntry(identity.playerId);
+  /** Reload recovery armed until the first detail load decides on it. */
+  const [resumeChecked, setResumeChecked] = useState(false);
 
   /** Host-only payout dispatch/verify — crash-safe on the server. */
   const runPayoutAction = async (action: "dispatch" | "verify", targetPlayerId: string) => {
@@ -135,6 +138,33 @@ export default function TournamentDetailPage() {
       setPayoutBusy(null);
     }
   };
+
+  /**
+   * Reload recovery: if the player paid (a pending tx is stored) but left
+   * during the confirmation window, resume verification for the SAME hash —
+   * never a second payment. Runs once, after the first detail load tells us
+   * whether the seat is still unpaid.
+   */
+  useEffect(() => {
+    if (!detail || resumeChecked || !identity.playerId) return;
+    setResumeChecked(true);
+    const stored = readPendingTx(id);
+    if (!stored) return;
+    const feeLuna = s.entryFeeLuna && s.entryFeeLuna !== "0" ? s.entryFeeLuna : null;
+    const myEntry = detail.entries.find((e) => e.playerId === identity.playerId);
+    const stillUnpaid =
+      feeLuna !== null &&
+      detail.myRole === "entrant" &&
+      !myEntry?.paid &&
+      detail.summary.status === "registration";
+    if (stillUnpaid) {
+      entry.setPendingTxHash(stored);
+      void entry.reverify(id, stored);
+    } else {
+      storePendingTx(id, null); // seat confirmed or gone — nothing pending
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, resumeChecked, identity.playerId]);
 
   if (notFound) {
     return (
@@ -290,7 +320,10 @@ export default function TournamentDetailPage() {
           joined={joined}
           paymentPending={myPaymentPending}
           entry={entry}
-          onJoined={() => void load()}
+          onJoined={() => {
+            storePendingTx(id, null);
+            void load();
+          }}
         />
       )}
       {isPaid && !isNimiqEnabled() && !joined && s.status === "registration" && (
@@ -630,6 +663,23 @@ const ENTRY_PHASE_LABEL: Record<string, string> = {
   verifying: "Verifying payment on-chain…",
 };
 
+/**
+ * The transaction the player sent — kept so a still-unconfirmed payment can
+ * be re-verified instead of re-paid. sessionStorage deliberately: a reload
+ * during the confirmation window must not orphan an on-chain payment.
+ */
+function readPendingTx(tournamentId: string): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  return sessionStorage.getItem(`chainmate:entry-tx:${tournamentId}`);
+}
+
+function storePendingTx(tournamentId: string, txHash: string | null) {
+  if (typeof sessionStorage === "undefined") return;
+  const key = `chainmate:entry-tx:${tournamentId}`;
+  if (txHash) sessionStorage.setItem(key, txHash);
+  else sessionStorage.removeItem(key);
+}
+
 function PaidEntryPanel({
   detail,
   entryFeeLuna,
@@ -706,7 +756,35 @@ function PaidEntryPanel({
           </p>
         )}
 
+        {/* Live confirmation progress while verification keeps retrying — a
+            wallet-accepted payment is on-chain NOW, just not credited yet. */}
+        {entry.progress && (
+          <p className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-foreground/90">
+            {entry.progress}
+          </p>
+        )}
+
         {entry.error && <ErrorNote message={entry.error} />}
+
+        {/* Recovery path for a payment that is on-chain but not yet credited:
+            re-verifies the SAME hash (server-side idempotent). Never a second
+            charge — the pending hash rides in sessionStorage so a reload
+            during the confirmation window does not orphan the payment. */}
+        {entry.pendingTxHash && !entry.busy && (
+          <div className="flex items-center gap-2.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void entry.reverify(s.id, entry.pendingTxHash ?? undefined)}
+            >
+              <RefreshCw aria-hidden />
+              Verify payment
+            </Button>
+            <span className="font-mono text-2xs text-muted-foreground">
+              tx {entry.pendingTxHash.slice(0, 10)}…
+            </span>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           {!entry.wallet.wallet ? (
@@ -735,9 +813,16 @@ function PaidEntryPanel({
               size="sm"
               disabled={entry.busy}
               onClick={() => {
-                void entry.payAndJoin(s.id, displayNim(entryFeeLuna)).then(() => {
-                  if (entry.phase === "joined") onJoined();
-                });
+                void entry
+                  .payAndJoin(s.id, displayNim(entryFeeLuna))
+                  .then(({ outcome, txHash }) => {
+                    if (outcome === "error") return;
+                    // Persist the hash so a reload during the confirmation
+                    // window can recover it — cleared only on confirmation.
+                    if (txHash) storePendingTx(s.id, txHash);
+                    if (outcome === "joined") onJoined();
+                  })
+                  .catch(() => undefined);
               }}
             >
               {entry.busy ? <Loader2 className="animate-spin" aria-hidden /> : <Coins aria-hidden />}
