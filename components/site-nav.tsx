@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, Plus, X } from "lucide-react";
 import { PlayerMenu } from "@/components/auth/player-menu";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { useIdentity } from "@/lib/identity-context";
 import { cn } from "@/lib/utils";
@@ -144,7 +143,6 @@ export function SiteNav() {
             );
           })}
 
-          <ThemeToggle className="hidden sm:inline-flex" />
           <PlayerMenu />
 
           <Link
@@ -224,12 +222,6 @@ export function SiteNav() {
                   </li>
                 );
               })}
-              {/* The theme toggle lives in the bar from `sm` up, so on a phone
-                  this row is the only way to reach it. */}
-              <li className="mt-1 flex items-center justify-between border-t border-border/60 px-3 pt-3 sm:hidden">
-                <span className="text-sm text-muted-foreground">Theme</span>
-                <ThemeToggle />
-              </li>
             </ul>
           </div>
         </>

@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronDown, LogOut, Trophy } from "lucide-react";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { useIdentity } from "@/lib/identity-context";
 import { cn } from "@/lib/utils";
 
@@ -145,11 +144,6 @@ export function PlayerMenu() {
                 Sign out
               </button>
             )}
-          </div>
-          {/* The navbar toggle is hidden below sm, so mobile reaches it here. */}
-          <div className="flex items-center justify-between border-t border-border/60 px-4 py-2.5 sm:hidden">
-            <span className="text-xs text-muted-foreground">Theme</span>
-            <ThemeToggle />
           </div>
         </div>
       )}

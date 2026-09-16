@@ -4,7 +4,6 @@ import { ChallengeInbox } from "@/components/game/challenge-inbox";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteNav } from "@/components/site-nav";
 import { IdentityProvider } from "@/lib/identity-context";
-import { ThemeProvider } from "@/lib/theme-context";
 import { THEME_SCRIPT } from "@/lib/theme";
 import { BOARD_SCRIPT } from "@/lib/board-prefs";
 import "./globals.css";
@@ -47,12 +46,10 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    /* No `dark` class here any more — THEME_SCRIPT sets it before first paint
-       from the stored preference, falling back to the OS setting.
-       suppressHydrationWarning because that script legitimately mutates the
-       class before React hydrates, and React would otherwise flag the diff. */
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
+        {/* The app is dark-only; this just clears any legacy stored theme
+            preference and stamps the dark class before first paint. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         {/* Same reason, for the chosen board colours — a player who picked
             Walnut should never watch the default board repaint under them. */}
@@ -65,20 +62,17 @@ export default function RootLayout({
           aria-hidden
           className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
         >
-          {/* Glow colour follows the theme rather than being a fixed gold
-              rgba, which read as a dirty smudge on the light background. */}
+          {/* Ambient glow behind the page, straight from the palette. */}
           <div className="absolute inset-0 bg-[radial-gradient(1100px_480px_at_50%_-8%,hsl(var(--page-glow)/var(--page-glow-alpha)),transparent_62%)]" />
         </div>
-        <ThemeProvider>
-          <IdentityProvider>
-            <SiteNav />
-            <main className="flex-1">{children}</main>
-            <SiteFooter />
-            {/* App-wide: a challenge is a live invitation, so it has to reach the
-                player on whatever page they're on. */}
-            <ChallengeInbox />
-          </IdentityProvider>
-        </ThemeProvider>
+        <IdentityProvider>
+          <SiteNav />
+          <main className="flex-1">{children}</main>
+          <SiteFooter />
+          {/* App-wide: a challenge is a live invitation, so it has to reach the
+              player on whatever page they're on. */}
+          <ChallengeInbox />
+        </IdentityProvider>
       </body>
     </html>
   );
