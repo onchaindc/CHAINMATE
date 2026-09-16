@@ -22,8 +22,14 @@ let tx: typeof TxModule;
 /* Deterministic fakes -------------------------------------------------- */
 
 const LINKED_ADDRESS = "NQ0700000000000000000000000000000000"; // burn-shape, fine as a fake
+
+/** Space-stripped uppercase form, mirroring the server's canonical compare. */
+function canonical(address: string): string {
+  return address.replace(/[\s-]/g, "").toUpperCase();
+}
 const TREASURY_ADDRESS = "NQ09V9Q7P4V07V0XGV0XGV0XGV0XGV0XGV0X".replace(/[^A-Z0-9]/g, "").slice(0, 36);
 
+/** FakeTx with the optional fromType field the real v2 node includes. */
 interface FakeTx {
   hash: string;
   from: string;
@@ -32,6 +38,7 @@ interface FakeTx {
   blockNumber: number | null;
   executionResult?: boolean;
   networkId?: number;
+  fromType?: number;
 }
 
 function makeDeps(options: {
@@ -60,26 +67,32 @@ function makeDeps(options: {
   if (options.treasury !== undefined) {
     process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = options.treasury;
   }
-  return {
-    deps: {
-      getLinkedWallet: async () =>
-        options.linkedWallet === undefined
-          ? ({ address: LINKED_ADDRESS, network: "test" as const, linkedAt: 0 })
-          : options.linkedWallet,
-      rpc: {
+  const rpc = options.rpcError
+    ? {
+        getTransactionByHash: async (): Promise<never> => {
+          throw options.rpcError!;
+        },
+        getBlockNumber: async (): Promise<never> => {
+          throw options.rpcError!;
+        },
+      }
+    : {
         getTransactionByHash: async (hash: string): Promise<FakeTx | null> => {
-          if (options.rpcError) throw options.rpcError;
           if (!options.onChainTx) return null;
           const { hash: templateHash, ...rest } = options.onChainTx;
           // Keep an explicitly-empty template hash: malformed-response tests
           // rely on the node returning a tx object with no usable hash.
           return { ...rest, hash: templateHash === "" ? "" : hash };
         },
-        getBlockNumber: async (): Promise<number> => {
-          if (options.rpcError) throw options.rpcError;
-          return options.currentHeight ?? 1000;
-        },
-      },
+        getBlockNumber: async (): Promise<number> => options.currentHeight ?? 1000,
+      };
+  return {
+    deps: {
+      getLinkedWallet: async () =>
+        options.linkedWallet === undefined
+          ? ({ address: LINKED_ADDRESS, network: "test" as const, linkedAt: 0 })
+          : options.linkedWallet,
+      rpc,
       store,
     },
     consumed,
@@ -183,14 +196,20 @@ test("a pending (unmined) transaction is not verifiable", async () => {
   );
 });
 
-test("RPC unavailability maps to rpc-unavailable (503), not a crash", async () => {
+test("RPC unavailability maps to rpc-unavailable (503) with the underlying reason, not a crash", async () => {
   const { deps } = makeDeps({
     onChainTx: validTx(),
     rpcError: new (await import("@/lib/server/nimiq/rpc")).NimiqRpcError("node down"),
   });
   await assert.rejects(
     () => tx.verifyIncomingTransaction("f".repeat(64), BASE_OBLIGATION, deps),
-    (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "rpc-unavailable" && err.status === 503,
+    (err: unknown) =>
+      err instanceof tx.NimiqTxError &&
+      err.kind === "rpc-unavailable" &&
+      err.status === 503 &&
+      // The bare "could not be reached" masked real causes (missing env var,
+      // HTTP status, timeout). The underlying reason must survive.
+      err.message.includes("node down"),
   );
 });
 
@@ -246,11 +265,40 @@ test("a non-boolean executionResult verdict fails closed as a malformed RPC resp
 
 test("wrong sender (not the linked wallet) is rejected", async () => {
   const { deps } = makeDeps({
-    onChainTx: validTx({ from: "NQ11 2222 3333 4444 5555 6666 7777 8888 9999" }),
+    onChainTx: validTx({ from: "NQ11 2222 3334 4444 5555 6666 7777 8888 9999" }),
   });
   await assert.rejects(
     () => tx.verifyIncomingTransaction("4".repeat(64), BASE_OBLIGATION, deps),
-    (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "wrong-sender" && err.status === 400,
+    (err: unknown) => {
+      if (!(err instanceof tx.NimiqTxError) || err.kind !== "wrong-sender" || err.status !== 400) {
+        return false;
+      }
+      // The message must name BOTH addresses (rendered in the friendly
+      // spaced form users see in Nimiq Pay). Compare space-stripped.
+      const compact = err.message.replace(/[\s-]/g, "");
+      return (
+        compact.includes("NQ1122223334444455556666777788889999") &&
+        compact.includes(canonical(LINKED_ADDRESS))
+      );
+    },
+  );
+});
+
+test("wrong sender from a contract-type account gets the contract hint", async () => {
+  // Real shape observed on the live testnet node: Nimiq Pay paid through an
+  // HTLC contract account (fromType 2) instead of the linked basic account.
+  const { deps } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ44 QSMT XNNB BFJG 8Q07 AJ1F DNHA LYGU GX5B",
+      fromType: 2,
+    } as unknown as Partial<FakeTx>),
+  });
+  await assert.rejects(
+    () => tx.verifyIncomingTransaction("e".repeat(64), BASE_OBLIGATION, deps),
+    (err: unknown) =>
+      err instanceof tx.NimiqTxError &&
+      err.kind === "wrong-sender" &&
+      err.message.includes("contract-type account"),
   );
 });
 

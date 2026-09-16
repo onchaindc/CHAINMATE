@@ -389,9 +389,12 @@ async function verifyOnChain(
     tx = await rpc.getTransactionByHash(txHash, { timeoutMs: 10_000 });
   } catch (err) {
     if (err instanceof NimiqRpcError) {
+      // Surface the actual reason (missing NIMIQ_RPC_URL, HTTP status,
+      // timeout, DNS/transport failure) — a bare "could not be reached"
+      // makes operator misconfiguration indistinguishable from node outages.
       throw new NimiqTxError(
         "rpc-unavailable",
-        "The Nimiq node could not be reached to verify this transaction",
+        `The Nimiq node could not be reached to verify this transaction (${err.message})`,
       );
     }
     throw err;
@@ -448,9 +451,23 @@ async function verifyOnChain(
   }
 
   // 4. Sender must be exactly the linked wallet (canonical compare).
+  //    Show both addresses on mismatch: Nimiq Pay users can hold several
+  //    accounts (and the wallet picks its own sending account), so the most
+  //    common cause is paying from a different account than the linked one.
+  //    The tx may also come from a contract account (e.g. an HTLC the payer
+  //    set up) — name that explicitly so it is not mistaken for a bug here.
   const sender = canonicalAddress(String(tx.from ?? ""));
   if (sender !== canonicalAddress(linked.address)) {
-    throw new NimiqTxError("wrong-sender", "Transaction sender does not match your linked wallet");
+    const fromType = (tx as { fromType?: unknown }).fromType;
+    const txType = typeof fromType === "number" ? fromType : null;
+    const typeHint =
+      txType !== null && txType !== 0
+        ? " The paying account is a contract-type account (e.g. an HTLC), not your basic wallet account."
+        : "";
+    throw new NimiqTxError(
+      "wrong-sender",
+      `Transaction sender ${friendlyAddress(sender)} does not match your linked wallet ${friendlyAddress(linked.address)}.${typeHint} In Nimiq Pay, switch to the exact account you linked to ChainMate and pay from it.`,
+    );
   }
 
   // 5. Recipient must be exactly the treasury (canonical compare).
@@ -484,7 +501,10 @@ async function verifyOnChain(
     currentHeight = await rpc.getBlockNumber({ timeoutMs: 10_000 });
   } catch (err) {
     if (err instanceof NimiqRpcError) {
-      throw new NimiqTxError("rpc-unavailable", "Could not read the current chain height");
+      throw new NimiqTxError(
+        "rpc-unavailable",
+        `Could not read the current chain height (${err.message})`,
+      );
     }
     throw err;
   }
@@ -517,6 +537,17 @@ async function verifyOnChain(
  * verifyOnChain() has passed, so a failed verification leaves no trace and
  * the transaction can be re-verified later (e.g. after more confirmations).
  */
+/**
+ * Group a canonical 36-char address into the friendly spaced form users see
+ * in Nimiq Pay and block explorers ("NQ64 66X5 …"). Non-standard inputs pass
+ * through compact so error text never fabricates an address.
+ */
+function friendlyAddress(address: string): string {
+  const compact = canonicalAddress(address);
+  if (compact.length !== 36) return compact || "(unknown)";
+  return `${compact.slice(0, 4)} ${(compact.slice(4).match(/.{1,4}/g) ?? []).join(" ")}`;
+}
+
 export async function verifyIncomingTransaction(
   txHashInput: string,
   obligation: VerificationObligation,
