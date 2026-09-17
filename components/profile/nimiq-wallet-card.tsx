@@ -15,9 +15,11 @@
  * button teaches users nothing and makes Nimiq Pay look broken.
  */
 
-import { Link2, Loader2, RefreshCw, Unlink, Wallet } from "lucide-react";
+import { ExternalLink, Link2, Loader2, RefreshCw, Unlink, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
+import { nimiqPayDeepLinks } from "@/lib/nimiq/deep-link";
 import {
   useNimiqWallet,
   shortNimiqAddress,
@@ -172,6 +174,21 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
 
       {providerHint && !connected && (
         <p className="mt-2 text-2xs text-muted-foreground">{providerHint}</p>
+      )}
+
+      {/* In a normal browser the provider can never inject, so the ONLY way in
+          is Nimiq Pay. Make that path a visible button here rather than a
+          buried hint: profile is where someone lands looking for wallet
+          setup, and the link carries the current path so Nimiq Pay reopens
+          THIS page inside the wallet. */}
+      {provider === "web-unavailable" && (
+        <a
+          href={nimiqPayDeepLinks()?.https ?? "#"}
+          className={`${buttonVariants({ size: "sm", variant: "outline" })} mt-3`}
+        >
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          Open in Nimiq Pay
+        </a>
       )}
 
       {/* Retry affordance whenever detection failed but a host was seen. */}

@@ -43,7 +43,7 @@ import {
 import { getLinkedWallet } from "@/lib/server/nimiq/service";
 import { getAccountByAddress } from "@/lib/server/nimiq/rpc";
 import { NIMIQ_NETWORK } from "@/lib/nimiq/config";
-import { LUNA_PER_NIM, NimiqMoneyError } from "@/lib/nimiq/format";
+import { formatNim, LUNA_PER_NIM, NimiqMoneyError } from "@/lib/nimiq/format";
 
 /**
  * The tournament engine — server-authoritative, ChainMate Phase 2A.
@@ -235,9 +235,18 @@ async function gateTournamentCreation(creatorId: string): Promise<{ ok: true } |
           : BigInt(Math.trunc(Number(account.balance)));
     }
     if (balance < BigInt(CREATOR_MIN_NIM) * LUNA_PER_NIM) {
+      // Name the exact wallet that was checked and what it holds. The most
+      // common failure is a linked wallet that differs from the funded one
+      // (a second Nimiq Pay account); without the address and the number the
+      // error reads as nonsense to a player looking at a funded wallet.
       return {
         ok: false,
-        error: `Hosting a tournament requires at least ${CREATOR_MIN_NIM} NIM in your linked wallet. Your balance is too low.`,
+        error:
+          `Hosting requires at least ${CREATOR_MIN_NIM} NIM in your LINKED wallet ` +
+          `(${linked.address}). That wallet currently holds ${formatNim(balance)} NIM. ` +
+          `Your NIM may be in a different Nimiq Pay account: switch to the linked ` +
+          `account and fund it, or use Replace wallet in your profile to link the ` +
+          `funded one.`,
       };
     }
   } catch (err) {

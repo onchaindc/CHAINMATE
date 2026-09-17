@@ -1,33 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 40">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 40">
   <defs>
-    <clipPath id="cl">
-      <rect x="0" y="0" width="20" height="40"/>
-    </clipPath>
-    <clipPath id="cr">
-      <rect x="20" y="0" width="20" height="40"/>
-    </clipPath>
     <linearGradient id="ivory" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#F5F0E6"/>
-      <stop offset="1" stop-color="#D8CDB8"/>
+      <stop offset="0" stop-color="#F7F2E7"/>
+      <stop offset="1" stop-color="#D6CBB6"/>
     </linearGradient>
     <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#33373D"/>
-      <stop offset="1" stop-color="#1D2025"/>
+      <stop offset="0" stop-color="#3A3E45"/>
+      <stop offset="1" stop-color="#17191D"/>
     </linearGradient>
+    <path id="kn" d="M 26 6
+      C 25 9 23.5 11 21.5 12.5
+      C 19 14 17.5 15.5 16.5 17.5
+      C 14.5 21 12 23.5 9.5 26
+      C 8.5 27 8.5 28.5 9.5 29.5
+      C 11 31 13.5 31.5 15.5 31.5
+      C 17.5 31.5 19 32.5 19.5 34.5
+      C 20.5 38 21.5 42 21.5 46
+      C 21.5 48 21 49.5 20.5 50.5
+      L 18 50.5 L 15.5 52.5 L 15.5 57.5 L 46.5 57.5 L 46.5 52.5 L 44 50.5
+      C 44.5 44 45.5 38 45 32
+      C 44.5 25 42 19 37 15
+      C 36 12 35.5 9.5 36 6.5
+      C 34.5 7.5 33 9 32.2 10.5
+      C 31 8.5 29 6.8 26 6 Z"/>
+    <path id="eye" d="M 18.2 18.3 C 19.7 16.9 22.3 16.7 24 17.9 C 22.6 19.6 19.8 19.9 18.2 18.3 Z"/>
   </defs>
-  <g transform="translate(0 1) scale(0.625)">
-    <text x="30" y="50" font-family="Georgia, 'Times New Roman', serif" font-size="46" text-anchor="middle" fill="url(#ivory)" clip-path="url(#cl)">&#9822;</text>
-    <text x="30" y="50" font-family="Georgia, 'Times New Roman', serif" font-size="46" text-anchor="middle" fill="url(#dark)" clip-path="url(#cr)">&#9822;</text>
-    <g clip-path="url(#cr)" fill="none" stroke="#C9A86A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
-      <polyline points="34,52 40,46 36,40 44,32 40,26 50,19 55,17"/>
+
+  <!-- The mark fills the nav height: the knight spans ~34 of the 40px box. -->
+  <g transform="translate(2 3) scale(0.62)">
+    <g transform="translate(4.5 1)">
+      <use href="#kn" fill="url(#dark)"/>
+      <g fill="none" stroke="#C9A86A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+        <polyline points="38.5,50 38.5,44 34.5,40 34.5,34.5"/>
+        <polyline points="42.5,50 42.5,42 39,38.5"/>
+        <polyline points="41,15.5 41,20 44,23"/>
+      </g>
+      <g fill="#C9A86A">
+        <circle cx="34.5" cy="34.5" r="2"/>
+        <circle cx="38.5" cy="44" r="1.8"/>
+        <circle cx="39" cy="38.5" r="1.8"/>
+        <circle cx="44" cy="23" r="1.9"/>
+      </g>
     </g>
-    <g clip-path="url(#cr)" fill="#C9A86A">
-      <circle cx="40" cy="46" r="1.7"/>
-      <circle cx="44" cy="32" r="1.7"/>
-      <circle cx="50" cy="19" r="1.7"/>
-    </g>
+    <use href="#kn" fill="url(#ivory)"/>
+    <use href="#eye" fill="#1B1D21"/>
+    <circle cx="12.3" cy="27.3" r="1.6" fill="#1B1D21"/>
   </g>
-  <text x="46" y="27" font-family="system-ui, 'Helvetica Neue', Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2.5">
+
+  <text x="44" y="27" font-family="system-ui, 'Helvetica Neue', Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2.5">
     <tspan fill="#EDE7DA">CHAIN</tspan><tspan fill="#C9A86A">MATE</tspan>
   </text>
 </svg>

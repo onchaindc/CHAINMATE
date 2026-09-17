@@ -37,8 +37,16 @@ export const metadata: Metadata = {
   title: "ChainMate: Play chess. Think deeper.",
   description:
     "Competitive chess with intelligent analysis, AI commentary and post-game reports.",
+  /* Every icon surface draws from the SAME official knight mark: the SVG for
+     browsers, PNGs for iOS/Android home screens and mini-app hosts (Nimiq Pay
+     reads these sizes, not the SVG favicon). */
   icons: {
-    icon: "/favicon.svg",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
   },
 };
 
