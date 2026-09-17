@@ -384,7 +384,7 @@ async function verifyOnChain(
   if (!expectedRecipient) {
     throw new NimiqTxError(
       "configuration-error",
-      "NIMIQ_TREASURY_ADDRESS is not configured — cannot verify an incoming transaction",
+      "NIMIQ_TREASURY_ADDRESS is not configured, cannot verify an incoming transaction",
     );
   }
 
@@ -432,7 +432,7 @@ async function verifyOnChain(
   if (typeof tx.networkId !== "number") {
     throw new NimiqTxError(
       "malformed-rpc-response",
-      "Node response has no networkId — network cannot be established, refusing verification",
+      "Node response has no networkId, network cannot be established, refusing verification",
     );
   }
   const knownNetworkId = networkIdToName(tx.networkId);
@@ -466,7 +466,7 @@ async function verifyOnChain(
   if (typeof tx.executionResult !== "boolean") {
     throw new NimiqTxError(
       "malformed-rpc-response",
-      "Node response has no executionResult — execution outcome cannot be established, refusing verification",
+      "Node response has no executionResult, execution outcome cannot be established, refusing verification",
     );
   }
   if (!tx.executionResult) {

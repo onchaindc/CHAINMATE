@@ -26,7 +26,7 @@ export function keyMoments(game: GameState): KeyMoments {
   );
   let turningPoint: string;
   if (decisiveIdx === -1) {
-    turningPoint = "A quiet positional game — no captures or checks until the end.";
+    turningPoint = "A quiet positional game, no captures or checks until the end.";
   } else {
     const m = moves[decisiveIdx];
     const kind = m.san.includes("#")

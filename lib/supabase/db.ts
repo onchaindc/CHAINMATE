@@ -902,7 +902,7 @@ export async function requestFriend(
     return { ok: false, error: "You're already friends." };
   }
   if (existing?.requester_player_id === requesterId && existing.status === "pending") {
-    return { ok: false, error: "Request already sent — waiting for a reply." };
+    return { ok: false, error: "Request already sent, waiting for a reply." };
   }
   if (existing?.addressee_player_id === requesterId && existing.status === "pending") {
     // They asked first — just accept instead of stacking a duplicate.

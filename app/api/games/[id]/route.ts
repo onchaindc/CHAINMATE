@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     const playerId = typeof body.playerId === "string" ? body.playerId.trim() : "";
     if (body.action !== "summary" && !playerId) {
       return NextResponse.json(
-        { error: "playerId is required — send your browser's player identity" },
+        { error: "playerId is required, send your browser's player identity" },
         { status: 400 },
       );
     }

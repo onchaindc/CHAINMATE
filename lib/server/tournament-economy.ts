@@ -188,7 +188,7 @@ export async function requireAccountForPaidTournament(
   if (await isGuest(playerId)) {
     throw new TournamentEntryError(
       "guest-rejected",
-      "Paid tournaments require a ChainMate account — sign in and link a wallet to enter",
+      "Paid tournaments require a ChainMate account, sign in and link a wallet to enter",
     );
   }
 }
@@ -233,7 +233,7 @@ export async function joinPaidTournament(
   if (!isPaidEntryFee(feeLuna)) {
     throw new TournamentEntryError(
       "not-paid-tournament",
-      "This tournament is free to enter — join it without a payment",
+      "This tournament is free to enter, join it without a payment",
     );
   }
 
@@ -284,7 +284,7 @@ export async function joinPaidTournament(
     if (await (deps.isGuestAccount ?? isGuestAccount)(playerId)) {
       throw new TournamentEntryError(
         "guest-rejected",
-        "Paid tournaments require a ChainMate account — sign in and link a wallet to enter",
+        "Paid tournaments require a ChainMate account, sign in and link a wallet to enter",
       );
     }
 

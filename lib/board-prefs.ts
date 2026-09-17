@@ -47,7 +47,7 @@ export interface PieceSetMeta {
 
 export const PIECE_SETS: PieceSetMeta[] = [
   { id: "classic", label: "Classic", hint: "Traditional carved pieces" },
-  { id: "letters", label: "Letters", hint: "Initials — clearest when small" },
+  { id: "letters", label: "Letters", hint: "Initials, clearest when small" },
 ];
 
 const BOARD_THEME_IDS = BOARD_THEMES.map((t) => t.id);

@@ -136,13 +136,8 @@ export default function NewsPage() {
               <Button variant="outline" size="sm">
                 <ExternalLink aria-hidden />
                 Read the full article
-                <span className="sr-only"> (opens the publisher&apos;s site)</span>
               </Button>
             </a>
-            <p className="text-2xs leading-snug text-muted-foreground">
-              Story by {openItem.source ?? openItem.author ?? "the publisher"} — summarized
-              here, complete on their site.
-            </p>
           </div>
         </article>
       </div>
@@ -206,16 +201,19 @@ export default function NewsPage() {
       )}
 
       {filtered !== null && filtered.length > 0 && (
-        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
-          {/* Featured story, large with art. */}
+        <div className="mt-6 grid gap-6">
+          {/* Featured story: FULL WIDTH across the top. The old side hero left
+              its column half empty on desktop and pushed everything into one
+              long one-sided scroll; a full-width hero plus an even grid below
+              uses the whole page. */}
           {latest && (
             <button
               type="button"
               onClick={() => setOpenItem(latest)}
-              className="group block overflow-hidden rounded-xl border border-border/70 bg-card/50 text-left shadow-elevation-1 transition-shadow hover:shadow-elevation-2"
+              className="group block w-full overflow-hidden rounded-xl border border-border/70 bg-card/50 text-left shadow-elevation-1 transition-shadow hover:shadow-elevation-2"
             >
               {latest.imageUrl && (
-                <div className="aspect-[2/1] w-full overflow-hidden bg-secondary/40">
+                <div className="aspect-[21/9] w-full overflow-hidden bg-secondary/40 sm:aspect-[3/1]">
                   {/* Publisher CDN images: plain img with lazy loading — no
                       domain allowlist needed, and lazy keeps the page light. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -235,7 +233,7 @@ export default function NewsPage() {
                     {dateLabel(latest.publishedAt)}
                   </span>
                 </p>
-                <h2 className="mt-1.5 text-lg font-bold leading-snug tracking-tight group-hover:underline">
+                <h2 className="mt-1.5 text-xl font-bold leading-snug tracking-tight group-hover:underline sm:text-2xl">
                   {latest.title}
                 </h2>
                 {latest.excerpt && (
@@ -250,13 +248,11 @@ export default function NewsPage() {
             </button>
           )}
 
-          {/* The rest — a tight two-column grid on desktop so the page stays
-              dense instead of trailing into empty space. Every card shares one
-              skeleton — fixed-height image slot (a quiet placeholder when a
-              story has no art) with the same line clamps — so rows stay level
-              instead of ragging where some stories have images and some do
-              not. */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+          {/* The rest — an even three-across grid on wide screens, two on
+              tablets, one on phones. Every card shares one skeleton: a fixed
+              image slot (a quiet placeholder when a story has no art) and the
+              same clamps, so every row lines up. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
             {rest.map((item, i) => (
               <button
                 key={`${item.url}-${i}`}
@@ -264,7 +260,7 @@ export default function NewsPage() {
                 onClick={() => setOpenItem(item)}
                 className="group flex h-full flex-col rounded-lg border border-border/60 bg-card/40 p-3 text-left transition-colors hover:bg-card/70"
               >
-                <div className="mb-2.5 h-28 w-full overflow-hidden rounded-md bg-secondary/40">
+                <div className="mb-2.5 h-32 w-full overflow-hidden rounded-md bg-secondary/40">
                   {item.imageUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img

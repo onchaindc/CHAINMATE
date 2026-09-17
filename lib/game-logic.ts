@@ -40,7 +40,7 @@ function moveCommentaryText(
     text = `${sideName} plays ${move.san}.`;
   }
   if (after.isCheckmate) {
-    text += " That is checkmate — the game is over!";
+    text += " That is checkmate, the game is over!";
   } else if (after.inCheck) {
     text += " This move puts the opponent in check.";
   }
@@ -147,7 +147,7 @@ export function offerDrawToGame(game: GameState, playerId: string): ActionResult
     return { ok: false, error: "You are not a player in this game" };
   }
   if (game.drawOffer?.by === playerId) {
-    return { ok: false, error: "You already offered a draw — waiting for your opponent" };
+    return { ok: false, error: "You already offered a draw, waiting for your opponent" };
   }
   return {
     ok: true,
@@ -230,7 +230,7 @@ export function abortGame(game: GameState, playerId: string): ActionResult {
     return { ok: false, error: "You are not a player in this game" };
   }
   if (game.moves.length > 0) {
-    return { ok: false, error: "The game has started — resign instead of aborting" };
+    return { ok: false, error: "The game has started, resign instead of aborting" };
   }
   return {
     ok: true,

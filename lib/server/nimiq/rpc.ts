@@ -92,7 +92,7 @@ async function rpcCall<T>(
   const url = overrides?.url ?? config?.url;
   if (!url) {
     throw new NimiqRpcError(
-      "NIMIQ_RPC_URL is not configured — there is no public Nimiq RPC default",
+      "NIMIQ_RPC_URL is not configured, there is no public Nimiq RPC default",
     );
   }
   const basicAuth = overrides?.basicAuth !== undefined ? overrides.basicAuth : config?.basicAuth;

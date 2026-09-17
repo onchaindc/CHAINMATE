@@ -361,8 +361,7 @@ async function transitionTournamentInner(
     // The mirror may already say in_progress while the live document never
     // got there: the durable status UPDATE commits BEFORE the fast-store
     // document is written, so a crash (or a cold function instance losing the
-    // race mid-write) between the two steps left a "half-started" event —
-    // every later Start retry then hit "already started elsewhere" and no
+    // race mid-write) between the two steps left a "half-started" event. // every later Start retry then hit "already started elsewhere" and no
     // fixtures were ever generated. Recognise that wedge and heal it instead
     // of failing: reconcile the mirror back to the live status, then let the
     // normal path proceed.
@@ -531,7 +530,7 @@ async function joinTournamentInner(
     return { ok: false, error: `Tournament is ${doc.status}` };
   }
   if (doc.status === "in_progress") {
-    return { ok: false, error: "Registration has closed — the tournament is running" };
+    return { ok: false, error: "Registration has closed, the tournament is running" };
   }
   if (doc.status === "locked") {
     return { ok: false, error: "Registration is locked" };
@@ -582,7 +581,7 @@ async function leaveTournamentInner(
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) return { ok: false, error: "Tournament not found" };
   if (doc.status === "in_progress") {
-    return { ok: false, error: "The tournament is running — leaving mid-event is not supported in this phase" };
+    return { ok: false, error: "The tournament is running, leaving mid-event is not supported in this phase" };
   }
   if (isTournamentTerminal(doc.status)) {
     return { ok: false, error: `Tournament is ${doc.status}` };
@@ -639,7 +638,7 @@ export async function deleteTournament(
         return {
           ok: false,
           error:
-            "This tournament has paid entries — only a ChainMate administrator can delete it",
+            "This tournament has paid entries, only a ChainMate administrator can delete it",
         };
       }
       if (doc.creatorId === playerId) {
@@ -657,7 +656,7 @@ export async function deleteTournament(
       return {
         ok: false,
         error: doc.status === "in_progress"
-          ? "The tournament is running — end or cancel it instead"
+          ? "The tournament is running, end or cancel it instead"
           : `Tournament is ${doc.status}`,
       };
     }
@@ -1040,7 +1039,7 @@ async function requestArenaPairingInner(
   });
   const opponent = candidates[0];
   if (!opponent) {
-    return { ok: false, error: "No opponent is free right now — try again in a moment" };
+    return { ok: false, error: "No opponent is free right now, try again in a moment" };
   }
   const match = await createMatch(doc, playerId, opponent, 0, doc.matches.length);
   await writeTournamentDoc(doc);

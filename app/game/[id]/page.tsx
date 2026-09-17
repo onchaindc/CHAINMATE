@@ -76,7 +76,6 @@ export default function GamePage() {
     rematch,
     resolveTimeout,
     generateSummary,
-    analyzing,
   } = useGame(id);
 
   const isAiGame = game?.opponent === AI_PLAYER_ID;
@@ -938,8 +937,7 @@ export default function GamePage() {
           stats={profiles}
           myPlayerId={myId}
           mySide={mySide}
-          analyzing={analyzing || busy === "summary"}
-          onGenerateSummary={generateSummary}
+          analyzing={false}
           onRematch={
             isAiGame
               ? async () => {

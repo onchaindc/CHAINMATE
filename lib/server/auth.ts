@@ -53,7 +53,7 @@ export async function resolveActingPlayer(
   if (!claimed) {
     return {
       ok: false,
-      error: "playerId is required — send your browser's player identity",
+      error: "playerId is required, send your browser's player identity",
       status: 400,
     };
   }

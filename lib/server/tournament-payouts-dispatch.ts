@@ -203,7 +203,7 @@ export function buildRpcTreasurySigner(
           if (!isUnlocked) {
             throw new PayoutDispatchError(
               "wallet-locked",
-              "The treasury wallet is locked on the payout node — unlock it and retry",
+              "The treasury wallet is locked on the payout node, unlock it and retry",
             );
           }
         }
@@ -280,7 +280,7 @@ export async function dispatchPayout(
 
   if (!signer) {
     throw new PayoutTransitionError(
-      "No treasury signer is configured — payouts are recorded but not dispatched",
+      "No treasury signer is configured, payouts are recorded but not dispatched",
       503,
     );
   }
@@ -310,7 +310,7 @@ async function dispatchLocked(
   }
   if (payout.status === "blocked_no_wallet") {
     throw new PayoutTransitionError(
-      "Winner has no linked Nimiq wallet — they must link one first",
+      "Winner has no linked Nimiq wallet, they must link one first",
       409,
     );
   }
@@ -329,11 +329,11 @@ async function dispatchLocked(
       const failed: PayoutRecord = {
         ...payout,
         status: "failed",
-        failureReason: "Incomplete dispatch intent — manual reconciliation required",
+        failureReason: "Incomplete dispatch intent, manual reconciliation required",
       };
       await store.upsert(failed);
       throw new PayoutTransitionError(
-        "Incomplete dispatch intent — manual reconciliation required",
+        "Incomplete dispatch intent, manual reconciliation required",
         409,
       );
     }
@@ -345,11 +345,11 @@ async function dispatchLocked(
       const failed: PayoutRecord = {
         ...payout,
         status: "failed",
-        failureReason: "Dispatch intent expired (validity window passed) — retry to re-plan",
+        failureReason: "Dispatch intent expired (validity window passed), retry to re-plan",
       };
       await store.upsert(failed);
       throw new PayoutTransitionError(
-        "Dispatch intent expired — retry to re-plan with a fresh validity window",
+        "Dispatch intent expired, retry to re-plan with a fresh validity window",
         409,
       );
     }
@@ -436,7 +436,7 @@ async function currentHeight(
   const config = getNimiqPayoutConfig();
   if (!config) {
     throw new PayoutTransitionError(
-      "No treasury signer is configured — payouts are recorded but not dispatched",
+      "No treasury signer is configured, payouts are recorded but not dispatched",
       503,
     );
   }
@@ -579,7 +579,7 @@ export async function verifyOutgoingPayout(
   if (typeof executionResult !== "boolean") {
     throw new PayoutDispatchError(
       "malformed-response",
-      "Node response has no executionResult — payout outcome cannot be established, refusing verification",
+      "Node response has no executionResult, payout outcome cannot be established, refusing verification",
     );
   }
   if (!executionResult) {
@@ -598,7 +598,7 @@ export async function verifyOutgoingPayout(
   if (typeof txNetworkId !== "number") {
     throw new PayoutDispatchError(
       "malformed-response",
-      "Node response has no networkId — payout network cannot be established, refusing verification",
+      "Node response has no networkId, payout network cannot be established, refusing verification",
     );
   }
   const knownNetwork = networkIdToName(txNetworkId);
@@ -618,7 +618,7 @@ export async function verifyOutgoingPayout(
     // Not yet mined — retry later; nothing is marked verified.
     throw new PayoutDispatchError(
       "reconciliation-required",
-      "Payout transaction is not yet included in a block — retry shortly",
+      "Payout transaction is not yet included in a block, retry shortly",
     );
   }
 
@@ -676,7 +676,7 @@ export async function reconcileDispatchingPayouts(
   const signer = deps.signer !== undefined ? deps.signer : buildRpcTreasurySigner();
   if (!signer) {
     throw new PayoutTransitionError(
-      "No treasury signer is configured — nothing to reconcile",
+      "No treasury signer is configured, nothing to reconcile",
       503,
     );
   }

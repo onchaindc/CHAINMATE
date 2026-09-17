@@ -301,7 +301,7 @@ export class LocalGameStore implements GameStore {
   }
 
   async rematch(): Promise<GameState> {
-    throw new Error("Rematch is for online games — start a new game instead");
+    throw new Error("Rematch is for online games, start a new game instead");
   }
 
   async resolveTimeout(id: string): Promise<GameState> {

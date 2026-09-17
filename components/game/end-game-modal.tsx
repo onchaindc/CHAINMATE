@@ -25,9 +25,11 @@ interface EndGameModalProps {
   myPlayerId: string;
   /** The viewing player's side — null when spectating. */
   mySide: PlayerSide | null;
-  /** True while a match-analysis request is in flight (automatic or retried). */
+  /** True while a match-analysis request is in flight. Always false: the AI
+      commentary was removed from the product. The prop remains so existing
+      call sites keep compiling. */
   analyzing?: boolean;
-  onGenerateSummary: () => void;
+  onGenerateSummary?: () => void;
   /** One-click rematch against the same opponent (hosted human games). */
   onRematch?: () => Promise<void>;
   onReplay: () => void;
@@ -49,8 +51,6 @@ export function EndGameModal({
   stats,
   myPlayerId,
   mySide,
-  analyzing,
-  onGenerateSummary,
   onRematch,
   onReplay,
   onClose,
@@ -88,14 +88,10 @@ export function EndGameModal({
   const isAiGame = game.opponent === AI_PLAYER_ID;
   const [rematching, setRematching] = useState(false);
 
-  /* The match report, and how much of it is real. `report` is the analysis once
-     it exists and the deterministic fallback until then, so the text on screen
-     upgrades in place with no separate empty state to design. Infrastructure
-     errors (RPC nonces, unreachable endpoints) stay in the console — players
-     never saw a report they could act on, only a wall of red text and a Retry
-     button that re-failed. */
+  /* The match report: the deterministic summary written the moment the game
+     ended. AI commentary was removed from the product; there is no second
+     layer to wait for any more. */
   const report = displaySummary(game);
-  const analysisDone = !!game.analysis;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -238,21 +234,6 @@ export function EndGameModal({
           {report && (
             <p className="mt-2 text-sm leading-relaxed text-foreground/90">{report}</p>
           )}
-
-          {/* Where the report stands, said only when there is something to
-              say: ready, or still being written. Failures stay silent here —
-              the deterministic report above is already on screen. */}
-          {analysisDone ? (
-            <p className="mt-2.5 flex items-center gap-1.5 text-2xs font-medium text-primary">
-              <Sparkles className="h-3 w-3" aria-hidden />
-              Analysis ready
-            </p>
-          ) : analyzing ? (
-            <p className="mt-2.5 flex items-center gap-1.5 text-2xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-              Analyzing the game…
-            </p>
-          ) : null}
 
           <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-foreground/80">
             <li>

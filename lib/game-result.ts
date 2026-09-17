@@ -105,7 +105,7 @@ export function describeResult(
     }
     case "aborted":
       reason = "before any moves";
-      detail = "Aborted before any moves were played — nobody's rating changed.";
+      detail = "Aborted before any moves were played, nobody's rating changed.";
       break;
     default:
       reason = game.status;

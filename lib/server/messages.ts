@@ -158,14 +158,27 @@ export async function sendDirectMessage(
   if (!text) return { ok: false, error: "Message is empty" };
   if (text.length > 2000) return { ok: false, error: "Message is too long (2000 characters max)" };
   if (fromPlayerId === toPlayerId) return { ok: false, error: "You cannot message yourself" };
+  const fromName = await displayNameFor(fromPlayerId);
+  const sentAt = Date.now();
   await push(toPlayerId, {
     id: newId(),
     fromPlayerId,
-    fromName: await displayNameFor(fromPlayerId),
+    fromName,
     kind: "dm",
     body: text,
-    sentAt: Date.now(),
+    sentAt,
     readAt: null,
+  });
+  // The sender keeps their own copy too, pre-read so it never inflates the
+  // bell: a thread view needs both directions to render a conversation.
+  await push(fromPlayerId, {
+    id: newId(),
+    fromPlayerId,
+    fromName,
+    kind: "dm",
+    body: text,
+    sentAt,
+    readAt: sentAt,
   });
   return { ok: true };
 }

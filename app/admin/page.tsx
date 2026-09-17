@@ -556,14 +556,14 @@ function Dashboard({
         layout="three"
         className="animate-fade-in-up mt-6"
         tiles={[
-          { label: "Registered players", value: totalUsers === null ? "—" : String(totalUsers) },
+          { label: "Total users", value: totalUsers === null ? "0" : String(totalUsers) },
           {
             label: "Active restrictions",
-            value: bans === null ? "—" : String(bans.length),
+            value: bans === null ? "0" : String(bans.length),
           },
           {
             label: "Support messages",
-            value: support === null ? "—" : String(support.filter((m) => m.readAt === null).length),
+            value: support === null ? "0" : String(support.filter((m) => m.readAt === null).length),
           },
         ]}
       />
@@ -666,7 +666,7 @@ function Dashboard({
                         )}
                       </p>
                       <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
-                        {a.rating ?? "—"} rating · {a.games} games
+                        {a.rating ?? "Unrated"} rating · {a.games} games
                         {a.banned && a.banReason ? ` · ${a.banReason}` : ""}
                       </p>
                     </div>
@@ -783,7 +783,7 @@ function Dashboard({
               onChange={(e) => setBroadcastText(e.target.value)}
               maxLength={2000}
               rows={3}
-              placeholder="Tournament starting Saturday — registration is open…"
+              placeholder="Tournament starting Saturday, registration is open…"
               className="w-full resize-y rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
             />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "expectedNim is required for standalone verification — the amount must be stated exactly (e.g. \"5\")",
+            "expectedNim is required for standalone verification: the amount must be stated exactly (e.g. \"5\")",
         },
         { status: 400 },
       );

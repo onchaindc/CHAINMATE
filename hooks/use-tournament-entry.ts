@@ -84,7 +84,7 @@ class PreSendWalletError extends Error {}
 export class AlreadyPaidError extends Error {
   constructor() {
     super(
-      "You have already paid for this tournament — this extra payment cannot be attached to another seat. Nothing was charged twice for one entry; the extra transfer stays on-chain to the treasury.",
+      "You have already paid for this tournament, this extra payment cannot be attached to another seat. Nothing was charged twice for one entry; the extra transfer stays on-chain to the treasury.",
     );
     this.name = "AlreadyPaidError";
   }
@@ -160,7 +160,7 @@ export function useTournamentEntry(playerId: string) {
           setProgress(
             pending
               ? verificationProgressMessage(pending)
-              : "The Nimiq node is slow to respond — still trying your payment…",
+              : "The Nimiq node is slow to respond, still trying your payment…",
           );
         }
         if (i < VERIFY_MAX_ATTEMPTS) await sleep(VERIFY_RETRY_INTERVAL_MS);
@@ -171,7 +171,7 @@ export function useTournamentEntry(playerId: string) {
       if (attemptRef.current === attempt) {
         setProgress(null);
         setError(
-          "Your payment is on-chain but needs more confirmations to be credited. Press “Verify payment” in a moment — you will NOT be charged again.",
+          "Your payment is on-chain but needs more confirmations to be credited. Press “Verify payment” in a moment, you will NOT be charged again.",
         );
         setPhase("error");
       }
@@ -202,7 +202,7 @@ export function useTournamentEntry(playerId: string) {
       if (pendingTxHash || storedHash) {
         if (storedHash && !pendingTxHash) setPendingTxHash(storedHash);
         setError(
-          "A payment is already on-chain for this tournament and hasn't been credited yet. Verify it below — you will NOT be charged again by verifying.",
+          "A payment is already on-chain for this tournament and hasn't been credited yet. Verify it below, you will NOT be charged again by verifying.",
         );
         setPhase("error");
         return { outcome: "error", txHash: null };
@@ -347,7 +347,7 @@ export function useTournamentEntry(playerId: string) {
     async (tournamentId: string, txHash?: string): Promise<boolean> => {
       const hash = (txHash ?? pendingTxHash)?.trim().toLowerCase();
       if (!hash) {
-        setError("No pending payment to verify — pay first.");
+        setError("No pending payment to verify, pay first.");
         setPhase("error");
         return false;
       }

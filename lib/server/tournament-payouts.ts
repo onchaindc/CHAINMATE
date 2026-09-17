@@ -410,7 +410,7 @@ export async function sendPayout(
     }
     if (payout.status === "blocked_no_wallet") {
       throw new PayoutTransitionError(
-        "Winner has no linked Nimiq wallet — they must link one first",
+        "Winner has no linked Nimiq wallet, they must link one first",
         409,
       );
     }
@@ -418,7 +418,7 @@ export async function sendPayout(
     const signer = deps.signer !== undefined ? deps.signer : configuredSigner;
     if (!signer) {
       throw new PayoutTransitionError(
-        "No treasury signer is configured — payouts are recorded but not dispatched",
+        "No treasury signer is configured, payouts are recorded but not dispatched",
         503,
       );
     }

@@ -119,9 +119,12 @@ export function NotificationBell() {
       </Button>
 
       {open && (
-        /* Full gutted width on a phone (left edge lands exactly 1rem from the
-           viewport edge), fixed 20rem once there is room. */
-        <div className="animate-fade-in-up absolute right-0 top-full z-50 mt-2 w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-elevation-3 backdrop-blur sm:w-80">
+        /* On a phone the panel is FIXED to the viewport: pinned just under
+           the nav with a 0.75rem gutter each side. A viewport-anchored panel
+           cannot be pushed off-screen by zoom, narrow widths, or the bar's
+           own scroll state, which is exactly how the anchored version kept
+           overhanging. From sm up it anchors to the bell again. */
+        <div className="animate-fade-in-up fixed inset-x-3 top-[calc(var(--nav-h)+0.5rem)] z-50 max-h-[70dvh] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-elevation-3 backdrop-blur sm:absolute sm:inset-x-auto sm:top-full sm:mt-2 sm:max-h-none sm:w-80">
           <p className="border-b border-border/60 px-3 py-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Notifications
           </p>
@@ -130,7 +133,7 @@ export function NotificationBell() {
               Nothing yet. Game invites and official announcements land here.
             </p>
           ) : (
-            <ul className="max-h-80 divide-y divide-border/50 overflow-y-auto">
+            <ul className="max-h-[min(20rem,55dvh)] divide-y divide-border/50 overflow-y-auto">
               {messages.map((m) => (
                 <li key={m.id} className={cn("px-3 py-2.5", m.readAt === null && "bg-primary/[0.06]")}>
                   <p className="flex items-center gap-1.5 text-xs font-medium">

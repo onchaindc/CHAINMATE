@@ -87,7 +87,7 @@ export function eventCommentary(side: PlayerSide, event: string): string {
     case "resign":
       return `${mover} resigned the game.`;
     case "stalemate":
-      return "Stalemate — the side to move has no legal moves but is not in check.";
+      return "Stalemate, the side to move has no legal moves but is not in check.";
     case "draw":
       return "The game is drawn by insufficient material.";
     default:

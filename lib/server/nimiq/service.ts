@@ -189,7 +189,7 @@ export async function linkWallet(input: LinkWalletInput): Promise<NimiqLinkedWal
   const existing = await getBindingForPlayer(input.playerId);
   if (existing && existing.address !== derivedAddress && !input.replace) {
     throw new NimiqLinkError(
-      "A different wallet is already linked — unlink it first or pass replace",
+      "A different wallet is already linked, unlink it first or pass replace",
       409,
     );
   }

@@ -35,7 +35,7 @@ export interface NimiqWalletError {
 export class NimiqNoAccountsError extends Error {
   constructor() {
     super(
-      "No Nimiq account is available in this wallet — create one in Nimiq Pay and try again.",
+      "No Nimiq account is available in this wallet, create one in Nimiq Pay and try again.",
     );
     this.name = "NimiqNoAccountsError";
   }
@@ -266,7 +266,7 @@ export function nimiqWalletRequestFailureMessage(err: unknown): string {
  */
 export function nimiqPaymentFailureMessage(err: unknown): string {
   if (err instanceof Error && err.message === "[object Object]") {
-    return "Nimiq payment failed: the wallet reported an unspecified error. Try again — if it repeats, the wallet may not support this transaction.";
+    return "Nimiq payment failed: the wallet reported an unspecified error. Try again, if it repeats, the wallet may not support this transaction.";
   }
   const message = nimiqErrorMessage(err);
   if (!message || message === "[object Object]") {

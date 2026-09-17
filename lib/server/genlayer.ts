@@ -208,7 +208,7 @@ export async function deployChainMate(): Promise<{ address: string; myId: string
     // the game id would be dead and every read would report "Game not found".
     throw new Error(
       "Could not determine the game's address from the server response. " +
-        "The game service may be misconfigured or still finalising — please retry.",
+        "The game service may be misconfigured or still finalising, please retry.",
     );
   }
   return { address: contractAddress, myId: account.address };
@@ -313,7 +313,7 @@ export async function analyzeGameOnChain(game: {
   const decoded = deployReceipt.txDataDecoded as DecodedDeployData | undefined;
   const analyzerAddress = decoded?.contractAddress;
   if (!analyzerAddress || !/^0x[0-9a-fA-F]{40}$/.test(analyzerAddress)) {
-    throw new Error("Could not start the analysis — the analysis service did not respond with a valid session");
+    throw new Error("Could not start the analysis, the analysis service did not respond with a valid session");
   }
   console.log(`[genlayer:analyze] deployed analyzer at ${analyzerAddress} (deploy tx ${deployHash})`);
 

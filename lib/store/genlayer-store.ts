@@ -116,7 +116,7 @@ export class GenLayerGameStore implements GameStore {
   }
 
   async offerDraw(): Promise<GameState> {
-    throw new Error("Draw offers aren't supported for this game yet — resign or keep playing");
+    throw new Error("Draw offers aren't supported for this game yet, resign or keep playing");
   }
 
   async respondDraw(): Promise<GameState> {
@@ -124,11 +124,11 @@ export class GenLayerGameStore implements GameStore {
   }
 
   async abort(): Promise<GameState> {
-    throw new Error("Aborting isn't supported for this game yet — resign instead");
+    throw new Error("Aborting isn't supported for this game yet, resign instead");
   }
 
   async rematch(): Promise<GameState> {
-    throw new Error("Rematch isn't supported for this game yet — start a new game");
+    throw new Error("Rematch isn't supported for this game yet, start a new game");
   }
 
   async resolveTimeout(id: string): Promise<GameState> {

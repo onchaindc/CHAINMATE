@@ -34,6 +34,7 @@ const LINKS: {
   { href: "/watch", label: "Watch", hideBelow: "md" },
   { href: "/games", label: "Games", hideBelow: "md" },
   { href: "/leaderboard", label: "Leaderboard", hideBelow: "lg" },
+  { href: "/messages", label: "Messages", hideBelow: "lg" },
   { href: "/news", label: "News", hideBelow: "lg" },
 ];
 
@@ -110,20 +111,18 @@ export function SiteNav() {
           className="group flex shrink-0 items-center"
           aria-label="ChainMate home"
         >
-          {/* The full wordmark image was ~201px wide at h-8. On a narrow phone
-              that, plus the account pill and the two icon buttons, overflowed
-              the bar and pushed the menu button off-screen: Android users
-              literally could not see the hamburger. The mark is a square
-              image; the wordmark is real text beside it, hidden below sm, so
-              the whole bar always fits and the menu stays reachable. */}
+          {/* The mark is a plain high-DPI PNG (a 96px bitmap wrapped in SVG
+              rendered jagged at 32px on phones), and the wordmark is real text
+              beside it at every size: the name is part of the app's face and
+              belongs on a phone just as it shows on desktop. */}
           <img
-            src="/logo-mark.svg"
+            src="/logo-mark-192.png"
             alt="ChainMate"
             className="h-8 w-8 opacity-90 transition-opacity group-hover:opacity-100"
           />
           <span
             aria-hidden
-            className="hidden pl-2.5 text-lg font-bold tracking-[0.18em] sm:inline"
+            className="pl-2 text-base font-bold tracking-[0.16em] sm:pl-2.5 sm:text-lg sm:tracking-[0.18em]"
           >
             <span className="text-[#EDE7DA]">CHAIN</span>
             <span className="text-[#C9A86A]">MATE</span>
