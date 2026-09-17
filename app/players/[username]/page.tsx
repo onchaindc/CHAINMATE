@@ -125,7 +125,7 @@ export default function PublicPlayerPage() {
       await store.friendAction(action, otherId);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "That didn't work — try again.");
+      setError(err instanceof Error ? err.message : "That didn't work. Try again.");
     } finally {
       setBusy(false);
     }

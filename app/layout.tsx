@@ -34,7 +34,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ChainMate — Play chess. Think deeper.",
+  title: "ChainMate: Play chess. Think deeper.",
   description:
     "Competitive chess with intelligent analysis, AI commentary and post-game reports.",
   icons: {

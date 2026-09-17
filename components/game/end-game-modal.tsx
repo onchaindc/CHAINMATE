@@ -260,7 +260,7 @@ export function EndGameModal({
             <div className="mt-2.5">
               <p className="text-2xs leading-snug text-muted-foreground">
                 {game.analysisError
-                  ? `Automatic match report. Analysis unavailable — ${game.analysisError}`
+                  ? `Automatic match report. Analysis unavailable: ${game.analysisError}`
                   : "Automatic match report."}
               </p>
               {retryable && (
@@ -280,17 +280,17 @@ export function EndGameModal({
           <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-foreground/80">
             <li>
               <span className="font-mono text-primary">Opening</span>
-              <span className="text-muted-foreground"> — </span>
+              <span className="text-muted-foreground">: </span>
               {moments.opening}
             </li>
             <li>
               <span className="font-mono text-primary">Turning point</span>
-              <span className="text-muted-foreground"> — </span>
+              <span className="text-muted-foreground">: </span>
               {moments.turningPoint}
             </li>
             <li>
               <span className="font-mono text-primary">Final</span>
-              <span className="text-muted-foreground"> — </span>
+              <span className="text-muted-foreground">: </span>
               {moments.finalTactic}
             </li>
           </ul>

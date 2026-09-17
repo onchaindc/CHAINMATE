@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CalendarClock, Coins, Loader2, Swords } from "lucide-react";
+import { CalendarClock, Coins, Pencil, Swords, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorNote } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { tournamentApi } from "@/lib/tournament-api";
@@ -62,10 +63,12 @@ export default function CreateTournamentPage() {
   const [prizePreset, setPrizePreset] = useState<"winner" | "top3" | "top5">("winner");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The order-confirmation review step before the create request fires. */
+  const [reviewing, setReviewing] = useState(false);
 
   const paid = entryFeeNim.trim() !== "" && Number(entryFeeNim) > 0;
 
-  const submit = async () => {
+  const createNow = async () => {
     setBusy(true);
     setError(null);
     try {
@@ -97,8 +100,38 @@ export default function CreateTournamentPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the tournament");
       setBusy(false);
+      setReviewing(false);
     }
   };
+
+  /** First tap opens the review; creation happens only on Confirm there. */
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (name.trim().length < 2) return;
+    setReviewing(true);
+  };
+
+  const reviewRows: { label: string; value: string }[] = [
+    { label: "Name", value: name.trim() },
+    ...(description.trim() ? [{ label: "Description", value: description.trim() }] : []),
+    { label: "Format", value: FORMATS.find((f) => f.id === format)?.name ?? format },
+    { label: "Time control", value: timeControl },
+    { label: "Player limit", value: `${maxPlayers} players` },
+    ...(format === "swiss" ? [{ label: "Swiss rounds", value: `${swissRounds} rounds` }] : []),
+    ...(startsAt
+      ? [{ label: "Registration opens", value: new Date(startsAt).toLocaleString() }]
+      : [{ label: "Registration", value: "Opens when you open it" }]),
+    {
+      label: "Entry fee",
+      value: paid ? `${entryFeeNim.trim()} NIM per player` : "Free entry",
+    },
+    ...(paid
+      ? [{
+          label: "Prize distribution",
+          value: PRESETS.find((p) => p.id === prizePreset)?.name ?? prizePreset,
+        }]
+      : []),
+  ];
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 lg:py-16">
@@ -114,10 +147,7 @@ export default function CreateTournamentPage() {
       <Panel className="animate-fade-in-up mt-8 [animation-delay:60ms]">
         <form
           className="space-y-5 p-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submit();
-          }}
+          onSubmit={submit}
         >
           <label className="block">
             <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -287,7 +317,7 @@ export default function CreateTournamentPage() {
                 >
                   {PRESETS.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} — {p.shares}
+                      {p.name}: {p.shares}
                     </option>
                   ))}
                 </select>
@@ -295,8 +325,8 @@ export default function CreateTournamentPage() {
             </div>
             <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
               {paid
-                ? "Players pay the exact fee in NIM to the treasury. The prize pool is built from verified payments only — every entry is verified on-chain before it counts."
-                : "A free tournament needs no wallet — anyone can join."}
+                ? "Players pay the exact fee in NIM to the treasury. The prize pool is built from verified payments only; every entry is verified on-chain before it counts."
+                : "A free tournament needs no wallet. Anyone can join."}
             </p>
           </fieldset>
 
@@ -310,12 +340,46 @@ export default function CreateTournamentPage() {
               Cancel
             </Link>
             <Button type="submit" disabled={busy || name.trim().length < 2}>
-              {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              Create tournament
+              <Pencil aria-hidden />
+              Review &amp; create
             </Button>
           </div>
         </form>
       </Panel>
+
+      {/* Order-confirmation review: every detail the host entered, shown once
+          before the tournament exists. Confirm is the only path that fires. */}
+      <ConfirmDialog
+        open={reviewing}
+        title="Confirm tournament"
+        confirmLabel={busy ? "Creating…" : "Create tournament"}
+        busy={busy}
+        onCancel={() => {
+          if (!busy) setReviewing(false);
+        }}
+        onConfirm={() => void createNow()}
+      >
+        <dl className="mt-1 space-y-2">
+          {reviewRows.map((row) => (
+            <div key={row.label} className="flex items-baseline justify-between gap-3">
+              <dt className="shrink-0 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {row.label}
+              </dt>
+              <dd className="min-w-0 break-words text-right text-sm text-foreground/90">
+                {row.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {paid && (
+          <p className="mt-3 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/5 px-2.5 py-2 text-2xs leading-relaxed text-warning">
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            Paid event: every entrant pays the fee from their own wallet to the
+            treasury. Once another player has paid, only a ChainMate
+            administrator can delete this tournament.
+          </p>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

@@ -135,8 +135,8 @@ function ProfileContent() {
         badges={stats && provisional && <ProfileBadge>Provisional</ProfileBadge>}
         description={
           identity.isGuest
-            ? "Guest — casual play, nothing is saved. Sign up for a permanent record."
-            : "ChainMate player — signed in and synced across devices"
+            ? "Guest: casual play, nothing is saved. Sign up for a permanent record."
+            : "ChainMate player: signed in and synced across devices"
         }
       />
 
@@ -172,7 +172,7 @@ function ProfileContent() {
               .then((next) =>
                 setStats((prev) => (prev ? { ...prev, country: next.country } : prev)),
               )
-              .catch(() => setError("Couldn't save your country — try again."))
+              .catch(() => setError("Couldn't save your country. Try again."))
               .finally(() => setSavingCountry(false));
           }}
           className="min-w-0 flex-1 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors focus:border-primary/50"
@@ -194,7 +194,7 @@ function ProfileContent() {
         <ErrorNote
           tone="warning"
           className="mt-6"
-          message="Account not linked to a profile yet — sign out and back in to finish setup."
+          message="Account not linked to a profile yet: sign out and back in to finish setup."
         />
       )}
 
@@ -241,7 +241,7 @@ function ProfileContent() {
       />
       <p className="mt-2 text-2xs text-muted-foreground">
         {provisional
-          ? "Provisional rating — updates after rated online matches between two human players."
+          ? "Provisional rating: updates after rated online matches between two human players."
           : "Rating and streaks update after rated online matches between two human players."}
       </p>
 

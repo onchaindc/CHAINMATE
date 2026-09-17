@@ -55,6 +55,7 @@ export type TournamentEntryErrorKind =
   | "tournament-full"
   | "tx-required"
   | "guest-rejected"
+  | "banned"
   | "verification-failed"
   | "seat-creation-failed";
 
@@ -67,6 +68,7 @@ const STATUS_BY_KIND: Record<TournamentEntryErrorKind, number> = {
   "tournament-full": 409,
   "tx-required": 400,
   "guest-rejected": 403,
+  "banned": 403,
   "verification-failed": 502,
   "seat-creation-failed": 500,
 };
@@ -208,6 +210,12 @@ export async function joinPaidTournament(
   if (!txHashInput || typeof txHashInput !== "string" || txHashInput.trim() === "") {
     throw new TournamentEntryError("tx-required", "A transaction hash is required to join a paid tournament");
   }
+
+  // Banned players can never open a seat on a paid event (free joins are
+  // gated in the engine's joinTournament).
+  const { requireNotBanned } = await import("@/lib/server/admin");
+  const ban = await requireNotBanned(playerId);
+  if (!ban.ok) throw new TournamentEntryError("banned", ban.error!);
 
   const readDoc =
     deps.getTournamentDoc ??

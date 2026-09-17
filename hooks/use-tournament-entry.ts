@@ -40,6 +40,7 @@ import {
   connectNimiq,
   listNimiqAccounts,
   nimiqPaymentFailureMessage,
+  nimiqWalletRequestFailureMessage,
   sendNimiqBasicTransaction,
   signNimiqPaymentProof,
   waitForNimiqConsensus,
@@ -71,6 +72,13 @@ export type EntryPhase =
   | "error";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Marks a failure that happened BEFORE the send returned a hash: the wallet
+ * never created a transaction, so the error must not read as "payment
+ * failed" (nothing moved). Internal to this hook's catch block.
+ */
+class PreSendWalletError extends Error {}
 
 /** A second payment arrived while the seat was already paid by another tx. */
 export class AlreadyPaidError extends Error {
@@ -219,6 +227,16 @@ export function useTournamentEntry(playerId: string) {
       }
 
       setPhase("awaiting-wallet");
+      /**
+       * Everything inside this try runs BEFORE the money moves until the
+       * send returns a hash. A failure in that window is a request the
+       * wallet never fulfilled: no transaction was created, so the "Nimiq
+       * payment failed" framing (which reads as funds lost) is wrong. The
+       * message is the neutral request-failure text instead. This is the
+       * Android report fixed: a friend saw "transaction failed" while the
+       * wallet sheet was still open and nothing had been sent.
+       */
+      const sentHashRef = { current: null as string | null };
       try {
         const { NIMIQ_TREASURY_ADDRESS, NIMIQ_NETWORK, isPlausibleNimiqAddress } =
           await import("@/lib/nimiq/config");
@@ -237,7 +255,7 @@ export function useTournamentEntry(playerId: string) {
         const treasury = canonicalAddress(NIMIQ_TREASURY_ADDRESS);
 
         const connected = await connectNimiq();
-        if (!connected.ok) throw new Error(connected.error.message);
+        if (!connected.ok) throw new PreSendWalletError(connected.error.message);
 
         // Best-effort sync/consensus pre-flight: Nimiq Pay cannot build a
         // transaction until its account sync finishes — the same failure the
@@ -251,6 +269,7 @@ export function useTournamentEntry(playerId: string) {
         // active — so this is the only moment a mismatch can be caught for
         // free. Fail-open only when the account list itself is unavailable.
         const accounts = await listNimiqAccounts(connected.value);
+        if (!accounts.ok) throw new PreSendWalletError(accounts.error.message);
         if (accounts.ok) {
           const linkedCanonical = canonicalAddress(wallet.wallet.address);
           const activeHasLinked = accounts.value.some(
@@ -274,7 +293,7 @@ export function useTournamentEntry(playerId: string) {
           network: NIMIQ_NETWORK,
         });
         const proof = await signNimiqPaymentProof(connected.value, intentMessage);
-        if (!proof.ok) throw new Error(proof.error.message);
+        if (!proof.ok) throw new PreSendWalletError(proof.error.message);
 
         setPhase("submitting");
         const sent = await sendNimiqBasicTransaction(connected.value, {
@@ -285,8 +304,9 @@ export function useTournamentEntry(playerId: string) {
             signature: proof.value.signature,
           }),
         });
-        if (!sent.ok) throw new Error(sent.error.message);
+        if (!sent.ok) throw new PreSendWalletError(sent.error.message);
         const txHash = sent.value;
+        sentHashRef.current = txHash;
 
         // The money has MOVED. Whatever happens below, the hash is kept so
         // verification can be retried — never a second payment. Persisted
@@ -304,7 +324,13 @@ export function useTournamentEntry(playerId: string) {
         // "[object Object]". The original value is preserved on the console
         // for debugging and never swallowed.
         console.warn("[nimiq] payment flow failed:", err);
-        setError(nimiqPaymentFailureMessage(err));
+        // Pre-send failures are request failures, not payment failures: no
+        // hash exists, nothing is on-chain, nothing was charged.
+        setError(
+          err instanceof PreSendWalletError
+            ? nimiqWalletRequestFailureMessage(err)
+            : nimiqPaymentFailureMessage(err),
+        );
         setPhase("error");
         return { outcome: "error", txHash: null };
       }

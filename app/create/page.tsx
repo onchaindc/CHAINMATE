@@ -103,7 +103,7 @@ export default function CreateGamePage() {
                 ? "Searching…"
                 : match.starting
                   ? "Finding opponent…"
-                  : "Play online — find a match"}
+                  : "Play online: find a match"}
             </Button>
             <p className="text-center text-2xs leading-snug text-muted-foreground">
               Rated, {timeControl}, against similar rating.

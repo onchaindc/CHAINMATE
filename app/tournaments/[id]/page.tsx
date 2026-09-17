@@ -25,9 +25,10 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { BackLink, PageHeader, SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { guestDisplayName } from "@/lib/identity";
+import { getIdentityToken, guestDisplayName } from "@/lib/identity";
 import { tournamentApi, type TournamentDetailPayload, type TournamentAction } from "@/lib/tournament-api";
 import { clearPendingEntryTx, loadPendingEntryTx } from "@/lib/nimiq/pending-entry-tx";
 import type { TournamentFormat, TournamentMatch, TournamentStatus } from "@/lib/tournament-types";
@@ -56,7 +57,7 @@ function displayNim(luna: string | null | undefined): string {
 }
 
 const STATUS_LABEL: Record<TournamentStatus, string> = {
-  draft: "Draft — not open yet",
+  draft: "Draft: not open yet",
   registration: "Registration open",
   locked: "Registration locked",
   in_progress: "In progress",
@@ -89,6 +90,12 @@ export default function TournamentDetailPage() {
   const [busy, setBusy] = useState<TournamentAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [payoutBusy, setPayoutBusy] = useState<string | null>(null);
+  /** Leave confirmation (paid events warn about forfeiting the entry). */
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  /** Delete confirmation (host, or admin on any event). */
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Is the viewer a ChainMate admin (admin dashboard exists separately)? */
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -111,6 +118,33 @@ export default function TournamentDetailPage() {
     return () => clearInterval(timer);
   }, [load, identity.status]);
 
+  // Admin flag: only read once identity settles. Failure means "not admin"
+  // (the endpoint 404s for non-admins by design).
+  useEffect(() => {
+    if (identity.status === "loading" || !identity.playerId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = getIdentityToken();
+        const res = await fetch(
+          `/api/admin/whoami?playerId=${encodeURIComponent(identity.playerId)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+        );
+        if (!res.ok) {
+          if (!cancelled) setIsAdmin(false);
+          return;
+        }
+        const data = (await res.json()) as { admin?: boolean };
+        if (!cancelled) setIsAdmin(data.admin === true);
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [identity.status, identity.playerId]);
+
   const act = async (action: TournamentAction) => {
     if (!detail) return;
     setBusy(action);
@@ -123,6 +157,12 @@ export default function TournamentDetailPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  /** Leave, after the confirm dialog has been accepted. */
+  const leaveNow = async () => {
+    setConfirmLeave(false);
+    await act("leave");
   };
 
   // Hooks before any early return (rules-of-hooks): the paid-entry flow is
@@ -270,14 +310,26 @@ export default function TournamentDetailPage() {
   const full = s.playerCount >= s.maxPlayers;
   const scheduled = s.scheduledStartAt ?? null;
   const scheduledFuture = scheduled != null && scheduled > Date.now();
-  const canDelete = isHost && (s.status === "draft" || s.status === "registration");
+  const canDelete =
+    isHost && (s.status === "draft" || s.status === "registration");
+  /**
+   * Delete is admin-only once a THIRD PARTY has a verified paid seat: those
+   * entries are real funds. The host keeps the button only while nobody but
+   * they (or nobody at all) has paid. The server enforces the same rule.
+   */
+  const thirdPartyPaid =
+    isPaid &&
+    detail.entries.some(
+      (e) => e.paid && e.playerId !== s.creatorId && e.playerId !== identity.playerId,
+    );
+  const showDelete = canDelete && !(thirdPartyPaid && !isAdmin);
   const showStandings =
     s.status === "in_progress" || s.status === "completed" || detail.standings.some((r) => r.played > 0);
   const winnerRow = detail.standings.find((r) => r.playerId === s.winnerId);
 
-  /** Host delete: confirm, then remove the event and go back to the list. */
+  /** Host (or admin) delete: confirm, then remove and go back to the list. */
   const deleteTournament = async () => {
-    if (!window.confirm("Delete this tournament? Players who joined will see it's gone. This cannot be undone.")) return;
+    setConfirmDelete(false);
     setBusy("delete");
     setActionError(null);
     try {
@@ -316,7 +368,10 @@ export default function TournamentDetailPage() {
                 variant="outline"
                 size="sm"
                 disabled={busy !== null}
-                onClick={() => void act("leave")}
+                onClick={() => {
+                  if (isPaid) setConfirmLeave(true);
+                  else void act("leave");
+                }}
               >
                 {busy === "leave" ? (
                   <Loader2 className="animate-spin" aria-hidden />
@@ -423,14 +478,14 @@ export default function TournamentDetailPage() {
               <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tracking-tight">
                 {pendingRejoin
                   ? "Uncredited payment"
-                  : "Payment confirmed — you're in!"}
+                  : "Payment confirmed: you're in!"}
                 <span className="font-mono tabular-nums text-foreground/80">
                   {displayNim(entryFeeLuna)} NIM
                 </span>
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {pendingRejoin
-                  ? `This transfer is on-chain but has no seat attached right now. Verify it below — that never charges again — or rejoin with a new payment. It is not refunded automatically: the ${displayNim(entryFeeLuna)} NIM stays in the treasury until support resolves it.`
+                  ? `This transfer is on-chain but has no seat attached right now. Verify it below (that never charges again) or rejoin with a new payment. It is not refunded automatically: the ${displayNim(entryFeeLuna)} NIM stays in the treasury until support resolves it.`
                   : `${displayNim(entryFeeLuna)} NIM received from your linked wallet and verified on-chain. Your seat is secured.`}
               </p>
             </div>
@@ -512,12 +567,20 @@ export default function TournamentDetailPage() {
                 Cancel
               </Button>
             )}
-            {canDelete && (
+            {canDelete && !showDelete && (
+              <span
+                className="text-2xs text-muted-foreground"
+                title="A player has paid to enter. Only a ChainMate administrator can delete a tournament with paid entries."
+              >
+                Paid entries locked
+              </span>
+            )}
+            {showDelete && (
               <Button
                 size="sm"
                 variant="destructive"
                 disabled={busy !== null}
-                onClick={() => void deleteTournament()}
+                onClick={() => setConfirmDelete(true)}
                 title="Remove this tournament entirely"
               >
                 {busy === "delete" ? (
@@ -585,7 +648,7 @@ export default function TournamentDetailPage() {
         <section className="animate-fade-in-up mt-8 [animation-delay:80ms]">
           <SectionLabel live>Arena</SectionLabel>
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            Find an opponent above whenever you&rsquo;re free — one active game at a
+            Find an opponent above whenever you&rsquo;re free. One active game at a
             time. Every finished game updates the standings immediately.
           </p>
           {detail.rounds.length > 0 && (
@@ -697,7 +760,7 @@ export default function TournamentDetailPage() {
                 description={
                   s.status === "draft"
                     ? "Registration hasn't opened."
-                    : "Be the first — hit Join."
+                    : "Be the first: hit Join."
                 }
                 className="py-10"
               />
@@ -781,13 +844,68 @@ export default function TournamentDetailPage() {
           </Panel>
           <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
             Prize amounts are calculated from verified payments. &quot;Pending&quot;
-            means recorded and owed — payout dispatch requires the treasury
+            means recorded and owed. Payout dispatch requires the treasury
             signer and is shown separately from the prize itself.
           </p>
         </section>
       )}
 
       {error && <ErrorNote message={error} className="mt-6" tone="warning" />}
+
+      {/* ---------- Leave confirmation (paid events) ---------- */}
+      <ConfirmDialog
+        open={confirmLeave}
+        title={`Leave ${s.name}?`}
+        destructive
+        busy={busy === "leave"}
+        confirmLabel="Leave and forfeit"
+        onCancel={() => setConfirmLeave(false)}
+        onConfirm={() => void leaveNow()}
+      >
+        {isPaid ? (
+          <>
+            <p>
+              This is a paid tournament. Leaving now forfeits your entry fee of{" "}
+              <strong className="font-mono tabular-nums text-foreground">
+                {displayNim(entryFeeLuna)} NIM
+              </strong>{" "}
+              and it is not refunded.
+            </p>
+            {myEntry?.paid ? (
+              <p className="mt-2">
+                Your payment has been verified, so your fee is already in the
+                prize pool. Leaving removes your seat and your chance at the
+                prizes, but does not return the NIM.
+              </p>
+            ) : (
+              <p className="mt-2">
+                Your payment is not verified yet; if it lands after you leave
+                it will sit uncredited in the treasury until support resolves
+                it.
+              </p>
+            )}
+          </>
+        ) : (
+          <p>Leave this tournament? You can rejoin while registration is open.</p>
+        )}
+      </ConfirmDialog>
+
+      {/* ---------- Delete confirmation ---------- */}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete this tournament?"
+        destructive
+        busy={busy === "delete"}
+        confirmLabel="Delete permanently"
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => void deleteTournament()}
+      >
+        <p>
+          Players who joined will see it is gone. This cannot be undone.
+          {thirdPartyPaid &&
+            " A player has already paid to enter, so the record of this event must stay with the administrator who deletes it."}
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -838,7 +956,7 @@ function PaidEntryPanel({
       <div className="animate-fade-in-up mt-4 flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
         <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />
         <span>
-          Entry paid — <strong className="font-mono tabular-nums">{fee} NIM</strong> verified on-chain.
+          Entry paid: <strong className="font-mono tabular-nums">{fee} NIM</strong> verified on-chain.
         </span>
       </div>
     );
@@ -897,7 +1015,7 @@ function PaidEntryPanel({
             <p>
               <strong className="text-foreground/80">Each player pays their own entry.</strong>{" "}
               Your {fee} NIM goes straight from your wallet to the ChainMate
-              treasury — the host never funds the tournament and never touches
+              treasury. The host never funds the tournament and never touches
               the money.
             </p>
             <p>
@@ -928,7 +1046,7 @@ function PaidEntryPanel({
 
         {/* Recovery path for a payment that is on-chain but not yet credited:
             re-verifies the SAME hash (server-side idempotent). Never a second
-            charge — the pending hash rides in localStorage (survives reloads
+            charge. The pending hash rides in localStorage (survives reloads
             and closed tabs) so the confirmation window never orphans a
             payment. */}
         {entry.pendingTxHash && !entry.busy && (
@@ -963,8 +1081,8 @@ function PaidEntryPanel({
               </Button>
             ) : (
               /* Outside Nimiq Pay (normal browser) the provider can never
-                 inject — a Connect button here is a dead end. Deep-link into
-                 Nimiq Pay instead: it opens THIS page inside the wallet. */
+                 inject, so a Connect button here is a dead end. Deep-link
+                 into Nimiq Pay instead: it opens THIS page inside the wallet. */
               <a
                 href={nimiqPayDeepLinks()?.https ?? "#"}
                 className={buttonVariants({ size: "sm" })}
@@ -1034,7 +1152,7 @@ function PayoutStatusPill({ status }: { status: string }) {
     pending: { label: "prize pending", cls: "border-warning/40 text-warning" },
     sent: { label: "payout sent", cls: "border-primary/40 text-primary" },
     verified: { label: "paid ✓", cls: "border-primary/40 text-primary bg-primary/5" },
-    failed: { label: "failed — retrying", cls: "border-destructive/40 text-destructive" },
+    failed: { label: "failed, retrying", cls: "border-destructive/40 text-destructive" },
     blocked_no_wallet: { label: "awaiting wallet", cls: "border-warning/40 text-warning" },
   };
   const it = map[status] ?? { label: status, cls: "border-border/60 text-muted-foreground" };

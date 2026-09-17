@@ -23,7 +23,7 @@ import {
   shortNimiqAddress,
   type WalletLinkPhase,
 } from "@/hooks/use-nimiq-wallet";
-import { NIMIQ_ENABLED } from "@/lib/nimiq/config";
+import { NIMIQ_ENABLED, NIMIQ_NETWORK } from "@/lib/nimiq/config";
 
 const BUSY_PHASES: ReadonlySet<WalletLinkPhase> = new Set([
   "awaiting-wallet",
@@ -147,8 +147,10 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
       {connected && wallet && (
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/50 pt-2">
           <p className="text-2xs text-muted-foreground">
-            Bound on {wallet.network === "main" ? "Mainnet" : "Testnet"} ·{" "}
-            {new Date(wallet.linkedAt).toLocaleDateString()}
+            {wallet.network === NIMIQ_NETWORK
+              ? "Live wallet"
+              : `Wrong network wallet: relink to use this deployment's network`}{" "}
+            · {new Date(wallet.linkedAt).toLocaleDateString()}
           </p>
           <button
             type="button"

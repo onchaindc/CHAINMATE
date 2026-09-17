@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, LogOut, Trophy } from "lucide-react";
+import { ChevronDown, LogOut, ShieldCheck, Trophy } from "lucide-react";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
-import { guestDisplayName } from "@/lib/identity";
+import { getIdentityToken, guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 /**
@@ -19,7 +19,35 @@ export function PlayerMenu() {
   const identity = useIdentity();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Admin dashboard link: resolved quietly once per identity. Everyone else
+  // never sees the entry (and the page itself 404s for non-admins).
+  useEffect(() => {
+    if (identity.status === "loading" || !identity.playerId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = getIdentityToken();
+        const res = await fetch(
+          `/api/admin/whoami?playerId=${encodeURIComponent(identity.playerId)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+        );
+        if (!res.ok) {
+          if (!cancelled) setIsAdmin(false);
+          return;
+        }
+        const data = (await res.json()) as { admin?: boolean };
+        if (!cancelled) setIsAdmin(data.admin === true);
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [identity.status, identity.playerId]);
 
   useEffect(() => {
     if (!open) return;
@@ -57,7 +85,7 @@ export function PlayerMenu() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={`Account menu — signed in as ${name}`}
+        aria-label={`Account menu: signed in as ${name}`}
         aria-expanded={open}
         className={cn(
           "flex items-center gap-2 rounded-full border border-border/70 py-1 pl-1 pr-2 transition-all active:scale-[0.97]",
@@ -118,6 +146,16 @@ export function PlayerMenu() {
             >
               Games
             </Link>
+            {isAdmin && (
+              <Link
+                href="/admin"
+                onClick={close}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-foreground/85 transition-all hover:bg-secondary/50 active:scale-[0.98]"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" aria-hidden />
+                Admin dashboard
+              </Link>
+            )}
             {isGuest ? (
               <>
                 <Link

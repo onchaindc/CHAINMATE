@@ -36,6 +36,14 @@ import { isPaidTournamentDoc, markEntryPaid as markEntryPaidOnDoc } from "@/lib/
 import { isPaidEntryFee, lunaFromStored, validateEntryFee } from "@/lib/tournament-economy";
 import { getHostedGame } from "@/lib/server/hosted";
 import { isGameOver, type GameStatus, type GameState } from "@/lib/types";
+import {
+  requireNotBanned,
+  isAdminPlayer,
+} from "@/lib/server/admin";
+import { getLinkedWallet } from "@/lib/server/nimiq/service";
+import { getAccountByAddress } from "@/lib/server/nimiq/rpc";
+import { NIMIQ_NETWORK } from "@/lib/nimiq/config";
+import { LUNA_PER_NIM, NimiqMoneyError } from "@/lib/nimiq/format";
 
 /**
  * The tournament engine — server-authoritative, ChainMate Phase 2A.
@@ -166,12 +174,97 @@ function isTournamentFormat(v: unknown): v is TournamentFormat {
 /* Creation & lifecycle                                                */
 /* ------------------------------------------------------------------ */
 
+
+/**
+ * Minimum LINKED-wallet balance to HOST any tournament (free or paid).
+ * Cheap enough to never block a genuine player; high enough that a
+ * drive-by spammer burns 50 real NIM of wallet to flood the list.
+ */
+export const CREATOR_MIN_NIM = 50;
+
+/**
+ * Settable test seam for the hosting gate's RPC/ban dependencies: tests
+ * inject in-memory fakes so the engine suite keeps running with no Nimiq
+ * node and no wallet bindings. Production code leaves this unset.
+ */
+interface CreationGateDeps {
+  getLinkedWallet?: (playerId: string) => Promise<{ address: string; network: string } | null>;
+  getAccountBalanceLuna?: (address: string) => Promise<bigint>;
+}
+let creationGateDeps: CreationGateDeps | null = null;
+
+/** Test-only injection point for the creation gate's external reads. */
+export function setTournamentCreationGateDeps(deps: CreationGateDeps | null): void {
+  creationGateDeps = deps;
+}
+
+async function gateTournamentCreation(creatorId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ban = await requireNotBanned(creatorId);
+  if (!ban.ok) return { ok: false, error: ban.error! };
+
+  const linked = creationGateDeps?.getLinkedWallet
+    ? await creationGateDeps.getLinkedWallet(creatorId).catch(() => null)
+    : await getLinkedWallet(creatorId).catch(() => null);
+  if (!linked) {
+    return {
+      ok: false,
+      error: `Link your Nimiq wallet to host a tournament: hosting requires a wallet holding at least ${CREATOR_MIN_NIM} NIM`,
+    };
+  }
+  if (linked.network !== NIMIQ_NETWORK) {
+    return {
+      ok: false,
+      error: `Your wallet is linked on the ${linked.network} network but this deployment runs on ${NIMIQ_NETWORK}: relink your wallet, then host.`,
+    };
+  }
+  try {
+    let balance: bigint;
+    if (creationGateDeps?.getAccountBalanceLuna) {
+      balance = await creationGateDeps.getAccountBalanceLuna(linked.address);
+    } else {
+      const account = await getAccountByAddress(linked.address, { timeoutMs: 10_000 });
+      if (!account) {
+        return {
+          ok: false,
+          error: "We could not read your wallet balance from the Nimiq node right now. Try again in a moment.",
+        };
+      }
+      balance =
+        typeof account.balance === "string"
+          ? BigInt(account.balance)
+          : BigInt(Math.trunc(Number(account.balance)));
+    }
+    if (balance < BigInt(CREATOR_MIN_NIM) * LUNA_PER_NIM) {
+      return {
+        ok: false,
+        error: `Hosting a tournament requires at least ${CREATOR_MIN_NIM} NIM in your linked wallet. Your balance is too low.`,
+      };
+    }
+  } catch (err) {
+    if (err instanceof NimiqMoneyError) {
+      return { ok: false, error: "Your wallet reported an unreadable balance. Try again." };
+    }
+    return {
+      ok: false,
+      error: "The Nimiq node could not be reached to check your wallet balance. Try again in a moment.",
+    };
+  }
+  return { ok: true };
+}
+
 export async function createTournament(
   creatorId: string,
   input: CreateTournamentInput,
 ): Promise<TournamentDocument> {
   const error = validateTournamentInput(input);
   if (error) throw new Error(error);
+
+  // Hosting is a privilege, not a given: every creator must hold at least
+  // CREATOR_MIN_NIM NIM in their LINKED wallet (free and paid events alike).
+  // Banned players are shut out too. Both checks run before the doc exists,
+  // so there is never an orphaned tournament to clean up.
+  const gate = await gateTournamentCreation(creatorId);
+  if (!gate.ok) throw new Error(gate.error);
 
   const now = Date.now();
   const doc: TournamentDocument = {
@@ -383,6 +476,9 @@ export async function joinTournament(
   tournamentId: string,
   playerId: string,
 ): Promise<TransitionResult> {
+  // Banned players hit this door (and the paid-entry door) everywhere.
+  const ban = await requireNotBanned(playerId);
+  if (!ban.ok) return { ok: false, error: ban.error! };
   // The document lock is what makes the player-cap race-free: without it,
   // six concurrent joins each read 0 entries, each pass the cap, and all 6
   // write back 6 entries for a 4-player event.
@@ -486,10 +582,43 @@ export async function deleteTournament(
   return withTournamentLock(tournamentId, async () => {
     const doc = await getTournamentDoc(tournamentId);
     if (!doc) return { ok: false, error: "Tournament not found" };
-    if (doc.creatorId !== playerId) {
-      return { ok: false, error: "Only the host can delete the tournament" };
+
+    // Delete is an ADMIN-ONLY action once real money is involved. A host may
+    // still delete their own event ONLY while it is untouched: draft/locked
+    // with no third-party payment verified, or a paid event nobody but the
+    // host has paid into (host self-payment does not lock deletion — they
+    // can delete their own 1-entry event). The moment any other player has
+    // a verified paid seat, only an admin can remove the event: the paid
+    // seats are real funds and the admin dashboards is where accountability
+    // lives.
+    const isAdmin = await isAdminPlayer(playerId);
+    const thirdPartyPaid = doc.entries.some(
+      (e) => e.paid && e.leftAt === undefined && e.playerId !== doc.creatorId,
+    );
+    const hostMayDelete =
+      doc.creatorId === playerId &&
+      !thirdPartyPaid &&
+      (doc.status === "draft" || doc.status === "locked" || doc.status === "registration");
+    if (!isAdmin && !hostMayDelete) {
+      if (thirdPartyPaid) {
+        return {
+          ok: false,
+          error:
+            "This tournament has paid entries — only a ChainMate administrator can delete it",
+        };
+      }
+      if (doc.creatorId === playerId) {
+        return {
+          ok: false,
+          error: `Tournament is ${doc.status} — cancel it instead`,
+        };
+      }
+      return { ok: false, error: "Only the host or an administrator can delete the tournament" };
     }
-    if (doc.status === "in_progress" || isTournamentTerminal(doc.status)) {
+    if (
+      !isAdmin &&
+      (doc.status === "in_progress" || isTournamentTerminal(doc.status))
+    ) {
       return {
         ok: false,
         error: doc.status === "in_progress"

@@ -110,7 +110,7 @@ export default function TournamentsPage() {
           <EmptyState
             icon={Trophy}
             title="No tournaments yet"
-            description="Host the first one — knockout, Swiss or arena, your call."
+            description="Host the first one: knockout, Swiss or arena, your call."
             action={{ href: "/tournaments/create", label: "Host a tournament" }}
           />
         </Panel>

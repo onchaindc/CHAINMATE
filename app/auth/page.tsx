@@ -211,7 +211,7 @@ function AuthContent() {
   const completeGoogleOnboarding = useCallback(async () => {
     setError(null);
     const trimmed = username.trim();
-    if (trimmed.length < 3) { setError("Choose a username — at least 3 characters."); return; }
+    if (trimmed.length < 3) { setError("Choose a username: at least 3 characters."); return; }
     if (usernameState === "taken") { setError("That username is already taken. Try another."); return; }
     if (usernameState === "invalid") { setError("Use letters, numbers and underscores only."); return; }
     if (!googleOnboardingToken) { setError("Session expired. Please sign in with Google again."); return; }

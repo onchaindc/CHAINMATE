@@ -79,7 +79,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
         setResults(await store.searchPlayers(query.trim()));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "That didn't work — try again.");
+      setError(err instanceof Error ? err.message : "That didn't work. Try again.");
     } finally {
       setBusyId(null);
     }

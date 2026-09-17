@@ -108,16 +108,24 @@ export function SiteNav() {
           className="group flex shrink-0 items-center"
           aria-label="ChainMate home"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- an inline SVG
-              logo has no intrinsic raster size for next/image to optimise. */}
+          {/* The full wordmark is ~201px wide at h-8. On a narrow phone that,
+              plus the account pill and the two icon buttons, overflowed the bar
+              and pushed the menu button off-screen: Android users literally
+              could not see the hamburger. Below sm we render the compact mark
+              so the whole bar always fits and the menu stays reachable. */}
           <img
             src="/logo.svg"
             alt="ChainMate"
-            className="h-8 w-auto opacity-90 transition-opacity group-hover:opacity-100"
+            className="hidden h-8 w-auto opacity-90 transition-opacity group-hover:opacity-100 sm:block"
+          />
+          <img
+            src="/logo-mark.svg"
+            alt="ChainMate"
+            className="h-8 w-8 opacity-90 transition-opacity group-hover:opacity-100 sm:hidden"
           />
         </Link>
 
-        <nav className="flex items-center gap-1 sm:gap-2">
+        <nav className="flex min-w-0 items-center gap-1 sm:gap-2">
           {links.map(({ href, label, hideBelow }) => {
             if (onLanding) return null;
             const active = isActive(pathname, href);
@@ -165,10 +173,10 @@ export function SiteNav() {
               aria-label={menuOpen ? "Close menu" : "Open menu"}
               className={cn(
                 buttonVariants({ variant: "ghost", size: "icon" }),
-                "lg:hidden",
+                "shrink-0 text-foreground/85 lg:hidden",
               )}
             >
-              {menuOpen ? <X aria-hidden /> : <Menu aria-hidden />}
+              {menuOpen ? <X aria-hidden /> : <Menu aria-hidden strokeWidth={2.5} />}
             </button>
           )}
         </nav>

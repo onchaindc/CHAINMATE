@@ -50,6 +50,18 @@ before(async () => {
   standings = await import("@/lib/tournament-standings");
   types = await import("@/lib/tournament-types");
 
+  // The 50-NIM hosting gate reads a linked wallet + on-chain balance. Tests
+  // run without a Nimiq node, so inject an always-passing seam: every test
+  // creator has a linked wallet with a balance above the minimum.
+  engine.setTournamentCreationGateDeps({
+    getLinkedWallet: async (playerId: string) => ({
+      address: `NQ07_TEST_${playerId}`.slice(0, 36).padEnd(36, "0"),
+      // The default deployment network in a bare test env is "test".
+      network: "test",
+    }),
+    getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+  });
+
   process.on("exit", () => {
     try {
       rmSync(DATA_ROOT, { recursive: true, force: true });

@@ -57,7 +57,10 @@ let seq = 0;
 function validTx(over: Partial<{ value: string; to: string; from: string; executionResult: boolean; networkId: number; blockNumber: number | null }> = {}) {
   seq += 1;
   return {
-    hash: `a${seq.toString().padStart(63, "0")}`,
+    // The consumption map is shared process-wide across test files (one file
+    // store), so this file's hashes carry a unique prefix that no other
+    // suite's counter can produce — a collision here would read as a replay.
+    hash: `f${seq.toString().padStart(63, "0")}`,
     from: LINKED,
     to: ENTRY_TREASURY,
     value: FEE_LUNA.toString(),
@@ -144,6 +147,15 @@ before(async () => {
   tx = await import("@/lib/server/nimiq/transactions");
   nimiqStore = await import("@/lib/server/nimiq/store");
   storage = await import("@/lib/server/storage");
+
+  // The 50-NIM hosting gate reads a linked wallet + on-chain balance. This
+  // suite deliberately runs with no RPC and a "test"-network binding while
+  // NIMIQ_NETWORK resolves elsewhere, so inject an always-passing seam:
+  // hosting checks are the dedicated suite's subject, not this one's.
+  engine.setTournamentCreationGateDeps({
+    getLinkedWallet: async () => ({ address: LINKED, network: "test" }),
+    getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+  });
 
   // Link the player's wallet through the REAL Phase 1B store.
   await nimiqStore.setBindingForPlayer(PLAYER, {

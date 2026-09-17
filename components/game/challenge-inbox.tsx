@@ -138,7 +138,7 @@ export function ChallengeInbox() {
               <span className="text-muted-foreground">challenged you</span>
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Rated game{game.timeControl ? ` · ${game.timeControl}` : ""} — they&rsquo;re
+              Rated game{game.timeControl ? ` · ${game.timeControl}` : ""}; they&rsquo;re
               waiting for your answer.
             </p>
 

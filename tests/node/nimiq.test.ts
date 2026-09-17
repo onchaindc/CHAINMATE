@@ -421,17 +421,15 @@ test("nimiqErrorMessage prefixes payment failures readably", () => {
 });
 
 test("syncing-your-account wallet failure maps to an actionable message", () => {
-  // The exact raw shape Nimiq Pay produced for the send failure.
-  assert.deepEqual(
-    normalizeNimiqError(new Error(
-      "Failed to send payment transaction: Something went wrong syncing your account",
-    )),
-    {
-      kind: "provider",
-      message:
-        "Nimiq Pay is not on the testnet network this tournament pays in. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, then try again.",
-    },
-  );
+  // The exact raw shape Nimiq Pay produced for the send failure. The
+  // message is network-aware: this deployment pays on Mainnet now, so the
+  // guidance is patience + the right network, not the testnet dev menu.
+  const normalized = normalizeNimiqError(new Error(
+    "Failed to send payment transaction: Something went wrong syncing your account",
+  ));
+  assert.equal(normalized.kind, "provider");
+  assert.match(normalized.message, /still syncing your account/);
+  assert.match(normalized.message, /Mainnet/);
   // Same mapping through the payment prefix used by the entry UI.
   assert.equal(
     nimiqPaymentFailureMessage(
@@ -439,8 +437,16 @@ test("syncing-your-account wallet failure maps to an actionable message", () => 
         "Failed to send payment transaction: Something went wrong syncing your account",
       ),
     ),
-    "Nimiq payment failed: Nimiq Pay is not on the testnet network this tournament pays in. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, then try again.",
+    `Nimiq payment failed: ${normalized.message}`,
   );
+  // "Transaction invalidated during transaction" (the Android WebView
+  // failure the host produced for proof-carrying sends) is framed honestly:
+  // a request the wallet never created, not a payment that failed.
+  const invalidated = normalizeNimiqError(new Error(
+    "Failed to send payment transaction: Transaction invalidated during transaction",
+  ));
+  assert.equal(invalidated.kind, "provider");
+  assert.match(invalidated.message, /nothing was sent/);
   // Ordinary errors are untouched by the pattern mapping.
   assert.equal(
     normalizeNimiqError(new Error("insufficient funds")).message,

@@ -821,17 +821,17 @@ export default function GamePage() {
                   : challengeToSomeoneElse
                     ? "This is a private challenge between two players."
                     : game.status === "active" && mySide === null
-                    ? "Spectating — the game updates live."
+                    ? "Spectating: the game updates live."
                     : game.status === "active" && drawSupported && drawOfferFromMe
-                      ? "Draw offered — waiting for your opponent's reply."
+                      ? "Draw offered: waiting for your opponent's reply."
                       : game.status === "active" && drawSupported && drawOfferFromOpponent
-                        ? "Opponent offered a draw — accept or decline above."
+                        ? "Opponent offered a draw: accept or decline above."
                         : game.status === "active" && aiThinking
                           ? `${aiLevelFor(game?.aiDifficulty).name} is thinking…`
                           : game.status === "active" && !myTurn
                             ? "Waiting for your opponent to move…"
                             : game.status === "active" && myTurn
-                              ? "Your turn — click a piece, then a destination."
+                              ? "Your turn: click a piece, then a destination."
                               : ""}
               </p>
               </>

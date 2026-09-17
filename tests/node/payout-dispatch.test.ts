@@ -457,8 +457,11 @@ test("broadcast failure after WAL → row stays dispatching (recovery-ready)", a
 
 test("locked treasury wallet → typed wallet-locked error", async () => {
   // Through the real signer builder: unlock check fires before any broadcast.
+  // The H4 guard compares the payout treasury against the entry treasury, so
+  // both must agree here (other suites set NIMIQ_TREASURY_ADDRESS process-wide).
   process.env.NIMIQ_PAYOUT_RPC_URL = "http://127.0.0.1:1";
   process.env.NIMIQ_PAYOUT_TREASURY_ADDRESS = TREASURY;
+  process.env.NIMIQ_TREASURY_ADDRESS = TREASURY;
   try {
     const signer = dispatch.buildRpcTreasurySigner({
       sendBasicTransaction: async () => "a".repeat(64),

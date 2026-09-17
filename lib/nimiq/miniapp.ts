@@ -107,23 +107,54 @@ function describeUnknown(value: unknown): string | null {
  * the combined type+message; when one matches, its real-cause text is used
  * instead. The original payload still reaches the console via guard().
  */
+/**
+ * "Something went wrong syncing your account": Nimiq Pay cannot build a
+ * transaction until its account sync finishes. On test deployments the
+ * practical fix was the hidden dev menu; on Mainnet (the network ChainMate
+ * now pays on) the wallet syncs on its own, so the message is patience, not
+ * a network switch.
+ */
+function syncFailureMessage(): string {
+  let network = "main";
+  try {
+    // Client-safe module: the build inlines NEXT_PUBLIC_* values.
+    network = (process.env.NEXT_PUBLIC_NIMIQ_NETWORK ?? "main").trim().toLowerCase();
+  } catch {
+    /* keep the mainnet default */
+  }
+  if (network === "test" || network === "testnet") {
+    return "Nimiq Pay is still syncing your account and cannot send yet. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, wait for the sync to finish, then try again.";
+  }
+  return "Nimiq Pay is still syncing your account and cannot send yet. Wait a few seconds (the first sync after opening the app can take a moment), make sure Nimiq Pay is on the Mainnet network, then try again.";
+}
+
 const KNOWN_ERROR_PATTERNS: Array<{
   match: RegExp;
   kind: NimiqWalletError["kind"];
   message: string;
 }> = [
   {
-    // Nimiq Pay fails the send when its wallet is not on the network the
-    // payment targets ("Failed to send payment transaction: Something went
-    // wrong syncing your account"). Nimiq Pay runs MAINNET by default;
-    // ChainMate pays in TESTNET NIM, where the user's account has no state
-    // unless they switch. Nimiq's official FAQ documents the hidden dev
-    // menu: long-press the Settings button for 10 seconds, switch to
-    // Testnet, then claim funds via "Get free NIM".
+    // Nimiq Pay fails the send while its account sync is still running
+    // ("Failed to send payment transaction: Something went wrong syncing
+    // your account"). Nothing moved on-chain: the wallet refused to build
+    // the transaction at all.
     match: /syncing your account/i,
     kind: "provider",
+    get message(): string {
+      return syncFailureMessage();
+    },
+  },
+  {
+    // "Transaction invalidated during transaction" is Nimiq Pay's own
+    // internal wording for a send it aborted while building it (observed on
+    // Android WebView when the sheet is dismissed by the host or the
+    // account state changed mid-build). No hash returns, nothing moves.
+    // Frame it honestly: not a payment that failed, a request that never
+    // became one.
+    match: /invalidated during transaction/i,
+    kind: "provider",
     message:
-      "Nimiq Pay is not on the testnet network this tournament pays in. Open Nimiq Pay, open the menu and long-press the Settings button for 10 seconds to unlock the dev menu, switch the network to Testnet, claim free test NIM with the Get free NIM button, then try again.",
+      "The wallet cancelled the payment request before it was created (nothing was sent). This usually happens when Nimiq Pay was interrupted mid-request. Press Pay again when you're ready.",
   },
 ];
 
@@ -202,6 +233,28 @@ export function normalizeNimiqError(err: unknown): NimiqWalletError {
  */
 export function nimiqErrorMessage(err: unknown): string {
   return normalizeNimiqError(err).message;
+}
+
+/**
+ * User-facing message for a failure BEFORE any transaction existed (no hash,
+ * nothing on-chain): the same normalization without the "payment failed"
+ * framing, because no payment had been created yet. Seeing "transaction
+ * failed" while a wallet sheet is still open reads like money was lost when
+ * nothing had moved at all.
+ */
+export function nimiqWalletRequestFailureMessage(err: unknown): string {
+  const normalized = normalizeNimiqError(err);
+  if (
+    err instanceof Error &&
+    (err.message === "[object Object]" || err.message === "")
+  ) {
+    return "The wallet could not complete the request. Nothing was sent and nothing was charged. Check Nimiq Pay is open and unlocked, then try again.";
+  }
+  const message = normalized.message;
+  if (!message || message === "[object Object]") {
+    return "The wallet could not complete the request. Nothing was sent and nothing was charged.";
+  }
+  return message;
 }
 
 /**

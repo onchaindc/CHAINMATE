@@ -312,10 +312,11 @@ export function Lobby() {
 
                 {match.error && <ErrorNote message={match.error} className="mt-3" />}
 
-                <div className="mt-3 grid max-w-lg gap-2 sm:grid-cols-3">
+                <div className="mt-3 grid max-w-lg gap-2 sm:grid-cols-2">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />
                   <LobbyLink href="/solo" icon={Bot} label="Play the computer" />
                   <LobbyLink href="/join" icon={Link2} label="Join by link" />
+                  <LobbyLink href="/tournaments" icon={Trophy} label="Join tournament" />
                 </div>
               </div>
             )}
