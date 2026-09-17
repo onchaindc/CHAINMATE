@@ -54,6 +54,11 @@ import {
   isRetryableVerificationError,
   verificationProgressMessage,
 } from "@/lib/nimiq/verify-retry";
+import {
+  clearPendingEntryTx,
+  loadPendingEntryTx,
+  savePendingEntryTx,
+} from "@/lib/nimiq/pending-entry-tx";
 import { shortNimiqAddress, useNimiqWallet } from "@/hooks/use-nimiq-wallet";
 import { TournamentApiError, tournamentApi } from "@/lib/tournament-api";
 
@@ -126,6 +131,7 @@ export function useTournamentEntry(playerId: string) {
         try {
           await verifyOnce(tournamentId, txHash);
           setPendingTxHash(null);
+          clearPendingEntryTx(tournamentId, playerId);
           setProgress(null);
           setPhase("joined");
           return true;
@@ -181,8 +187,12 @@ export function useTournamentEntry(playerId: string) {
         return { outcome: "error", txHash: null }; // duplicate-click guard
       }
       // ANTI-DOUBLE-PAY: a sent-but-uncredited payment exists — re-verifying
-      // it is the only correct action; paying again would burn funds.
-      if (pendingTxHash) {
+      // it is the only correct action; paying again would burn funds. The
+      // durable store is checked too, so a reload that dropped the in-memory
+      // hash still cannot reach a second send.
+      const storedHash = loadPendingEntryTx(tournamentId, playerId);
+      if (pendingTxHash || storedHash) {
+        if (storedHash && !pendingTxHash) setPendingTxHash(storedHash);
         setError(
           "A payment is already on-chain for this tournament and hasn't been credited yet. Verify it below — you will NOT be charged again by verifying.",
         );
@@ -279,8 +289,12 @@ export function useTournamentEntry(playerId: string) {
         const txHash = sent.value;
 
         // The money has MOVED. Whatever happens below, the hash is kept so
-        // verification can be retried — never a second payment.
+        // verification can be retried — never a second payment. Persisted
+        // IMMEDIATELY: a reload mid-confirmation-window must still find it
+        // (the old code saved only after the whole poll finished, which is
+        // exactly how payments got orphaned).
         setPendingTxHash(txHash);
+        savePendingEntryTx(tournamentId, playerId, txHash);
         const confirmed = await pollVerification(tournamentId, txHash);
         return { outcome: confirmed ? "joined" : "pending", txHash };
       } catch (err) {
@@ -320,15 +334,20 @@ export function useTournamentEntry(playerId: string) {
   /**
    * Give up on an uncredited payment after a TERMINAL verification failure
    * (the only way the Pay button comes back). The on-chain transfer is NOT
-   * undone — the UI says so plainly before the player proceeds.
+   * undone — the UI says so plainly before the player proceeds. Pass the
+   * tournament id to also drop the durable pending-payment record.
    */
-  const clearPending = useCallback(() => {
-    attemptRef.current += 1; // cancel any in-flight poll loop
-    setPendingTxHash(null);
-    setProgress(null);
-    setError(null);
-    setPhase("idle");
-  }, []);
+  const clearPending = useCallback(
+    (tournamentId?: string) => {
+      attemptRef.current += 1; // cancel any in-flight poll loop
+      setPendingTxHash(null);
+      if (tournamentId) clearPendingEntryTx(tournamentId, playerId);
+      setProgress(null);
+      setError(null);
+      setPhase("idle");
+    },
+    [playerId],
+  );
 
   const reset = useCallback(() => {
     attemptRef.current += 1; // cancel any in-flight poll loop

@@ -28,6 +28,7 @@ import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { guestDisplayName } from "@/lib/identity";
 import { tournamentApi, type TournamentDetailPayload, type TournamentAction } from "@/lib/tournament-api";
+import { clearPendingEntryTx, loadPendingEntryTx } from "@/lib/nimiq/pending-entry-tx";
 import type { TournamentFormat, TournamentMatch, TournamentStatus } from "@/lib/tournament-types";
 import { formatNim } from "@/lib/nimiq/format";
 import { isNimiqEnabled } from "@/lib/nimiq/flag";
@@ -200,20 +201,24 @@ export default function TournamentDetailPage() {
   useEffect(() => {
     if (!detail || resumeChecked || !identity.playerId) return;
     setResumeChecked(true);
-    const stored = readPendingTx(id);
+    const stored = loadPendingEntryTx(id, identity.playerId);
     if (!stored) return;
-    const feeLuna = s.entryFeeLuna && s.entryFeeLuna !== "0" ? s.entryFeeLuna : null;
     const myEntry = detail.entries.find((e) => e.playerId === identity.playerId);
-    const stillUnpaid =
-      feeLuna !== null &&
-      detail.myRole === "entrant" &&
+    // Recover whenever this paid tournament could still credit the payment:
+    // registration open and the player's seat (if any) is unpaid. myRole is
+    // deliberately NOT required to be "entrant" — before verification there
+    // is no seat at all, and requiring it wiped the stored hash (the bug that
+    // orphaned payments on refresh).
+    const canStillCredit =
+      detail.summary.entryFeeLuna != null &&
+      detail.summary.entryFeeLuna !== "0" &&
       !myEntry?.paid &&
       detail.summary.status === "registration";
-    if (stillUnpaid) {
+    if (canStillCredit) {
       entry.setPendingTxHash(stored);
       void entry.reverify(id, stored);
     } else {
-      storePendingTx(id, null); // seat confirmed or gone — nothing pending
+      clearPendingEntryTx(id, identity.playerId); // credited or no longer creditable
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, resumeChecked, identity.playerId]);
@@ -436,7 +441,8 @@ export default function TournamentDetailPage() {
           entry={entry}
           celebrating={justConfirmed}
           onJoined={() => {
-            storePendingTx(id, null);
+            // The hook already cleared the durable pending-payment record the
+            // moment verification succeeded — nothing to wipe here.
             celebrate(); // the receipt — the load() below flips the data to paid
             void load();
           }}
@@ -796,23 +802,6 @@ const ENTRY_PHASE_LABEL: Record<string, string> = {
   verifying: "Verifying payment on-chain…",
 };
 
-/**
- * The transaction the player sent — kept so a still-unconfirmed payment can
- * be re-verified instead of re-paid. sessionStorage deliberately: a reload
- * during the confirmation window must not orphan an on-chain payment.
- */
-function readPendingTx(tournamentId: string): string | null {
-  if (typeof sessionStorage === "undefined") return null;
-  return sessionStorage.getItem(`chainmate:entry-tx:${tournamentId}`);
-}
-
-function storePendingTx(tournamentId: string, txHash: string | null) {
-  if (typeof sessionStorage === "undefined") return;
-  const key = `chainmate:entry-tx:${tournamentId}`;
-  if (txHash) sessionStorage.setItem(key, txHash);
-  else sessionStorage.removeItem(key);
-}
-
 function PaidEntryPanel({
   detail,
   entryFeeLuna,
@@ -932,8 +921,9 @@ function PaidEntryPanel({
 
         {/* Recovery path for a payment that is on-chain but not yet credited:
             re-verifies the SAME hash (server-side idempotent). Never a second
-            charge — the pending hash rides in sessionStorage so a reload
-            during the confirmation window does not orphan the payment. */}
+            charge — the pending hash rides in localStorage (survives reloads
+            and closed tabs) so the confirmation window never orphans a
+            payment. */}
         {entry.pendingTxHash && !entry.busy && (
           <div className="flex items-center gap-2.5">
             <Button
@@ -980,8 +970,7 @@ function PaidEntryPanel({
               size="sm"
               variant="outline"
               onClick={() => {
-                storePendingTx(s.id, null);
-                entry.clearPending();
+                entry.clearPending(s.id); // drops the durable record too
               }}
             >
               Dismiss this payment
@@ -993,11 +982,9 @@ function PaidEntryPanel({
               onClick={() => {
                 void entry
                   .payAndJoin(s.id, displayNim(entryFeeLuna))
-                  .then(({ outcome, txHash }) => {
-                    if (outcome === "error") return;
-                    // Persist the hash so a reload during the confirmation
-                    // window can recover it — cleared only on confirmation.
-                    if (txHash) storePendingTx(s.id, txHash);
+                  .then(({ outcome }) => {
+                    // The hash was already persisted durably at send time by
+                    // the hook — a reload mid-confirmation-window recovers it.
                     if (outcome === "joined") onJoined();
                   })
                   .catch(() => undefined);
