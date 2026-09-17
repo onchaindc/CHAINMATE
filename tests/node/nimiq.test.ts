@@ -184,11 +184,16 @@ function fakeProvider(overrides: {
   listAccounts?: () => Promise<string[] | { error: { type: string; message: string } }>;
   sign?: (m: unknown) => Promise<{ publicKey: string; signature: string } | { error: { type: string; message: string } }>;
   sendBasicTransaction?: (tx: unknown) => Promise<string | { error: { type: string; message: string } }>;
+  sendBasicTransactionWithData?: (tx: unknown) => Promise<
+    string | { error: { type: string; message: string } }
+  >;
 }): Provider {
   return {
     listAccounts: overrides.listAccounts ?? (async () => []),
     sign: overrides.sign ?? (async () => ({ publicKey: "pk", signature: "sig" })),
     sendBasicTransaction: overrides.sendBasicTransaction ?? (async () => "hash"),
+    sendBasicTransactionWithData:
+      overrides.sendBasicTransactionWithData ?? (async () => "hash-with-data"),
   } as unknown as Provider;
 }
 
@@ -245,14 +250,87 @@ test("sendNimiqBasicTransaction converts bigint luna to the SDK's number wire ty
   });
 });
 
-test("normalizeNimiqError maps thrown SDK errors", () => {
+test("sendNimiqBasicTransaction falls back to a plain transfer when the data send fails at the wallet", async () => {
+  // The observed live failure: Nimiq Pay's sheet resolves with this text and
+  // NO tx hash — nothing is on-chain, so retrying without the data field is
+  // safe (no double-pay risk). Every successful ChainMate payment has been a
+  // plain transfer, which the server verifies through the legacy sender
+  // rules when the proof is absent.
+  const calls: string[] = [];
+  const provider = fakeProvider({
+    sendBasicTransactionWithData: async () => {
+      calls.push("with-data");
+      throw new Error(
+        "Failed to send payment transaction: Transaction invalidated during transaction",
+      );
+    },
+    sendBasicTransaction: async () => {
+      calls.push("plain");
+      return "plainhash";
+    },
+  });
+  const result = await sendNimiqBasicTransaction(provider, {
+    recipient: "NQ07 0000 0000 0000 0000 0000 0000 0000 0000",
+    value: 1_500_000n,
+    data: "deadbeef",
+  });
+  assert.ok(result.ok && result.value === "plainhash");
+  assert.deepEqual(calls, ["with-data", "plain"], "must retry as a plain transfer");
+});
+
+test("a user rejection of the proof-carrying send is NOT retried as a second sheet", async () => {
+  // One reject stays one reject: falling back would pop another wallet
+  // confirmation sheet for a payment the user already declined.
+  const calls: string[] = [];
+  const provider = fakeProvider({
+    sendBasicTransactionWithData: async () => {
+      calls.push("with-data");
+      return { error: { type: "USER_REJECTION", message: "User rejected the request" } };
+    },
+    sendBasicTransaction: async () => {
+      calls.push("plain");
+      return "plainhash";
+    },
+  });
+  const result = await sendNimiqBasicTransaction(provider, {
+    recipient: "NQ07 0000 0000 0000 0000 0000 0000 0000 0000",
+    value: 1_500_000n,
+    data: "deadbeef",
+  });
+  assert.ok(!result.ok);
+  assert.equal(result.error.kind, "user-rejected");
+  assert.deepEqual(calls, ["with-data"], "no fallback after an explicit user rejection");
+});
+
+test("a data-free payment never touches sendBasicTransactionWithData", async () => {
+  const calls: string[] = [];
+  const provider = fakeProvider({
+    sendBasicTransaction: async () => {
+      calls.push("plain");
+      return "plainhash";
+    },
+  });
+  const result = await sendNimiqBasicTransaction(provider, {
+    recipient: "NQ07 0000 0000 0000 0000 0000 0000 0000 0000",
+    value: 1_500_000n,
+  });
+  assert.ok(result.ok && result.value === "plainhash");
+  assert.deepEqual(calls, ["plain"]);
+});
+
+test("thrown user rejections classify as user-rejected (same as ErrorResponse)", () => {
+  const err = normalizeNimiqError(
+    new Error("Failed to send payment transaction: User rejected the transaction"),
+  );
+  assert.equal(err.kind, "user-rejected");
+  // And the pre-existing classifications are unchanged.
+  assert.equal(normalizeNimiqError(new Error("boom")).kind, "unknown");
   assert.deepEqual(normalizeNimiqError(new Error("Nimiq provider was not injected. Are you running inside a Nimiq app?")), {
     kind: "provider",
     message: "Nimiq provider was not injected. Are you running inside a Nimiq app?",
   });
   assert.equal(normalizeNimiqError({ error: { type: "WALLET", message: "User rejected the request" } }).kind, "user-rejected");
   assert.equal(normalizeNimiqError({ error: { type: "", message: "odd failure" } }).kind, "provider");
-  assert.equal(normalizeNimiqError("boom").kind, "unknown");
 });
 
 /* ------------------------------------------------------------------ */

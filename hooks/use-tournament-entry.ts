@@ -10,10 +10,15 @@
  *   2. sign a PAYMENT-INTENT PROOF with the wallet (no cost — a message
  *      signature that cryptographically binds this payment to the linked
  *      wallet's key, player, tournament, exact amount, treasury, network)
- *   3. send the real transaction to the treasury WITH the proof embedded in
- *      its data field (sendBasicTransaction has NO sender parameter — Nimiq
- *      Pay picks the paying account itself, so the proof is what attributes
- *      the payment; see lib/nimiq/proof.ts)
+ *   3. send the real transaction to the treasury carrying the proof in its
+ *      data field when the wallet supports it (sendBasicTransaction has NO
+ *      sender parameter — Nimiq Pay picks the paying account itself, so the
+ *      proof is what attributes the payment; see lib/nimiq/proof.ts). Wallets
+ *      whose wrapper-account machinery cannot carry a data field reject the
+ *      send with "Transaction invalidated during transaction" and move
+ *      nothing — the send helper then automatically retries as a PLAIN
+ *      transfer, and the server attributes that payment through the legacy
+ *      direct/owned-contract sender rules (verifyOnChain tiers b/c).
  *   4. submit the tx hash to the server, which verifies the real on-chain
  *      transaction (proof → or legacy direct/owned-contract sender rules)
  *      through Phase 1C and marks the entry paid

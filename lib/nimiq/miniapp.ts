@@ -183,9 +183,16 @@ export function normalizeNimiqError(err: unknown): NimiqWalletError {
   const message = describeUnknown(err) ?? "The Nimiq wallet request failed";
   const known = KNOWN_ERROR_PATTERNS.find((p) => p.match.test(message));
   if (known) return { kind: known.kind, message: known.message };
-  const kind: NimiqWalletError["kind"] = /not injected|running inside/i.test(message)
-    ? "provider"
-    : "unknown";
+  // Thrown errors carry the same rejection/timeout semantics ErrorResponse
+  // payloads do — Nimiq Pay throws raw Errors for user rejections — so
+  // classify them identically instead of lumping every throw into "unknown".
+  const kind: NimiqWalletError["kind"] = /reject|denied|cancel/i.test(message)
+    ? "user-rejected"
+    : /timed?\s*out|timeout/i.test(message)
+      ? "timeout"
+      : /not injected|running inside/i.test(message)
+        ? "provider"
+        : "unknown";
   return { kind, message };
 }
 
@@ -359,7 +366,10 @@ export async function waitForNimiqConsensus(
  * wrapper account (sendBasicTransaction has NO sender parameter — Nimiq Pay
  * picks the paying account itself). The user confirms one extra signature
  * in the same wallet sheet flow; the payload is a public intent, never a
- * secret.
+ * secret. If the wallet ends up rejecting data-carrying sends at transmit
+ * time, sendNimiqBasicTransaction falls back to a plain transfer and the
+ * legacy sender rules attribute the payment instead — the signature is then
+ * simply unused.
  */
 export async function signNimiqPaymentProof(
   nimiq: Awaited<ReturnType<typeof sdkInit>>,
@@ -368,7 +378,20 @@ export async function signNimiqPaymentProof(
   return signNimiqMessage(nimiq, { message });
 }
 
-/** Sign + send a basic transaction. Value/fee are luna integers (bigint-safe). */
+/**
+ * Sign + send a basic transaction. Value/fee are luna integers (bigint-safe).
+ *
+ * A `data` payload (the payment-intent proof) routes through
+ * sendBasicTransactionWithData — but Nimiq Pay's wrapper-account machinery
+ * cannot always carry one: the observed live failure resolves the sheet with
+ * "Failed to send payment transaction: Transaction invalidated during
+ * transaction" and NO tx hash ever returns (nothing moves on-chain). Every
+ * successful ChainMate payment has been a plain transfer, so a failed
+ * proof-carrying send FALLS BACK to sendBasicTransaction automatically and
+ * the server attributes the payment through the legacy direct/owned-contract
+ * sender rules (verifyOnChain tiers b/c). A user rejection is NOT retried as
+ * a second sheet — one reject stays one reject.
+ */
 export async function sendNimiqBasicTransaction(
   nimiq: Awaited<ReturnType<typeof sdkInit>>,
   tx: { recipient: string; value: bigint; fee?: bigint; data?: string },
@@ -381,11 +404,15 @@ export async function sendNimiqBasicTransaction(
     value: Number(tx.value),
     ...(tx.fee !== undefined ? { fee: Number(tx.fee) } : {}),
   };
-  // A data payload routes through sendBasicTransactionWithData — the plain
-  // sendBasicTransaction is reserved for data-free transfers.
   if (tx.data) {
-    return guard(() =>
+    const proofed = await guard(() =>
       nimiq.sendBasicTransactionWithData({ ...params, data: tx.data! }),
+    );
+    if (proofed.ok) return proofed;
+    if (proofed.error.kind === "user-rejected") return proofed;
+    console.warn(
+      "[nimiq] proof-carrying send failed; retrying as a plain transfer",
+      proofed.error.message,
     );
   }
   return guard(() => nimiq.sendBasicTransaction(params));
