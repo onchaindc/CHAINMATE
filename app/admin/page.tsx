@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Ban, Loader2, ShieldAlert, ShieldX, Undo2 } from "lucide-react";
+import { Ban, CheckCircle2, Loader2, ShieldAlert, ShieldX, Trash2, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
@@ -30,6 +30,22 @@ interface BanRecord {
 interface BansPayload {
   bans: BanRecord[];
   names: Record<string, string>;
+}
+
+interface AdminTournamentRow {
+  id: string;
+  name: string;
+  status: string;
+  format: string;
+  hostName: string | null;
+  entries: number;
+  paidEntries: number;
+  prizePoolNim: string | null;
+  entryFeeNim: string | null;
+}
+
+interface TournamentsPayload {
+  tournaments: AdminTournamentRow[];
 }
 
 async function adminApi<T>(
@@ -61,12 +77,17 @@ export default function AdminPage() {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [bans, setBans] = useState<BanRecord[] | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
-  const [target, setTarget] = useState("");
+  const [tournaments, setTournaments] = useState<AdminTournamentRow[] | null>(null);
+  const [target, setTarget] =useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingBan, setPendingBan] = useState<string | null>(null);
+  const [pendingTourAction, setPendingTourAction] = useState<{
+    row: AdminTournamentRow;
+    action: "cancel" | "complete" | "delete";
+  } | null>(null);
 
   const load = useCallback(async () => {
     if (!playerId) return;
@@ -78,6 +99,12 @@ export default function AdminPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load bans");
       setBans((prev) => prev ?? []);
+    }
+    try {
+      const data = await adminApi<TournamentsPayload>("/api/admin/tournaments", playerId);
+      setTournaments(data.tournaments);
+    } catch {
+      setTournaments((prev) => prev ?? []);
     }
   }, [playerId]);
 
@@ -115,6 +142,24 @@ export default function AdminPage() {
       );
       setTarget("");
       setReason("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tourAction = async (tournamentId: string, action: "cancel" | "complete" | "delete") => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await adminApi<{ message: string }>("/api/admin/tournaments", playerId, {
+        method: "POST",
+        body: JSON.stringify({ action, tournamentId }),
+      });
+      setNotice(data.message ?? "Done.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action failed");
@@ -263,6 +308,73 @@ export default function AdminPage() {
             )}
           </Panel>
         </section>
+
+        <section>
+          <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Tournaments
+          </p>
+          <Panel className="mt-3">
+            {tournaments === null ? (
+              <LoadingRows rows={3} />
+            ) : tournaments.length === 0 ? (
+              <EmptyState
+                icon={ShieldAlert}
+                title="No tournaments yet"
+                description="Every hosted event appears here with its entries and prize pool."
+                className="py-10"
+              />
+            ) : (
+              <ul className="divide-y divide-border/50">
+                {tournaments.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{t.name}</p>
+                      <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+                        {t.status} · {t.format} · host {t.hostName ?? t.id} · {t.entries} player{t.entries === 1 ? "" : "s"}
+                        {t.prizePoolNim ? ` · pool ${t.prizePoolNim} NIM (${t.paidEntries} paid @ ${t.entryFeeNim})` : " · free"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {t.status === "in_progress" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => setPendingTourAction({ row: t, action: "complete" })}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                          Force finish
+                        </Button>
+                      )}
+                      {t.status !== "completed" && t.status !== "cancelled" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => setPendingTourAction({ row: t, action: "cancel" })}
+                        >
+                          <XCircle className="h-3.5 w-3.5" aria-hidden />
+                          Cancel
+                        </Button>
+                      )}
+                      {t.status !== "in_progress" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => setPendingTourAction({ row: t, action: "delete" })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                          Delete
+                        </Button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </section>
       </div>
 
       {error && <ErrorNote message={error} className="mt-4" />}
@@ -282,6 +394,39 @@ export default function AdminPage() {
       >
         They will be shut out of hosting, joining and paying until you lift the
         restriction.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingTourAction !== null}
+        title={
+          pendingTourAction
+            ? `${pendingTourAction.action === "cancel" ? "Cancel" : pendingTourAction.action === "complete" ? "Force finish" : "Delete"} "${pendingTourAction.row.name}"?`
+            : ""
+        }
+        confirmLabel={
+          pendingTourAction
+            ? pendingTourAction.action === "cancel"
+              ? "Cancel tournament"
+              : pendingTourAction.action === "complete"
+                ? "Force finish"
+                : "Delete tournament"
+            : ""
+        }
+        destructive={pendingTourAction?.action !== "complete"}
+        busy={busy}
+        onCancel={() => setPendingTourAction(null)}
+        onConfirm={() => {
+          const p = pendingTourAction;
+          setPendingTourAction(null);
+          if (p) void tourAction(p.row.id, p.action);
+        }}
+      >
+        {pendingTourAction?.action === "cancel" &&
+          "Registration and play stop now. If players already paid, the event is flagged for refunds and their entry fees are NOT refunded automatically."}
+        {pendingTourAction?.action === "complete" &&
+          "The event closes now and standings freeze at whatever has been played. Unfinished games count as unplayed. Prize payouts are planned from the final standings."}
+        {pendingTourAction?.action === "delete" &&
+          "The tournament is removed entirely. Deletion is refused while players have paid entries: resolve refunds first."}
       </ConfirmDialog>
     </div>
   );
