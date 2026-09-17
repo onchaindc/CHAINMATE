@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Ban, Loader2, ShieldAlert, ShieldX, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
@@ -65,6 +66,7 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingBan, setPendingBan] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!playerId) return;
@@ -197,11 +199,7 @@ export default function AdminPage() {
                 variant="destructive"
                 size="sm"
                 disabled={busy || target.trim().length < 3}
-                onClick={() => {
-                  if (window.confirm(`Restrict ${target.trim()}? They will be shut out of hosting, joining and paying until you lift it.`)) {
-                    void act("ban", target.trim(), reason.trim());
-                  }
-                }}
+                onClick={() => setPendingBan(target.trim())}
               >
                 {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Ban aria-hidden />}
                 Restrict account
@@ -268,6 +266,23 @@ export default function AdminPage() {
       </div>
 
       {error && <ErrorNote message={error} className="mt-4" />}
+
+      <ConfirmDialog
+        open={pendingBan !== null}
+        title={`Restrict ${pendingBan ?? ""}?`}
+        confirmLabel="Restrict account"
+        destructive
+        busy={busy}
+        onCancel={() => setPendingBan(null)}
+        onConfirm={() => {
+          const t = pendingBan;
+          setPendingBan(null);
+          if (t) void act("ban", t, reason.trim());
+        }}
+      >
+        They will be shut out of hosting, joining and paying until you lift the
+        restriction.
+      </ConfirmDialog>
     </div>
   );
 }

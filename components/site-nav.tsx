@@ -108,21 +108,24 @@ export function SiteNav() {
           className="group flex shrink-0 items-center"
           aria-label="ChainMate home"
         >
-          {/* The full wordmark is ~201px wide at h-8. On a narrow phone that,
-              plus the account pill and the two icon buttons, overflowed the bar
-              and pushed the menu button off-screen: Android users literally
-              could not see the hamburger. Below sm we render the compact mark
-              so the whole bar always fits and the menu stays reachable. */}
-          <img
-            src="/logo.svg"
-            alt="ChainMate"
-            className="hidden h-8 w-auto opacity-90 transition-opacity group-hover:opacity-100 sm:block"
-          />
+          {/* The full wordmark image was ~201px wide at h-8. On a narrow phone
+              that, plus the account pill and the two icon buttons, overflowed
+              the bar and pushed the menu button off-screen: Android users
+              literally could not see the hamburger. The mark is a square
+              image; the wordmark is real text beside it, hidden below sm, so
+              the whole bar always fits and the menu stays reachable. */}
           <img
             src="/logo-mark.svg"
             alt="ChainMate"
-            className="h-8 w-8 opacity-90 transition-opacity group-hover:opacity-100 sm:hidden"
+            className="h-8 w-8 opacity-90 transition-opacity group-hover:opacity-100"
           />
+          <span
+            aria-hidden
+            className="hidden pl-2.5 text-lg font-bold tracking-[0.18em] sm:inline"
+          >
+            <span className="text-[#EDE7DA]">CHAIN</span>
+            <span className="text-[#C9A86A]">MATE</span>
+          </span>
         </Link>
 
         <nav className="flex min-w-0 items-center gap-1 sm:gap-2">

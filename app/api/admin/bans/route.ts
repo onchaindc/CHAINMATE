@@ -7,6 +7,7 @@ import {
   unbanPlayer,
   usernameForPlayer,
 } from "@/lib/server/admin";
+import { playerProfileByUsername } from "@/lib/supabase/db";
 
 export const runtime = "nodejs";
 
@@ -58,6 +59,33 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/**
+ * Resolve the operator's identity from the body OR the query string. The
+ * dashboard sends it in the URL (like every GET here); the POST body is the
+ * other legitimate channel — accept both, require neither to be duplicated.
+ */
+function claimedPlayerId(req: NextRequest, body: BanBody): string {
+  const fromBody = typeof body.playerId === "string" ? body.playerId.trim() : "";
+  if (fromBody) return fromBody;
+  return req.nextUrl.searchParams.get("playerId")?.trim() ?? "";
+}
+
+/**
+ * Accept a playerId (acct_… / guest_…) or a username. Bans are stored by
+ * playerId, so a username is resolved through the profile table — the
+ * operator types names, not internal ids.
+ */
+async function resolveTarget(raw: string): Promise<{ ok: true; playerId: string } | { ok: false; error: string }> {
+  const target = raw.trim();
+  if (!target) return { ok: false, error: "targetPlayerId is required" };
+  if (/^(acct|guest)_/i.test(target)) return { ok: true, playerId: target };
+  const profile = await playerProfileByUsername(target);
+  if (!profile) {
+    return { ok: false, error: `No account found with the username "${target}".` };
+  }
+  return { ok: true, playerId: profile.player_id };
+}
+
 /** POST /api/admin/bans { playerId, action: "ban" | "unban", reason } */
 export async function POST(req: NextRequest) {
   let body: BanBody;
@@ -66,8 +94,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const claimed = typeof body.playerId === "string" ? body.playerId.trim() : "";
-  const acting = await resolveActingPlayer(req, claimed);
+  const acting = await resolveActingPlayer(req, claimedPlayerId(req, body));
   if (!acting.ok) {
     return NextResponse.json({ error: acting.error }, { status: acting.status });
   }
@@ -76,10 +103,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const target = (body.targetPlayerId ?? "").trim();
-  if (!target) {
-    return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+  const resolved = await resolveTarget(body.targetPlayerId ?? "");
+  if (!resolved.ok) {
+    return NextResponse.json({ error: resolved.error }, { status: 400 });
   }
+  const target = resolved.playerId;
 
   try {
     if (body.action === "ban") {
