@@ -69,11 +69,24 @@ export interface NimiqRpcTransaction {
   timestamp?: number;
 }
 
+/**
+ * Per-call overrides. Security rule: `apiKey` is only inherited from the
+ * configured endpoint when the caller uses that endpoint — a call that
+ * overrides `url` (e.g. the dedicated payout node) never silently inherits
+ * the read node's API key; it must pass its own explicitly.
+ */
+interface RpcOverrides {
+  url?: string;
+  basicAuth?: string | null;
+  apiKey?: string | null;
+  timeoutMs?: number;
+}
+
 /** Minimal JSON-RPC POST with timeout + optional Basic auth. */
 async function rpcCall<T>(
   method: string,
   params: unknown[],
-  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+  overrides?: RpcOverrides,
 ): Promise<T> {
   const config = getServerNimiqRpcConfig();
   const url = overrides?.url ?? config?.url;
@@ -83,6 +96,9 @@ async function rpcCall<T>(
     );
   }
   const basicAuth = overrides?.basicAuth !== undefined ? overrides.basicAuth : config?.basicAuth;
+  // Key isolation: a custom URL never inherits the configured endpoint's key.
+  const inheritedApiKey = overrides?.url !== undefined ? null : config?.apiKey;
+  const apiKey = overrides?.apiKey !== undefined ? overrides.apiKey : inheritedApiKey;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), overrides?.timeoutMs ?? RPC_TIMEOUT_MS);
@@ -96,6 +112,11 @@ async function rpcCall<T>(
       // Node's Buffer exists in the Edge-free Node runtime this app uses
       // (every route sets `export const runtime = "nodejs"`).
       headers.Authorization = `Basic ${Buffer.from(basicAuth).toString("base64")}`;
+    }
+    if (apiKey) {
+      // Managed-node providers (e.g. Nownodes) authenticate with this header
+      // instead of HTTP Basic auth.
+      headers["api-key"] = apiKey;
     }
     const body: JsonRpcRequest = {
       jsonrpc: "2.0",
@@ -165,7 +186,7 @@ async function rpcCall<T>(
 /** Account lookup by NQ… address. Returns null when the node reports none. */
 export async function getAccountByAddress(
   address: string,
-  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+  overrides?: RpcOverrides,
 ): Promise<NimiqRpcAccount | null> {
   const account = await rpcCall<NimiqRpcAccount | null>(
     "getAccountByAddress",
@@ -178,18 +199,14 @@ export async function getAccountByAddress(
 /** Transaction lookup by hash. Returns null while unknown to the node. */
 export async function getTransactionByHash(
   hash: string,
-  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+  overrides?: RpcOverrides,
 ): Promise<NimiqRpcTransaction | null> {
   const tx = await rpcCall<NimiqRpcTransaction | null>("getTransactionByHash", [hash], overrides);
   return tx ?? null;
 }
 
 /** Current chain height (blocks). */
-export async function getBlockNumber(overrides?: {
-  url?: string;
-  basicAuth?: string | null;
-  timeoutMs?: number;
-}): Promise<number> {
+export async function getBlockNumber(overrides?: RpcOverrides): Promise<number> {
   return rpcCall<number>("getBlockNumber", [], overrides);
 }
 
@@ -205,7 +222,7 @@ export async function getBlockNumber(overrides?: {
 /** Whether the node's keystore has the given wallet unlocked right now. */
 export async function isAccountUnlocked(
   address: string,
-  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+  overrides?: RpcOverrides,
 ): Promise<boolean> {
   return rpcCall<boolean>("isAccountUnlocked", [address], overrides);
 }
@@ -255,7 +272,7 @@ export async function sendBasicTransaction(
   valueLuna: bigint,
   feeLuna: bigint,
   validityStartHeight: number,
-  overrides?: { url?: string; basicAuth?: string | null; timeoutMs?: number },
+  overrides?: RpcOverrides,
 ): Promise<string> {
   // Value and fee cross as JSON numbers (the node's Coin wire type) — the
   // bigint API stays at this function's boundary, serialization is exact.

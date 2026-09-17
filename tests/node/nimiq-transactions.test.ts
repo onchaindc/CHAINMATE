@@ -515,7 +515,7 @@ test("wrong amount is rejected — even one luna off", async () => {
 });
 
 test("wrong network (networkId mismatch) is rejected", async () => {
-  const { deps } = makeDeps({ onChainTx: validTx({ networkId: 42 }) }); // mainnet tx, test obligation
+  const { deps } = makeDeps({ onChainTx: validTx({ networkId: 24 }) }); // mainnet tx, test obligation
   await assert.rejects(
     () => tx.verifyIncomingTransaction("7".repeat(64), BASE_OBLIGATION, deps),
     (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "wrong-network" && err.status === 400,
@@ -572,9 +572,9 @@ test("replay is keyed per network — the same hash on another network is a diff
   const consumed = new Map<string, TxModule.VerifiedNimiqTransaction>();
   const first = makeDeps({ onChainTx: validTx(), currentHeight: 1000, consumed });
   await tx.verifyIncomingTransaction("c1".repeat(32), BASE_OBLIGATION, first.deps);
-  const second = makeDeps({ onChainTx: validTx({ networkId: 42 }), currentHeight: 1000, consumed });
+  const second = makeDeps({ onChainTx: validTx({ networkId: 24 }), currentHeight: 1000, consumed });
   // Same hash, different network obligation → not a replay of the first.
-  // The fake tx's networkId matches the main obligation (42).
+  // The fake tx's networkId matches the main obligation (24).
   const ok = await tx.verifyIncomingTransaction("c1".repeat(32), { ...BASE_OBLIGATION, network: "main" }, second.deps);
   assert.equal(ok.network, "main");
   assert.equal(consumed.size, 2);

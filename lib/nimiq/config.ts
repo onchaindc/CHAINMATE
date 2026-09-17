@@ -7,9 +7,11 @@
  * this module from client code never bakes secrets into the bundle — in a
  * browser, process.env values that Next does not inline are simply undefined.
  *
- * Networks (fixed ids from the Nimiq protocol):
- *  - "main"  → networkId 42 (Main Albatross)
+ * Networks (fixed ids from the Nimiq protocol — see NetworkId in
+ * core-rs-albatross primitives/src/networks.rs):
+ *  - "main"  → networkId 24 (MainAlbatross — the live Nimiq 2.0 chain)
  *  - "test"  → networkId 5  (TestAlbatross / testnet)
+ *  Note: 42 is the legacy Nimiq 1.0 "Main" id, NOT the Albatross mainnet.
  *
  * Env vars:
  *  NEXT_PUBLIC_NIMIQ_ENABLED        "true" turns the Nimiq UI on
@@ -17,15 +19,17 @@
  *  NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS  NQ… address (unused until 2B; declared now)
  *  NIMIQ_RPC_URL                    server-side JSON-RPC endpoint (no public default)
  *  NIMIQ_RPC_BASIC_AUTH             optional "user:password" for HTTP Basic auth
+ *  NIMIQ_RPC_API_KEY                optional "api-key" header value (managed-node
+ *                                   providers like Nownodes authenticate this way)
  *  NIMIQ_CONFIRMATIONS_REQUIRED     confirmations before a tx counts (default 10)
  */
 
 export type NimiqNetworkName = "main" | "test";
-export type NimiqNetworkId = 42 | 5;
+export type NimiqNetworkId = 24 | 5;
 
 /** Protocol network ids — fixed constants, not guesses. */
 export const NIMIQ_NETWORK_IDS: Record<NimiqNetworkName, NimiqNetworkId> = {
-  main: 42,
+  main: 24,
   test: 5,
 };
 
@@ -94,6 +98,8 @@ export interface NimiqServerRpcConfig {
   url: string;
   /** "user:password" for HTTP Basic auth, or null. */
   basicAuth: string | null;
+  /** Value for the "api-key" request header (managed-node providers), or null. */
+  apiKey: string | null;
   /** Confirmations required before a transaction is treated as settled. */
   confirmationsRequired: number;
 }
@@ -107,10 +113,12 @@ export function getServerNimiqRpcConfig(): NimiqServerRpcConfig | null {
   const url = (process.env.NIMIQ_RPC_URL ?? "").trim();
   if (!url) return null;
   const auth = (process.env.NIMIQ_RPC_BASIC_AUTH ?? "").trim();
+  const apiKey = (process.env.NIMIQ_RPC_API_KEY ?? "").trim();
   const parsed = Number.parseInt(process.env.NIMIQ_CONFIRMATIONS_REQUIRED ?? "", 10);
   return {
     url,
     basicAuth: auth || null,
+    apiKey: apiKey || null,
     confirmationsRequired:
       Number.isFinite(parsed) && parsed >= 1 ? parsed : 10,
   };

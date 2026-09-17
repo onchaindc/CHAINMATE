@@ -29,6 +29,7 @@ import {
   getCanonicalTreasuryAddress,
   getServerNimiqRpcConfig,
   NIMIQ_NETWORK,
+  nimiqNetworkId,
   networkIdToName,
   type NimiqNetworkName,
 } from "@/lib/nimiq/config";
@@ -268,7 +269,14 @@ export const fastStoreTxStore: NimiqTxStore = {
     return Object.values(map).filter((row) => row.tournamentId === tournamentId);
   },
   async insertConsumed(tx) {
-    return withConsumptionLock(`${tx.network}:${tx.txHash}`, async () => {
+    // GLOBAL serialization, deliberately NOT keyed per tx hash: the map is
+    // ONE persisted JSON value, so two verifies carrying different hashes
+    // racing here each read the map, add their own row, and write the whole
+    // value back — the later write clobbers the earlier row. Observed as lost
+    // consumption rows in the full-field paid-join stress test (4 of 8 seats
+    // lost their payment record). One map-wide lock keeps every consumption
+    // durable; throughput is irrelevant at money-commit frequency.
+    return withConsumptionLock("global", async () => {
       const map = await readTxMap();
       const key = `${tx.network}:${tx.txHash}`;
       if (map[key]) {
@@ -384,7 +392,7 @@ async function verifyOnChain(
   // own networkId field MUST be present, a known id, and matching. A response
   // without usable network identity can never be verified into money state.
   const expectedNetwork: NimiqNetworkName = obligation.network ?? NIMIQ_NETWORK;
-  const expectedId = expectedNetwork === "main" ? 42 : 5;
+  const expectedId = nimiqNetworkId(expectedNetwork);
 
   // 1. The player's LINKED wallet (Phase 1B) — not any client-supplied sender.
   const linked = await (deps.getLinkedWallet ?? getLinkedWallet)(obligation.playerId);

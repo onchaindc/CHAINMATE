@@ -12,6 +12,7 @@
  * Env vars (all server-side):
  *   NIMIQ_PAYOUT_RPC_URL                 JSON-RPC endpoint of the payout node
  *   NIMIQ_PAYOUT_RPC_BASIC_AUTH          optional "user:password" (HTTP Basic)
+ *   NIMIQ_PAYOUT_RPC_API_KEY             optional "api-key" header (managed-node providers)
  *   NIMIQ_PAYOUT_TREASURY_ADDRESS        the address whose key the node holds
  *   NIMIQ_PAYOUT_CONFIRMATIONS_REQUIRED  confirmations to mark VERIFIED (default 10)
  *
@@ -23,6 +24,8 @@
 export interface NimiqPayoutConfig {
   url: string;
   basicAuth: string | null;
+  /** Value for the "api-key" request header (managed-node providers), or null. */
+  apiKey: string | null;
   /** The address the payout node's keystore signs from. */
   treasuryAddress: string;
   /** Confirmations required before an outgoing payout counts as settled. */
@@ -65,10 +68,12 @@ export function getNimiqPayoutConfig(): NimiqPayoutConfig | null {
   }
 
   const auth = (process.env.NIMIQ_PAYOUT_RPC_BASIC_AUTH ?? "").trim();
+  const apiKey = (process.env.NIMIQ_PAYOUT_RPC_API_KEY ?? "").trim();
   const parsed = Number.parseInt(process.env.NIMIQ_PAYOUT_CONFIRMATIONS_REQUIRED ?? "", 10);
   return {
     url,
     basicAuth: auth || null,
+    apiKey: apiKey || null,
     treasuryAddress,
     confirmationsRequired: Number.isFinite(parsed) && parsed >= 1 ? parsed : 10,
   };

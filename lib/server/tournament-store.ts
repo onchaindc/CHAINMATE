@@ -181,30 +181,46 @@ async function writeIndex(entries: TournamentIndexEntry[]): Promise<void> {
   await getGameStorage().set(INDEX_KEY, JSON.stringify(entries.slice(0, INDEX_MAX)));
 }
 
+/**
+ * The index is ONE persisted value read-modify-written by every tournament
+ * mutation (write, delete). Concurrent writes — a full field joining at
+ * once — would each read the list, splice their entry, and write the whole
+ * list back, clobbering each other's update. One chain serializes every
+ * index RMW, exactly like the per-tournament document lock below.
+ */
+let indexChain: Promise<unknown> = Promise.resolve();
+async function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = indexChain.then(fn, fn);
+  indexChain = run.catch(() => undefined);
+  return run;
+}
+
 export async function upsertTournamentIndexEntry(doc: TournamentDocument): Promise<void> {
-  const entries = await readIndex();
-  const entry: TournamentIndexEntry = {
-    id: doc.id,
-    name: doc.name,
-    format: doc.format,
-    status: doc.status,
-    playerCount: doc.entries.length,
-    maxPlayers: doc.maxPlayers,
-    creatorId: doc.creatorId,
-    createdAt: doc.createdAt,
-    scheduledStartAt: doc.scheduledStartAt,
-    startedAt: doc.startedAt,
-    completedAt: doc.completedAt,
-  };
-  // Phase 2B economy fields ride along in the index entry (extra fields are
-  // additive and harmless to older readers).
-  entry.entryFeeLuna = doc.entryFeeLuna ?? null;
-  entry.prizePreset = doc.prizePreset ?? null;
-  entry.payoutStatus = doc.payoutStatus ?? "none";
-  const idx = entries.findIndex((e) => e.id === doc.id);
-  if (idx >= 0) entries[idx] = entry;
-  else entries.unshift(entry);
-  await writeIndex(entries);
+  await withIndexLock(async () => {
+    const entries = await readIndex();
+    const entry: TournamentIndexEntry = {
+      id: doc.id,
+      name: doc.name,
+      format: doc.format,
+      status: doc.status,
+      playerCount: doc.entries.length,
+      maxPlayers: doc.maxPlayers,
+      creatorId: doc.creatorId,
+      createdAt: doc.createdAt,
+      scheduledStartAt: doc.scheduledStartAt,
+      startedAt: doc.startedAt,
+      completedAt: doc.completedAt,
+    };
+    // Phase 2B economy fields ride along in the index entry (extra fields are
+    // additive and harmless to older readers).
+    entry.entryFeeLuna = doc.entryFeeLuna ?? null;
+    entry.prizePreset = doc.prizePreset ?? null;
+    entry.payoutStatus = doc.payoutStatus ?? "none";
+    const idx = entries.findIndex((e) => e.id === doc.id);
+    if (idx >= 0) entries[idx] = entry;
+    else entries.unshift(entry);
+    await writeIndex(entries);
+  });
 }
 
 /**
@@ -271,8 +287,10 @@ export async function writeTournamentDoc(doc: TournamentDocument): Promise<void>
  */
 export async function deleteTournamentDoc(id: string): Promise<void> {
   await getGameStorage().delete(tournamentKey(id));
-  const entries = (await readIndex()).filter((e) => e.id !== id);
-  await writeIndex(entries);
+  await withIndexLock(async () => {
+    const entries = (await readIndex()).filter((e) => e.id !== id);
+    await writeIndex(entries);
+  });
   if (supabaseConfigured()) {
     try {
       const admin = getSupabaseAdmin();

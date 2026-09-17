@@ -114,9 +114,9 @@ test("sumLuna/toLuna accept JSON-shaped values (numbers and strings)", () => {
 /* config.ts — networks, addresses, server config                      */
 /* ------------------------------------------------------------------ */
 
-test("network names map to the fixed protocol ids (42 main, 5 test)", () => {
-  assert.deepEqual(NIMIQ_NETWORK_IDS, { main: 42, test: 5 });
-  assert.equal(nimiqNetworkId("main"), 42);
+test("network names map to the fixed protocol ids (24 MainAlbatross, 5 TestAlbatross)", () => {
+  assert.deepEqual(NIMIQ_NETWORK_IDS, { main: 24, test: 5 });
+  assert.equal(nimiqNetworkId("main"), 24);
   assert.equal(nimiqNetworkId("test"), 5);
   assert.equal(nimiqNetworkName("main"), "main");
   assert.equal(nimiqNetworkName("mainnet"), "main");
@@ -141,6 +141,7 @@ test("isPlausibleNimiqAddress accepts NQ addresses in common spellings", () => {
 test("getServerNimiqRpcConfig reads env lazily and has NO public default", () => {
   const savedUrl = process.env.NIMIQ_RPC_URL;
   const savedAuth = process.env.NIMIQ_RPC_BASIC_AUTH;
+  const savedKey = process.env.NIMIQ_RPC_API_KEY;
   const savedConf = process.env.NIMIQ_CONFIRMATIONS_REQUIRED;
   try {
     delete process.env.NIMIQ_RPC_URL;
@@ -160,6 +161,11 @@ test("getServerNimiqRpcConfig reads env lazily and has NO public default", () =>
     cfg = getServerNimiqRpcConfig();
     assert.equal(cfg?.basicAuth, "user:secret");
     assert.equal(cfg?.confirmationsRequired, 3);
+    assert.equal(cfg?.apiKey, null, "no API key configured → null");
+
+    process.env.NIMIQ_RPC_API_KEY = " nownodes-key-123 ";
+    cfg = getServerNimiqRpcConfig();
+    assert.equal(cfg?.apiKey, "nownodes-key-123", "API key is trimmed");
 
     process.env.NIMIQ_CONFIRMATIONS_REQUIRED = "not-a-number";
     assert.equal(getServerNimiqRpcConfig()?.confirmationsRequired, 10);
@@ -168,6 +174,8 @@ test("getServerNimiqRpcConfig reads env lazily and has NO public default", () =>
     else process.env.NIMIQ_RPC_URL = savedUrl;
     if (savedAuth === undefined) delete process.env.NIMIQ_RPC_BASIC_AUTH;
     else process.env.NIMIQ_RPC_BASIC_AUTH = savedAuth;
+    if (savedKey === undefined) delete process.env.NIMIQ_RPC_API_KEY;
+    else process.env.NIMIQ_RPC_API_KEY = savedKey;
     if (savedConf === undefined) delete process.env.NIMIQ_CONFIRMATIONS_REQUIRED;
     else process.env.NIMIQ_CONFIRMATIONS_REQUIRED = savedConf;
   }
@@ -521,6 +529,7 @@ test("nimiqPaymentFailureMessage wraps real messages without masking them", () =
 let server: Server;
 let serverUrl = "";
 let lastAuthHeader: string | null = null;
+let lastApiKeyHeader: string | null = null;
 let lastBody: { method: string; params: unknown } | null = null;
 let responseMode: "ok" | "rpc-error" | "http-500" | "slow" | "garbage" | "v2-wrapped" | "v2-not-found" = "ok";
 before(async () => {
@@ -529,6 +538,7 @@ before(async () => {
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       lastAuthHeader = req.headers.authorization ?? null;
+      lastApiKeyHeader = (req.headers["api-key"] as string | undefined) ?? null;
       const parsed = JSON.parse(raw) as { method: string; params: unknown };
       lastBody = { method: parsed.method, params: parsed.params };
       const respond = (payload: unknown, status = 200) => {
@@ -604,6 +614,36 @@ test("HTTP Basic auth is attached when configured", async () => {
 
   await getBlockNumber({ url: serverUrl, basicAuth: null, timeoutMs: 2_000 });
   assert.equal(lastAuthHeader, null, "explicit null clears the header");
+});
+
+test("api-key header is attached when passed, and key isolation holds", async () => {
+  const savedUrl = process.env.NIMIQ_RPC_URL;
+  const savedKey = process.env.NIMIQ_RPC_API_KEY;
+  try {
+    // Explicit override: the header rides along.
+    await getBlockNumber({ url: serverUrl, apiKey: "k-explicit", timeoutMs: 2_000 });
+    assert.equal(lastApiKeyHeader, "k-explicit");
+
+    await getBlockNumber({ url: serverUrl, apiKey: null, timeoutMs: 2_000 });
+    assert.equal(lastApiKeyHeader, null, "explicit null clears the header");
+
+    // Inheritance from config when using the configured endpoint.
+    process.env.NIMIQ_RPC_URL = serverUrl;
+    process.env.NIMIQ_RPC_API_KEY = "k-config";
+    await getBlockNumber({ timeoutMs: 2_000 });
+    assert.equal(lastApiKeyHeader, "k-config", "configured endpoint inherits its key");
+
+    // Key isolation: overriding the URL must NOT leak the configured key —
+    // even when the override points at the same server. Reachable, so the
+    // request actually arrives and the header capture is observable.
+    await getBlockNumber({ url: serverUrl, timeoutMs: 2_000 });
+    assert.equal(lastApiKeyHeader, null, "a custom URL never inherits the configured key");
+  } finally {
+    if (savedUrl === undefined) delete process.env.NIMIQ_RPC_URL;
+    else process.env.NIMIQ_RPC_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.NIMIQ_RPC_API_KEY;
+    else process.env.NIMIQ_RPC_API_KEY = savedKey;
+  }
 });
 
 test("RPC error objects become NimiqRpcError with the code", async () => {

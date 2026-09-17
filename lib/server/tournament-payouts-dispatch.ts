@@ -50,6 +50,7 @@
 import {
   getCanonicalTreasuryAddress,
   NIMIQ_NETWORK,
+  nimiqNetworkId,
   networkIdToName,
 } from "@/lib/nimiq/config";
 import { getNimiqPayoutConfig } from "@/lib/server/nimiq/payout-config";
@@ -152,6 +153,7 @@ export function buildRpcTreasurySigner(
   const overrides = {
     url: config.url,
     basicAuth: config.basicAuth,
+    apiKey: config.apiKey,
     timeoutMs: 15_000,
   };
 
@@ -442,6 +444,7 @@ async function currentHeight(
     const h = await getBlockNumber({
       url: config.url,
       basicAuth: config.basicAuth,
+      apiKey: config.apiKey,
       timeoutMs: 10_000,
     });
     if (typeof h !== "number" || !Number.isFinite(h) || h < 0) {
@@ -507,6 +510,7 @@ export async function verifyOutgoingPayout(
   const overrides = {
     url: config?.url,
     basicAuth: config?.basicAuth,
+    apiKey: config?.apiKey,
     timeoutMs: 10_000,
   };
 
@@ -590,7 +594,7 @@ export async function verifyOutgoingPayout(
   // network information can never verify a payout.
   const txNetworkId = (tx as { networkId?: unknown }).networkId;
   const expectedNetwork = payout.network ?? NIMIQ_NETWORK;
-  const expectedId = expectedNetwork === "main" ? 42 : 5;
+  const expectedId = nimiqNetworkId(expectedNetwork);
   if (typeof txNetworkId !== "number") {
     throw new PayoutDispatchError(
       "malformed-response",

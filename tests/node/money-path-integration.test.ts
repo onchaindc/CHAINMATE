@@ -247,7 +247,7 @@ test("B1: a PRE-EXISTING seat (free join) survives failed verification — no re
   const id = await newPaidTournament();
   const joined = await engine.joinTournament(id, PLAYER); // unpaid seat via the plain flow
   assert.equal(joined.ok, true);
-  const rpc = rpcFor({ networkId: 42 }); // wrong network → fails
+  const rpc = rpcFor({ networkId: 24 }); // wrong network → fails
   await assert.rejects(
     () => economy.joinPaidTournament(id, PLAYER, validTx().hash, { rpc: rpc as never, isGuestAccount: ACCOUNT_OK }),
     (err: EconomyModule.TournamentEntryError) =>
@@ -552,10 +552,10 @@ test("M1 (1C): unknown and mismatched networkIds fail closed", async () => {
     () => economy.joinPaidTournament(id, PLAYER, unknown, { rpc: rpcFor({ networkId: 99 }) as never, isGuestAccount: ACCOUNT_OK }),
     (err: EconomyModule.TournamentEntryError) => /known Nimiq network/i.test(err.message),
   );
-  const mainnet = validTx({ networkId: 42 }).hash;
+  const mainnet = validTx({ networkId: 24 }).hash;
   await assert.rejects(
-    () => economy.joinPaidTournament(id, PLAYER, mainnet, { rpc: rpcFor({ networkId: 42 }) as never, isGuestAccount: ACCOUNT_OK }),
-    (err: EconomyModule.TournamentEntryError) => /networkId 42.*expected 5/s.test(err.message),
+    () => economy.joinPaidTournament(id, PLAYER, mainnet, { rpc: rpcFor({ networkId: 24 }) as never, isGuestAccount: ACCOUNT_OK }),
+    (err: EconomyModule.TournamentEntryError) => /networkId 24.*expected 5/s.test(err.message),
   );
 });
 
