@@ -285,7 +285,7 @@ export default function GamePage() {
     return (
       <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 lg:py-5">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,64rem,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
+          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,72rem,max(20rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="aspect-square w-full" />
             <Skeleton className="h-14 w-full" />
@@ -483,9 +483,9 @@ export default function GamePage() {
        itself — so a live game never scrolls the page out from under a player
        mid-move. Below `lg` it falls back to normal document flow, because a
        phone cannot fit a usable board and a readable console at once. */
-    <div className="mx-auto flex w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-5">
+    <div className="mx-auto flex w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
       {/* Header */}
-      <div className="mb-3 flex shrink-0 flex-wrap items-center gap-3">
+      <div className="mb-2 flex shrink-0 flex-wrap items-center gap-3">
         <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
         <div>
           <h1 className="font-display text-lg font-bold tracking-tight">
@@ -578,7 +578,7 @@ export default function GamePage() {
             tall monitors the match console keeps a readable column instead of
             being squeezed to nothing. Mobile stays width-driven. */}
         <div
-          className="mx-auto flex w-full min-w-0 flex-col gap-2.5 lg:h-full lg:w-[min(100%,64rem,max(18rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))] lg:flex-none"
+          className="mx-auto flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,72rem,max(20rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))] lg:flex-none"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the

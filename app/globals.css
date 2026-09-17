@@ -84,9 +84,11 @@
        18rem is applied at the use site, so a very short window gets a small
        board and a scrollbar rather than no board at all.
 
-       Current budget: 2.5rem page padding + 3.25rem match header + 1.9rem
-       column gaps + 7.6rem for the two player cards + 3.5rem of controls. */
-    --board-chrome: 18.75rem;
+       Measured budget (trimmed to what the rows actually occupy):
+       2.5rem page padding + 3.25rem match header + 1.9rem column gaps
+       + 5.4rem for the two compact player cards + 2.4rem of controls,
+       with headroom so a long username wrap never clips a card. */
+    --board-chrome: 16.25rem;
 
     --scrollbar-thumb: 220 8% 20%;
   }

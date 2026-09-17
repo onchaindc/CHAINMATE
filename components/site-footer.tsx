@@ -14,7 +14,9 @@ export function SiteFooter() {
   return (
     <footer className="border-t border-border/60">
       <div className="mx-auto w-full max-w-6xl px-4 py-6 text-center sm:px-6">
-        <p className="text-xs text-muted-foreground">Created by onchaindc</p>
+        <p className="text-xs text-muted-foreground">
+          Play chess. Think deeper.
+        </p>
       </div>
     </footer>
   );

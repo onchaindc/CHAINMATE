@@ -170,7 +170,7 @@ export default function AdminPage() {
 
   if (identity.status === "loading" || isAdmin === null) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+      <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
         <Panel>
           <LoadingRows rows={4} />
         </Panel>
@@ -180,7 +180,7 @@ export default function AdminPage() {
 
   if (isAdmin === false) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+      <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
         <Panel>
           <EmptyState
             icon={ShieldX}
@@ -196,7 +196,7 @@ export default function AdminPage() {
   const fmt = (ts: number) => new Date(ts).toLocaleString();
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+    <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
       <BackLink href="/" className="mb-4">
         Back to home
       </BackLink>
@@ -214,6 +214,8 @@ export default function AdminPage() {
               Restrict an account
             </p>
             <div className="grid gap-3 sm:grid-cols-[1fr_2fr]">
+              {/* Below sm both fields stack full-width; the player field keeps
+                  its monospace input readable on a 360px viewport. */}
               <label className="block">
                 <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Player id or username
@@ -239,10 +241,11 @@ export default function AdminPage() {
                 />
               </label>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               <Button
                 variant="destructive"
                 size="sm"
+                className="w-full sm:w-auto"
                 disabled={busy || target.trim().length < 3}
                 onClick={() => setPendingBan(target.trim())}
               >
@@ -252,6 +255,7 @@ export default function AdminPage() {
               <Button
                 variant="outline"
                 size="sm"
+                className="w-full sm:w-auto"
                 disabled={busy || target.trim().length < 3}
                 onClick={() => void act("unban", target.trim())}
               >
@@ -284,18 +288,23 @@ export default function AdminPage() {
             ) : (
               <ul className="divide-y divide-border/50">
                 {bans.map((b) => (
-                  <li key={b.playerId} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <li
+                    key={b.playerId}
+                    className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+                  >
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-mono text-sm">
                         {names[b.playerId] ?? b.playerId}
                       </p>
-                      <p className="mt-0.5 truncate text-2xs text-muted-foreground">
-                        {b.reason} · {fmt(b.bannedAt)} · by {names[b.bannedBy] ?? b.bannedBy}
+                      <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
+                        <span className="line-clamp-2">{b.reason}</span>
+                        <span className="block sm:inline"> {fmt(b.bannedAt)} · by {names[b.bannedBy] ?? b.bannedBy}</span>
                       </p>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
+                      className="w-full sm:w-auto"
                       disabled={busy}
                       onClick={() => void act("unban", b.playerId)}
                     >
@@ -326,15 +335,20 @@ export default function AdminPage() {
             ) : (
               <ul className="divide-y divide-border/50">
                 {tournaments.map((t) => (
-                  <li key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <li
+                    key={t.id}
+                    className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+                  >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{t.name}</p>
-                      <p className="mt-0.5 truncate text-2xs text-muted-foreground">
-                        {t.status} · {t.format} · host {t.hostName ?? t.id} · {t.entries} player{t.entries === 1 ? "" : "s"}
-                        {t.prizePoolNim ? ` · pool ${t.prizePoolNim} NIM (${t.paidEntries} paid @ ${t.entryFeeNim})` : " · free"}
+                      <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
+                        <span className="line-clamp-2">
+                          {t.status} · {t.format} · host {t.hostName ?? t.id} · {t.entries} player{t.entries === 1 ? "" : "s"}
+                          {t.prizePoolNim ? ` · pool ${t.prizePoolNim} NIM (${t.paidEntries} paid @ ${t.entryFeeNim})` : " · free"}
+                        </span>
                       </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:shrink-0">
                       {t.status === "in_progress" && (
                         <Button
                           variant="outline"

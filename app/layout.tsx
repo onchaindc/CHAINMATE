@@ -37,9 +37,11 @@ export const metadata: Metadata = {
   title: "ChainMate: Play chess. Think deeper.",
   description:
     "Competitive chess with intelligent analysis, AI commentary and post-game reports.",
-  /* Every icon surface draws from the SAME official knight mark: the SVG for
-     browsers, PNGs for iOS/Android home screens and mini-app hosts (Nimiq Pay
-     reads these sizes, not the SVG favicon). */
+  /* Every icon surface draws from the SAME official art: the SVG for
+     browsers, PNGs for iOS/Android home screens and mini-app hosts (Nimiq
+     Pay reads these sizes, not the SVG favicon). The webmanifest declares
+     the app NAME so hosts render "ChainMate" as their own crisp text below
+     the icon instead of the bitmap lettering blurring at small sizes. */
   icons: {
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
@@ -48,6 +50,7 @@ export const metadata: Metadata = {
     ],
     apple: "/apple-touch-icon.png",
   },
+  manifest: "/site.webmanifest",
 };
 
 export default function RootLayout({

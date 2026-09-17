@@ -50,7 +50,7 @@ export function PlayerCard({
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-3 overflow-hidden rounded-lg border px-3 py-2 transition-colors",
+        "relative flex items-center justify-between gap-3 overflow-hidden rounded-lg border px-3 py-1.5 transition-colors",
         active ? "border-primary/45 bg-primary/[0.07]" : "border-border/60 bg-card/40",
         isWinner && "border-primary/50 bg-accent/5",
       )}
@@ -133,7 +133,7 @@ export function PlayerCard({
             /* The clock is the largest number on the screen for a reason: under
                time pressure it is the only thing a player looks at. Tabular
                figures so the digits never reflow as they count down. */
-            "shrink-0 rounded-md border px-3 py-1 text-center font-mono text-2xl font-semibold leading-tight tabular-nums transition-colors duration-300 sm:text-[1.75rem]",
+            "shrink-0 rounded-md border px-2.5 py-0.5 text-center font-mono text-xl font-semibold leading-tight tabular-nums transition-colors duration-300 sm:text-2xl",
             clockLow
               ? "border-negative/50 bg-negative/10 text-negative"
               : active
