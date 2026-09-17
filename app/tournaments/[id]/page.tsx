@@ -135,10 +135,11 @@ export default function TournamentDetailPage() {
    */
   const [justConfirmed, setJustConfirmed] = useState(false);
   /**
-   * An entrant who clicked Leave while their payment was still pending.
-   * They ARE out of the tournament (their seat is gone), but their NIM may
-   * still be on-chain pending confirmations — so the confirmation banner
-   * must say that instead of silently vanishing with their money.
+   * A payment of this player's is on-chain but currently has NO seat: they
+   * left while it was pending, or verification failed and the (unpaid) seat
+   * was released. The NIM is NOT lost to the app — it sits in the treasury
+   * on-chain — but it is also not automatically refunded, so the banner
+   * says exactly that instead of implying anything happened that didn't.
    */
   const [pendingRejoin, setPendingRejoin] = useState(false);
 
@@ -409,7 +410,7 @@ export default function TournamentDetailPage() {
             <div className="min-w-0">
               <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tracking-tight">
                 {pendingRejoin
-                  ? "Payment left your wallet — but you left the tournament"
+                  ? "Uncredited payment"
                   : "Payment confirmed — you're in!"}
                 <span className="font-mono tabular-nums text-foreground/80">
                   {displayNim(entryFeeLuna)} NIM
@@ -417,7 +418,7 @@ export default function TournamentDetailPage() {
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {pendingRejoin
-                  ? "The transaction is still on-chain. If it verifies, rejoin below or verify your payment — already-sent funds are never charged twice."
+                  ? `This transfer is on-chain but has no seat attached right now. Verify it below — that never charges again — or rejoin with a new payment. It is not refunded automatically: the ${displayNim(entryFeeLuna)} NIM stays in the treasury until support resolves it.`
                   : `${displayNim(entryFeeLuna)} NIM received from your linked wallet and verified on-chain. Your seat is secured.`}
               </p>
             </div>
@@ -851,6 +852,10 @@ function PaidEntryPanel({
   if (s.status !== "registration") return null;
 
   const phaseLabel = ENTRY_PHASE_LABEL[entry.phase];
+  // A sent-but-uncredited payment owns the panel: verifying it is the only
+  // sane action, so the Pay button stays hidden — this is the end of the
+  // "I kept paying and paying" loop.
+  const uncredited = entry.pendingTxHash !== null;
 
   return (
     <Panel className="animate-fade-in-up mt-4 [animation-delay:50ms]">
@@ -885,6 +890,28 @@ function PaidEntryPanel({
             is confirmed once the payment is verified on-chain.
           </p>
         )}
+
+        {/* The money flow, stated plainly — hosts don't fund anything, every
+            entrant pays the treasury, and the pool pays the winners. */}
+        <details className="rounded-md border border-border/60 bg-background/40 px-3 py-2">
+          <summary className="cursor-pointer list-none text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground">
+            How the money works
+          </summary>
+          <div className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+            <p>
+              <strong className="text-foreground/80">Each player pays their own entry.</strong>{" "}
+              Your {fee} NIM goes straight from your wallet to the ChainMate
+              treasury — the host never funds the tournament and never touches
+              the money.
+            </p>
+            <p>
+              <strong className="text-foreground/80">The pool is the entries.</strong>{" "}
+              Every verified payment is summed on-chain; when the tournament
+              completes, that exact pool is paid out to the winners per the
+              host&apos;s chosen preset (winner / top 3 / top 5).
+            </p>
+          </div>
+        </details>
 
         {phaseLabel && (
           <p className="flex items-center gap-2 text-sm text-primary">
@@ -944,6 +971,20 @@ function PaidEntryPanel({
             >
               <Wallet aria-hidden />
               Connect Nimiq Wallet
+            </Button>
+          ) : uncredited ? (
+            // A payment is on-chain and uncredited: paying again is how the
+            // "endless paying loop" burned funds. Only Verify (above) and —
+            // after a TERMINAL failure — the explicit dismiss below exist.
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                storePendingTx(s.id, null);
+                entry.clearPending();
+              }}
+            >
+              Dismiss this payment
             </Button>
           ) : (
             <Button

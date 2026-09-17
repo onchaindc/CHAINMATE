@@ -352,21 +352,43 @@ export async function waitForNimiqConsensus(
   return true; // timed out: attempt the send anyway, let it fail with its real error
 }
 
+/**
+ * Sign a ChainMate payment-intent proof with the wallet. The proof travels
+ * inside the transaction's data field and lets the server attribute the
+ * payment to the linked wallet even when Nimiq Pay pays from an internal
+ * wrapper account (sendBasicTransaction has NO sender parameter — Nimiq Pay
+ * picks the paying account itself). The user confirms one extra signature
+ * in the same wallet sheet flow; the payload is a public intent, never a
+ * secret.
+ */
+export async function signNimiqPaymentProof(
+  nimiq: Awaited<ReturnType<typeof sdkInit>>,
+  message: string,
+): Promise<NimiqResult<SignatureResult>> {
+  return signNimiqMessage(nimiq, { message });
+}
+
 /** Sign + send a basic transaction. Value/fee are luna integers (bigint-safe). */
 export async function sendNimiqBasicTransaction(
   nimiq: Awaited<ReturnType<typeof sdkInit>>,
-  tx: { recipient: string; value: bigint; fee?: bigint },
+  tx: { recipient: string; value: bigint; fee?: bigint; data?: string },
 ): Promise<NimiqResult<string>> {
-  return guard(() =>
-    nimiq.sendBasicTransaction({
-      recipient: tx.recipient,
-      // The SDK's wire type is number; luna totals for entry fees fit far
-      // below Number.MAX_SAFE_INTEGER, so Number() here is exact. Callers
-      // still hand us bigint so no caller-side float math can creep in.
-      value: Number(tx.value),
-      ...(tx.fee !== undefined ? { fee: Number(tx.fee) } : {}),
-    }),
-  );
+  const params = {
+    recipient: tx.recipient,
+    // The SDK's wire type is number; luna totals for entry fees fit far
+    // below Number.MAX_SAFE_INTEGER, so Number() here is exact. Callers
+    // still hand us bigint so no caller-side float math can creep in.
+    value: Number(tx.value),
+    ...(tx.fee !== undefined ? { fee: Number(tx.fee) } : {}),
+  };
+  // A data payload routes through sendBasicTransactionWithData — the plain
+  // sendBasicTransaction is reserved for data-free transfers.
+  if (tx.data) {
+    return guard(() =>
+      nimiq.sendBasicTransactionWithData({ ...params, data: tx.data! }),
+    );
+  }
+  return guard(() => nimiq.sendBasicTransaction(params));
 }
 
 /** Sign + send a basic transaction carrying hex data. */

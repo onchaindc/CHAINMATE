@@ -16,8 +16,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type * as TxModule from "@/lib/server/nimiq/transactions";
+import type * as ProofClientModule from "@/lib/nimiq/proof";
+import type * as ServerVerifyModule from "@/lib/server/nimiq/verify";
+
+import * as ed from "@noble/ed25519";
+import { sha512 } from "@noble/hashes/sha2";
 
 let tx: typeof TxModule;
+let proofClient: typeof ProofClientModule;
+let serverVerify: typeof ServerVerifyModule;
 
 /* Deterministic fakes -------------------------------------------------- */
 
@@ -39,6 +46,8 @@ interface FakeTx {
   executionResult?: boolean;
   networkId?: number;
   fromType?: number;
+  /** Proof-carrying payments route their signed intent here. */
+  data?: unknown;
 }
 
 function makeDeps(options: {
@@ -127,7 +136,11 @@ before(async () => {
   process.env.NIMIQ_CONFIRMATIONS_REQUIRED = "10";
   process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = TREASURY_ADDRESS;
   process.env.NEXT_PUBLIC_NIMIQ_NETWORK = "test";
+  ed.etc.sha512Async = async (m: Uint8Array) => sha512(m);
+  ed.etc.sha512Sync = (m: Uint8Array) => sha512(m);
   tx = await import("@/lib/server/nimiq/transactions");
+  proofClient = await import("@/lib/nimiq/proof");
+  serverVerify = await import("@/lib/server/nimiq/verify");
   process.on("exit", () => {
     try {
       rmSync(root, { recursive: true, force: true });
@@ -148,6 +161,15 @@ function validTx(overrides: Partial<FakeTx> = {}): FakeTx {
     networkId: 5,
     ...overrides,
   };
+}
+
+/** Random Ed25519 keypair, hex public key (same idiom as nimiq-wallet.test). */
+async function keypairFor(
+  _setup: (m: Uint8Array) => void,
+): Promise<{ privateKey: Uint8Array; publicKeyHex: string }> {
+  const privateKey = ed.utils.randomPrivateKey();
+  const pub = await ed.getPublicKeyAsync(privateKey);
+  return { privateKey, publicKeyHex: Buffer.from(pub).toString("hex") };
 }
 
 /* ------------------------------------------------------------------ */
@@ -270,6 +292,108 @@ test("a non-boolean executionResult verdict fails closed as a malformed RPC resp
     () => tx.verifyIncomingTransaction("3".repeat(64), BASE_OBLIGATION, deps),
     (err: unknown) =>
       err instanceof tx.NimiqTxError && err.kind === "malformed-rpc-response" && err.status === 502,
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* Proof-of-signer attribution (the sender-mismatch fix)               */
+/* ------------------------------------------------------------------ */
+
+/** Sign `message` the way Nimiq Pay signs messages (SHA-256 over framing). */
+async function paySign(message: string, privateKey: Uint8Array): Promise<string> {
+  const signed = serverVerify.nimiqMessageSigningHash(message);
+  const sig = await ed.signAsync(signed, privateKey);
+  return Buffer.from(sig).toString("hex");
+}
+
+test("a wrong-sender transaction carrying a VALID proof by the linked wallet's key verifies", async () => {
+  // The exact live failure: Nimiq Pay paid from an unknown wrapper contract,
+  // NOT the linked identity address. The proof — signed by the linked key —
+  // is what attributes the payment now.
+  const { privateKey, publicKeyHex } = await keypairFor(ed.etc.sha512Async as unknown as (m: Uint8Array) => void);
+  const linkedDerived = serverVerify.addressFromPublicKey(publicKeyHex);
+  const obligation = {
+    playerId: "acct_proof_flow",
+    expectedAmountLuna: 10_000_000n, // 100 NIM
+    kind: "tournament_entry" as const,
+    tournamentId: "tour_proof_flow",
+  };
+  const message = proofClient.proofMessage({
+    playerId: obligation.playerId,
+    tournamentId: obligation.tournamentId,
+    amountLuna: obligation.expectedAmountLuna.toString(),
+    recipient: canonical(TREASURY_ADDRESS),
+    network: "test",
+  });
+  const signature = await paySign(message, privateKey);
+  const proofData = proofClient.encodeProofDataHex({ publicKey: publicKeyHex, signature });
+
+  const { deps, consumed } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ54 MXBG XVSB C6FN 0YG2 QGGH NB5E A531 7G01", // the wrapper contract
+      fromType: 2,
+      value: "10000000",
+      data: proofData,
+    }),
+    currentHeight: 1000,
+    linkedWallet: { address: linkedDerived, network: "test", linkedAt: 0 },
+  });
+  const result = await tx.verifyIncomingTransaction("c".repeat(64), obligation, deps);
+  assert.equal(consumed.size, 1);
+  assert.equal(result.amountLuna, "10000000");
+});
+
+test("a wrong-sender transaction with NO proof is still rejected (legacy path intact)", async () => {
+  const { privateKey, publicKeyHex } = await keypairFor(ed.etc.sha512Async as unknown as (m: Uint8Array) => void);
+  const linkedDerived = serverVerify.addressFromPublicKey(publicKeyHex);
+  const { deps } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ54 MXBG XVSB C6FN 0YG2 QGGH NB5E A531 7G01",
+      fromType: 2,
+    }),
+    linkedWallet: { address: linkedDerived, network: "test", linkedAt: 0 },
+  });
+  await assert.rejects(
+    () => tx.verifyIncomingTransaction("d".repeat(64), BASE_OBLIGATION, deps),
+    (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "wrong-sender",
+  );
+});
+
+test("a proof signed by a DIFFERENT key than the linked wallet is authoritative rejection", async () => {
+  // Someone else's key signed the intent: even though the (unused here)
+  // linked wallet matches the claimed publicKey, the signature is invalid —
+  // and no fallback may rescue a cryptographically wrong proof.
+  const { privateKey, publicKeyHex } = await keypairFor(ed.etc.sha512Async as unknown as (m: Uint8Array) => void);
+  const attacker = await keypairFor(ed.etc.sha512Async as unknown as (m: Uint8Array) => void);
+  const linkedDerived = serverVerify.addressFromPublicKey(publicKeyHex);
+  const message = proofClient.proofMessage({
+    playerId: "acct_x",
+    tournamentId: "tour_x",
+    amountLuna: "10000000",
+    recipient: canonical(TREASURY_ADDRESS),
+    network: "test",
+  });
+  const signature = await paySign(message, attacker.privateKey);
+  const proofData = proofClient.encodeProofDataHex({ publicKey: publicKeyHex, signature });
+
+  const { deps } = makeDeps({
+    onChainTx: validTx({
+      from: "NQ54 MXBG XVSB C6FN 0YG2 QGGH NB5E A531 7G01",
+      fromType: 2,
+      value: "10000000",
+      data: proofData,
+    }),
+    linkedWallet: { address: linkedDerived, network: "test", linkedAt: 0 },
+  });
+  await assert.rejects(
+    () =>
+      tx.verifyIncomingTransaction("e".repeat(64), {
+        playerId: "acct_x",
+        expectedAmountLuna: 10_000_000n,
+        kind: "tournament_entry",
+        tournamentId: "tour_x",
+      }, deps),
+    (err: unknown) => err instanceof tx.NimiqTxError && err.kind === "wrong-sender",
   );
 });
 

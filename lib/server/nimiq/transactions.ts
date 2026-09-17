@@ -40,6 +40,9 @@ import {
   getTransactionByHash,
   type NimiqRpcTransaction,
 } from "@/lib/server/nimiq/rpc";
+import { friendlyAddress } from "@/lib/nimiq/address";
+import { decodeProofData } from "@/lib/nimiq/proof";
+import { verifyPaymentProof } from "@/lib/server/nimiq/proof";
 
 /**
  * The real node response carries fields beyond 1A's minimal interface
@@ -53,6 +56,10 @@ interface NimiqTxWithProof extends Omit<NimiqRpcTransaction, "blockNumber"> {
   blockNumber?: number | null;
   executionResult?: unknown;
   networkId?: number;
+  /** The data payload a proof-carrying payment routes through. */
+  data?: unknown;
+  /** Account type from the node (0 = basic, 1 = vesting, 2 = htlc). */
+  fromType?: unknown;
 }
 type GetTxByHash = (
   hash: string,
@@ -458,37 +465,82 @@ async function verifyOnChain(
     throw new NimiqTxError("failed-transaction", "Transaction execution failed on-chain");
   }
 
-  // 4. Sender must be exactly the linked wallet (canonical compare).
-  //    REALITY CHECK (observed live, testnet): Nimiq Pay's sendBasicTransaction
-  //    pays FROM HTLC wrapper contracts the user's wallet creates around its
-  //    own funds (listAccounts() returns the identity address, but the actual
-  //    payer is a contract whose `sender`/creator IS the linked wallet — and
-  //    only the creator's key can create such a contract or reclaim it). So a
-  //    direct mismatch is NOT immediately fatal: if the paying account is a
-  //    contract owned by the linked wallet, the payment is legitimately the
-  //    linked wallet's — accept it. Everything else stays rejected, now with
-  //    both addresses named in Nimiq Pay's spaced display form.
+  // 4. Sender attribution — the fix for the recurring "sender does not match"
+  //    rejections. Nimiq Pay's sendBasicTransaction has NO sender parameter:
+  //    the wallet picks the paying account itself, and on testnet it routes
+  //    payments through HTLC/vesting wrapper contracts (and even recurring
+  //    transfer contracts), so the on-chain sender is frequently NOT the
+  //    linked identity address — yet the payment is still the linked
+  //    wallet's. Attribution is therefore established in tiers:
+  //
+  //    (a) PROOF OF SIGNER (preferred): the tx carries a signed payment
+  //        intent (embedded in its data field) whose signature verifies and
+  //        whose proven key IS the linked wallet's key. Only the linked key
+  //        can produce it — done, whatever the sender field says.
+  //    (b) DIRECT: the sender IS the linked address (classic basic wallet).
+  //    (c) OWNED CONTRACT: the sender is a contract account created by the
+  //        linked wallet (live RPC lookup; HTLC/vesting wrappers) — the
+  //        original Nimiq-Pay accommodation.
+  //    Anything else is rejected with both addresses named.
   const sender = canonicalAddress(String(tx.from ?? ""));
   const linkedCanonical = canonicalAddress(linked.address);
-  if (sender !== linkedCanonical) {
-    const creator = await contractCreatorFor(sender, rpc.getAccountByAddress);
-    if (creator !== null && canonicalAddress(creator) === linkedCanonical) {
-      // Owned contract payment (Nimiq Pay style) — verified: only the linked
-      // key could have created this contract, and its funds route back to the
-      // linked wallet on timeout/reclaim.
-    } else {
-      const fromType = (tx as { fromType?: unknown }).fromType;
-      const txType = typeof fromType === "number" ? fromType : null;
-      const typeHint =
-        txType !== null && txType !== 0
-          ? " The paying account is a contract-type account, but not one created by your linked wallet."
-          : "";
-      throw new NimiqTxError(
-        "wrong-sender",
-        `Transaction sender ${friendlyAddress(sender)} does not match your linked wallet ${friendlyAddress(linked.address)}.${typeHint} In Nimiq Pay, switch to the exact account you linked to ChainMate and pay from it.`,
-      );
+  let senderVerified = sender === linkedCanonical;
+  let senderProofNote: string | null = null;
+
+  if (!senderVerified) {
+    // (a) Proof of signer: a signature by the linked wallet's key over the
+    // exact intent (player, tournament, amount, recipient, network) — every
+    // field reconstructed SERVER-SIDE from this obligation, nothing parsed
+    // from client input except the key/signature themselves.
+    const proof = decodeProofData(tx.data);
+    if (proof) {
+      const verdict = await verifyPaymentProof(proof, {
+        playerId: obligation.playerId,
+        tournamentId: obligation.tournamentId ?? "",
+        expectedAmountLuna: obligation.expectedAmountLuna,
+        expectedRecipient,
+        network: expectedNetwork,
+        linkedAddress: linkedCanonical,
+      });
+      if (verdict.ok) {
+        senderVerified = true;
+        senderProofNote = "payment proof signed by the linked wallet's key";
+      } else if (verdict.reason === "key-not-linked-wallet") {
+        // A cryptographically wrong proof is AUTHORITATIVE evidence this
+        // payment does not belong to this player — fail with that reason
+        // rather than the generic sender mismatch.
+        throw new NimiqTxError("wrong-sender", `Payment rejected: ${verdict.message}.`);
+      }
+      // A malformed/invalid proof falls through to (b)/(c) and then the
+      // plain wrong-sender rejection if those fail too.
     }
   }
+
+  if (!senderVerified) {
+    // (c) Owned-contract accommodation: if the paying account is a contract
+    // whose creator IS the linked wallet, the payment is legitimately the
+    // linked wallet's (only the creator's key can create such a contract or
+    // reclaim it). Fail closed on any lookup error.
+    const creator = await contractCreatorFor(sender, rpc.getAccountByAddress);
+    if (creator !== null && canonicalAddress(creator) === linkedCanonical) {
+      senderVerified = true;
+      senderProofNote = "paid from a contract created by the linked wallet";
+    }
+  }
+
+  if (!senderVerified) {
+    const fromType = tx.fromType;
+    const txType = typeof fromType === "number" ? fromType : null;
+    const typeHint =
+      txType !== null && txType !== 0
+        ? " The paying account is a contract-type account, but not one created by your linked wallet."
+        : "";
+    throw new NimiqTxError(
+      "wrong-sender",
+      `Transaction sender ${friendlyAddress(sender)} does not match your linked wallet ${friendlyAddress(linked.address)}.${typeHint} In Nimiq Pay, switch to the exact account you linked to ChainMate and pay from it.`,
+    );
+  }
+  void senderProofNote; // kept for structured logging by callers if needed
 
   // 5. Recipient must be exactly the treasury (canonical compare).
   const recipient = canonicalAddress(String(tx.to ?? ""));
@@ -557,17 +609,6 @@ async function verifyOnChain(
  * verifyOnChain() has passed, so a failed verification leaves no trace and
  * the transaction can be re-verified later (e.g. after more confirmations).
  */
-/**
- * Group a canonical 36-char address into the friendly spaced form users see
- * in Nimiq Pay and block explorers ("NQ64 66X5 …"). Non-standard inputs pass
- * through compact so error text never fabricates an address.
- */
-function friendlyAddress(address: string): string {
-  const compact = canonicalAddress(address);
-  if (compact.length !== 36) return compact || "(unknown)";
-  return `${compact.slice(0, 4)} ${(compact.slice(4).match(/.{1,4}/g) ?? []).join(" ")}`;
-}
-
 /**
  * If `account` is a contract account created by a user wallet (HTLC or
  * vesting), return its creator address; anything else returns null.

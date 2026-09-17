@@ -7,36 +7,40 @@
  * and the Phase 1B linked-wallet hook:
  *
  *   1. require a linked wallet (Phase 1B)
- *   2. connect the provider (Phase 1A) and send a REAL basic transaction:
- *      recipient = treasury, value = the tournament's exact fee in luna
- *   3. capture the returned tx hash
- *   4. submit it to the server, which verifies the real transaction through
- *      Phase 1C and marks the entry paid
+ *   2. sign a PAYMENT-INTENT PROOF with the wallet (no cost — a message
+ *      signature that cryptographically binds this payment to the linked
+ *      wallet's key, player, tournament, exact amount, treasury, network)
+ *   3. send the real transaction to the treasury WITH the proof embedded in
+ *      its data field (sendBasicTransaction has NO sender parameter — Nimiq
+ *      Pay picks the paying account itself, so the proof is what attributes
+ *      the payment; see lib/nimiq/proof.ts)
+ *   4. submit the tx hash to the server, which verifies the real on-chain
+ *      transaction (proof → or legacy direct/owned-contract sender rules)
+ *      through Phase 1C and marks the entry paid
+ *
+ * ANTI-DOUBLE-PAY (the "endless paying loop" fix): from the moment
+ * sendBasicTransaction returns a hash, that hash is THE payment for this
+ * flow. The Pay button never reappears while a sent payment is uncredited —
+ * only "Verify payment" does, which re-checks the SAME hash and can never
+ * move money. A second payment can only be sent after the player explicitly
+ * dismisses an uncredited one (terminal verification failure), and the
+ * server independently refuses a second paid seat.
  *
  * Phases: idle → awaiting-wallet → submitting → verifying → joined | error.
- * Duplicate clicks are prevented via a busy flag that spans the whole flow.
- * The client never invents amounts or recipients — both come from the
- * tournament summary the server serves.
- *
- * CONFIRMATION-WINDOW HANDLING (the "2 confirmations, 10 required" case):
- * a payment the WALLET accepted is on-chain immediately, but the server
- * credits the entry only after N confirmations. Verification right after
- * broadcast therefore fails transiently. The hook polls the SAME tx hash
- * until it clears (server-side verification is idempotent — a resubmission
- * after consumption resolves to a typed already-consumed outcome that the
- * entry service treats as success) and surfaces live progress instead of a
- * dead-end error. No path here ever sends a SECOND payment: the pending
- * hash is kept and only ever re-verified.
  */
 
 import { useCallback, useRef, useState } from "react";
 
 import {
   connectNimiq,
+  listNimiqAccounts,
   nimiqPaymentFailureMessage,
   sendNimiqBasicTransaction,
+  signNimiqPaymentProof,
   waitForNimiqConsensus,
 } from "@/lib/nimiq/miniapp";
+import { encodeProofDataHex, proofMessage } from "@/lib/nimiq/proof";
+import { canonicalAddress } from "@/lib/nimiq/address";
 import { parseNim } from "@/lib/nimiq/format";
 import {
   VERIFY_MAX_ATTEMPTS,
@@ -45,8 +49,8 @@ import {
   isRetryableVerificationError,
   verificationProgressMessage,
 } from "@/lib/nimiq/verify-retry";
-import { useNimiqWallet } from "@/hooks/use-nimiq-wallet";
-import { tournamentApi } from "@/lib/tournament-api";
+import { shortNimiqAddress, useNimiqWallet } from "@/hooks/use-nimiq-wallet";
+import { TournamentApiError, tournamentApi } from "@/lib/tournament-api";
 
 export type EntryPhase =
   | "idle"
@@ -58,31 +62,43 @@ export type EntryPhase =
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** A second payment arrived while the seat was already paid by another tx. */
+export class AlreadyPaidError extends Error {
+  constructor() {
+    super(
+      "You have already paid for this tournament — this extra payment cannot be attached to another seat. Nothing was charged twice for one entry; the extra transfer stays on-chain to the treasury.",
+    );
+    this.name = "AlreadyPaidError";
+  }
+}
+
 export function useTournamentEntry(playerId: string) {
   const wallet = useNimiqWallet(playerId);
   const [phase, setPhase] = useState<EntryPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   /** The on-chain payment awaiting enough confirmations — never re-paid. */
-  const [pendingTxHash, setPendingTxHash] = useState<string | null>(null);
+  const [pendingTxHash, setPendingTxHashState] = useState<string | null>(null);
   /** Latest in-flight attempt, so a stale poll loop cannot clobber a new one. */
   const attemptRef = useRef(0);
 
+  const setPendingTxHash = useCallback((hash: string | null) => {
+    setPendingTxHashState(hash);
+  }, []);
+
   /**
-   * Submit one verification attempt for `txHash`. Resolves true when the
-   * entry is confirmed (or the server reports it already consumed BY US —
-   * the idempotent path). Throws when verification says no.
+   * Submit one verification attempt for `txHash`. Throws on failure —
+   * including AlreadyPaidError when the server says the seat was paid by a
+   * DIFFERENT transaction (that is never treated as success: the extra
+   * payment must be surfaced, not swallowed).
    */
   const verifyOnce = useCallback(
-    async (tournamentId: string, txHash: string): Promise<boolean> => {
+    async (tournamentId: string, txHash: string): Promise<void> => {
       try {
         await tournamentApi.submitEntryTx(tournamentId, playerId, txHash);
-        return true;
       } catch (err) {
-        // The durable replay guard: this exact tx already paid for this
-        // tournament. That IS success on the retry path — the seat exists.
-        if (err instanceof Error && /already paid to join/i.test(err.message)) {
-          return true;
+        if (err instanceof TournamentApiError && err.kind === "already-paid") {
+          throw new AlreadyPaidError();
         }
         throw err;
       }
@@ -103,16 +119,14 @@ export function useTournamentEntry(playerId: string) {
       for (let i = 1; i <= VERIFY_MAX_ATTEMPTS; i++) {
         if (attemptRef.current !== attempt) return false; // superseded
         try {
-          const done = await verifyOnce(tournamentId, txHash);
-          if (done) {
-            setPendingTxHash(null);
-            setProgress(null);
-            setPhase("joined");
-            return true;
-          }
+          await verifyOnce(tournamentId, txHash);
+          setPendingTxHash(null);
+          setProgress(null);
+          setPhase("joined");
+          return true;
         } catch (err) {
           if (attemptRef.current !== attempt) return false;
-          if (!isRetryableVerificationError(err)) {
+          if (err instanceof AlreadyPaidError || !isRetryableVerificationError(err)) {
             setProgress(null);
             setError(
               err instanceof Error
@@ -161,6 +175,15 @@ export function useTournamentEntry(playerId: string) {
       if (phase === "awaiting-wallet" || phase === "submitting" || phase === "verifying") {
         return { outcome: "error", txHash: null }; // duplicate-click guard
       }
+      // ANTI-DOUBLE-PAY: a sent-but-uncredited payment exists — re-verifying
+      // it is the only correct action; paying again would burn funds.
+      if (pendingTxHash) {
+        setError(
+          "A payment is already on-chain for this tournament and hasn't been credited yet. Verify it below — you will NOT be charged again by verifying.",
+        );
+        setPhase("error");
+        return { outcome: "error", txHash: null };
+      }
       setError(null);
       setProgress(null);
 
@@ -173,6 +196,7 @@ export function useTournamentEntry(playerId: string) {
       let feeLuna: bigint;
       try {
         feeLuna = parseNim(entryFeeNim);
+        if (feeLuna <= 0n) throw new Error("fee must be positive");
       } catch {
         setError("This tournament's entry fee is invalid.");
         setPhase("error");
@@ -181,16 +205,8 @@ export function useTournamentEntry(playerId: string) {
 
       setPhase("awaiting-wallet");
       try {
-        const connected = await connectNimiq();
-        if (!connected.ok) throw new Error(connected.error.message);
-
-        // Real NIM transfer to the treasury. The RECIPIENT is the configured
-        // treasury address from Phase 1A config — the same address the
-        // server verifies against. Never a client-chosen address.
-        const {
-          NIMIQ_TREASURY_ADDRESS,
-          isPlausibleNimiqAddress,
-        } = await import("@/lib/nimiq/config");
+        const { NIMIQ_TREASURY_ADDRESS, NIMIQ_NETWORK, isPlausibleNimiqAddress } =
+          await import("@/lib/nimiq/config");
         if (!NIMIQ_TREASURY_ADDRESS) {
           throw new Error("NIM treasury is not configured for this deployment.");
         }
@@ -203,16 +219,56 @@ export function useTournamentEntry(playerId: string) {
             `The configured NIM treasury address is invalid (${NIMIQ_TREASURY_ADDRESS.replace(/\s/g, "").length} characters — Nimiq addresses are 36, e.g. NQxx XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX). The deployment operator must correct the treasury configuration.`,
           );
         }
+        const treasury = canonicalAddress(NIMIQ_TREASURY_ADDRESS);
+
+        const connected = await connectNimiq();
+        if (!connected.ok) throw new Error(connected.error.message);
+
         // Best-effort sync/consensus pre-flight: Nimiq Pay cannot build a
         // transaction until its account sync finishes — the same failure the
         // wallet reports as "Something went wrong syncing your account".
-        // The helper is fail-open (never blocks when unsupported), so this
-        // only ever helps, never hurts.
+        // Fail-open: this only ever helps, never blocks.
         await waitForNimiqConsensus(connected.value);
+
+        // PRE-SEND ACCOUNT CHECK: if the wallet's active account is NOT the
+        // linked one, stop BEFORE any money moves. sendBasicTransaction has
+        // no sender parameter — the wallet pays from whatever account is
+        // active — so this is the only moment a mismatch can be caught for
+        // free. Fail-open only when the account list itself is unavailable.
+        const accounts = await listNimiqAccounts(connected.value);
+        if (accounts.ok) {
+          const linkedCanonical = canonicalAddress(wallet.wallet.address);
+          const activeHasLinked = accounts.value.some(
+            (a) => canonicalAddress(a) === linkedCanonical,
+          );
+          if (!activeHasLinked) {
+            throw new Error(
+              `Your Nimiq Pay wallet is currently on a different account. Switch to the account linked to ChainMate (${shortNimiqAddress(wallet.wallet.address)}) before paying — payments from any other account cannot be credited.`,
+            );
+          }
+        }
+
+        // PROOF OF SIGNER — signed BEFORE any money moves, so the wallet's
+        // key authorizes exactly this payment (player, tournament, amount,
+        // treasury, network). No cost; the user confirms a signature sheet.
+        const intentMessage = proofMessage({
+          playerId,
+          tournamentId,
+          amountLuna: feeLuna.toString(),
+          recipient: treasury,
+          network: NIMIQ_NETWORK,
+        });
+        const proof = await signNimiqPaymentProof(connected.value, intentMessage);
+        if (!proof.ok) throw new Error(proof.error.message);
+
         setPhase("submitting");
         const sent = await sendNimiqBasicTransaction(connected.value, {
-          recipient: NIMIQ_TREASURY_ADDRESS,
+          recipient: treasury,
           value: feeLuna,
+          data: encodeProofDataHex({
+            publicKey: proof.value.publicKey,
+            signature: proof.value.signature,
+          }),
         });
         if (!sent.ok) throw new Error(sent.error.message);
         const txHash = sent.value;
@@ -234,7 +290,7 @@ export function useTournamentEntry(playerId: string) {
         return { outcome: "error", txHash: null };
       }
     },
-    [phase, playerId, wallet.wallet, pollVerification],
+    [phase, playerId, wallet.wallet, pendingTxHash, pollVerification],
   );
 
   /**
@@ -250,10 +306,24 @@ export function useTournamentEntry(playerId: string) {
         setPhase("error");
         return false;
       }
+      setPendingTxHash(hash);
       return pollVerification(tournamentId, hash);
     },
-    [pendingTxHash, pollVerification],
+    [pendingTxHash, pollVerification, setPendingTxHash],
   );
+
+  /**
+   * Give up on an uncredited payment after a TERMINAL verification failure
+   * (the only way the Pay button comes back). The on-chain transfer is NOT
+   * undone — the UI says so plainly before the player proceeds.
+   */
+  const clearPending = useCallback(() => {
+    attemptRef.current += 1; // cancel any in-flight poll loop
+    setPendingTxHash(null);
+    setProgress(null);
+    setError(null);
+    setPhase("idle");
+  }, []);
 
   const reset = useCallback(() => {
     attemptRef.current += 1; // cancel any in-flight poll loop
@@ -274,6 +344,7 @@ export function useTournamentEntry(playerId: string) {
     setPendingTxHash,
     payAndJoin,
     reverify,
+    clearPending,
     reset,
     busy:
       phase === "awaiting-wallet" || phase === "submitting" || phase === "verifying",
