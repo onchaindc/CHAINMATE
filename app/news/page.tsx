@@ -251,26 +251,37 @@ export default function NewsPage() {
           )}
 
           {/* The rest — a tight two-column grid on desktop so the page stays
-              dense instead of trailing into empty space. */}
+              dense instead of trailing into empty space. Every card shares one
+              skeleton — fixed-height image slot (a quiet placeholder when a
+              story has no art) with the same line clamps — so rows stay level
+              instead of ragging where some stories have images and some do
+              not. */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             {rest.map((item, i) => (
               <button
                 key={`${item.url}-${i}`}
                 type="button"
                 onClick={() => setOpenItem(item)}
-                className="group flex flex-col rounded-lg border border-border/60 bg-card/40 p-3 text-left transition-colors hover:bg-card/70"
+                className="group flex h-full flex-col rounded-lg border border-border/60 bg-card/40 p-3 text-left transition-colors hover:bg-card/70"
               >
-                {item.imageUrl && (
-                  <div className="mb-2.5 h-28 w-full overflow-hidden rounded-md bg-secondary/40">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                <div className="mb-2.5 h-28 w-full overflow-hidden rounded-md bg-secondary/40">
+                  {item.imageUrl ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
                     <img
                       src={item.imageUrl}
                       alt=""
                       loading="lazy"
                       className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                     />
-                  </div>
-                )}
+                  ) : (
+                    <div
+                      className="flex h-full w-full items-center justify-center text-muted-foreground/40"
+                      aria-hidden
+                    >
+                      <Newspaper className="h-6 w-6" />
+                    </div>
+                  )}
+                </div>
                 <p className="text-2xs text-muted-foreground">
                   {item.source ? `${item.source} · ` : ""}
                   {dateLabel(item.publishedAt)}

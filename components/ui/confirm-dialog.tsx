@@ -51,7 +51,7 @@ export function ConfirmDialog({
       aria-modal="true"
       aria-label={title}
       className={cn(
-        "fixed inset-0 z-50 flex items-end justify-center bg-scrim backdrop-blur-sm sm:items-center sm:p-4",
+        "fixed inset-0 z-50 flex items-end justify-center bg-scrim px-3 backdrop-blur-sm sm:items-center sm:px-4",
         className,
       )}
       onClick={busy ? undefined : onCancel}

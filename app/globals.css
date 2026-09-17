@@ -133,6 +133,21 @@
     font-feature-settings: "rlig" 1, "calt" 1, "tnum" 1;
   }
 
+  /* iOS Safari zooms the page whenever the focused control's font is under
+     16px. Nearly every input here is text-sm (14px), so tapping any field
+     zoomed the whole page on a phone — the "app zooms when I type" report.
+     16px on coarse pointers neutralizes it without touching desktop.
+     (viewport meta alone cannot do this; only font size can.) */
+  @supports (-webkit-touch-callout: none) {
+    @media (pointer: coarse) {
+      input,
+      textarea,
+      select {
+        font-size: 16px !important;
+      }
+    }
+  }
+
   ::selection {
     background: hsl(var(--primary) / 0.28);
   }

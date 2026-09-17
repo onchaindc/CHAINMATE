@@ -119,7 +119,9 @@ export function NotificationBell() {
       </Button>
 
       {open && (
-        <div className="animate-fade-in-up absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-elevation-3 backdrop-blur">
+        /* Full gutted width on a phone (left edge lands exactly 1rem from the
+           viewport edge), fixed 20rem once there is room. */
+        <div className="animate-fade-in-up absolute right-0 top-full z-50 mt-2 w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-elevation-3 backdrop-blur sm:w-80">
           <p className="border-b border-border/60 px-3 py-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Notifications
           </p>

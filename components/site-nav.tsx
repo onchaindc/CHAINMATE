@@ -156,7 +156,10 @@ export function SiteNav() {
             );
           })}
 
-          <NotificationBell />
+          {/* The bell is product chrome for players mid-session, not part of
+              the welcome: on the landing page the header stays exactly as it
+              was before it existed. */}
+          {!onLanding && <NotificationBell />}
 
           <PlayerMenu />
 

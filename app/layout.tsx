@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import { ChallengeInbox } from "@/components/game/challenge-inbox";
 import { SiteFooter } from "@/components/site-footer";
@@ -32,6 +32,16 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   display: "swap",
 });
+
+/* iOS Safari zooms the whole page whenever a focused control renders smaller
+   than 16px — the tournament form uses text-sm (14px), so tapping the name
+   field visibly zoomed the page instead of just raising the keyboard. A
+   16px minimum on touch devices neutralizes it app-wide; desktop keeps its
+   14px rhythm untouched (max-width: none matches every pointer there). */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
 
 export const metadata: Metadata = {
   title: "ChainMate: Play chess. Think deeper.",
