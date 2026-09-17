@@ -10,7 +10,7 @@
  * a server-verified bind.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   pickWalletAccount,
@@ -60,6 +60,28 @@ async function api<T>(
   return data;
 }
 
+const AUTO_CONNECT_KEY = "chainmate:wallet-auto-connect:v1";
+
+/** Whether auto-connect is enabled for this player (default: on). */
+function hasWalletAutoConnect(playerId: string): boolean {
+  if (typeof localStorage === "undefined" || !playerId) return false;
+  try {
+    return localStorage.getItem(`${AUTO_CONNECT_KEY}:${playerId}`) !== "off";
+  } catch {
+    return false;
+  }
+}
+
+/** Persist the player's disconnect as a permanent auto-connect opt-out. */
+function forgetWalletAutoConnect(playerId: string): void {
+  if (typeof localStorage === "undefined" || !playerId) return;
+  try {
+    localStorage.setItem(`${AUTO_CONNECT_KEY}:${playerId}`, "off");
+  } catch {
+    // best-effort
+  }
+}
+
 export function useNimiqWallet(playerId: string) {
   const provider = useNimiq();
   const [wallet, setWallet] = useState<LinkedWallet | null>(null);
@@ -85,6 +107,15 @@ export function useNimiqWallet(playerId: string) {
     void refresh();
   }, [playerId, refresh]);
 
+  /**
+   * Auto-connect (one time): the first time the app opens inside Nimiq Pay,
+   * run the link flow automatically so the player never has to find the
+   * Connect button. Nimiq Pay still mediates every step with its own UI —
+   * this only removes the need to tap Connect first. Runs ONLY when the
+   * provider is available (inside Nimiq Pay — a normal browser never injects
+   * it) and never again after the player unlinks (that is the permanent
+   * "disconnect" — being stubborn here is how apps lose users).
+   */
   /**
    * Full link flow. Signs the server challenge with the real wallet provider
    * (Nimiq Pay) and posts it for verification. Replaces an existing wallet
@@ -163,6 +194,25 @@ export function useNimiqWallet(playerId: string) {
     [playerId, provider.state, provider.error],
   );
 
+  /**
+   * Auto-connect (one time): the first time the app opens inside Nimiq Pay,
+   * run the link flow automatically so the player never has to find the
+   * Connect button. Nimiq Pay still mediates every step with its own UI —
+   * this only removes the need to tap Connect first. Runs ONLY when the
+   * provider is available (inside Nimiq Pay — a normal browser never injects
+   * it) and never again after the player unlinks (that is the permanent
+   * "disconnect" — being stubborn here is how apps lose users).
+   */
+  const autoConnectTried = useRef(false);
+  useEffect(() => {
+    if (autoConnectTried.current || !playerId || !loaded) return;
+    if (provider.state !== "available") return;
+    if (wallet) return;
+    if (!hasWalletAutoConnect(playerId)) return;
+    autoConnectTried.current = true;
+    void link().catch(() => undefined);
+  }, [playerId, loaded, provider.state, wallet, link]);
+
   const unlink = useCallback(async () => {
     setError(null);
     try {
@@ -172,6 +222,9 @@ export function useNimiqWallet(playerId: string) {
       await api(`/api/nimiq/wallet?playerId=${encodeURIComponent(playerId)}`, {
         method: "DELETE",
       });
+      // Disconnecting is the player's explicit opt-out of auto-connect too —
+      // it must never fire again until they link manually.
+      forgetWalletAutoConnect(playerId);
       setWallet(null);
       setPhase("idle");
     } catch (err) {

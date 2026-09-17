@@ -20,6 +20,7 @@ import {
   UserMinus,
   UserPlus,
   Wallet,
+  ExternalLink,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { BackLink, PageHeader, SectionLabel } from "@/components/ui/page-header";
@@ -32,6 +33,7 @@ import { clearPendingEntryTx, loadPendingEntryTx } from "@/lib/nimiq/pending-ent
 import type { TournamentFormat, TournamentMatch, TournamentStatus } from "@/lib/tournament-types";
 import { formatNim } from "@/lib/nimiq/format";
 import { isNimiqEnabled } from "@/lib/nimiq/flag";
+import { nimiqPayDeepLinks } from "@/lib/nimiq/deep-link";
 import { useTournamentEntry } from "@/hooks/use-tournament-entry";
 import { shortNimiqAddress } from "@/hooks/use-nimiq-wallet";
 import { cn } from "@/lib/utils";
@@ -252,7 +254,12 @@ export default function TournamentDetailPage() {
   const s = detail.summary;
   const isHost = detail.myRole === "host";
   const isEntrant = detail.myRole === "entrant";
-  const joined = isEntrant;
+  // Membership, not role: a HOST WHO JOINED (the common paid-event case —
+  // hosts must pay like everyone else) used to see the Pay button forever
+  // with a "Payment confirmed" banner, because myRole stays "host" after
+  // joining. Being among the active entries is what "joined" means.
+  const joined =
+    isEntrant || detail.entries.some((e) => e.playerId === identity.playerId);
   const entryFeeLuna = s.entryFeeLuna && s.entryFeeLuna !== "0" ? s.entryFeeLuna : null;
   const isPaid = entryFeeLuna !== null;
   const myEntry = detail.entries.find((e) => e.playerId === identity.playerId);
@@ -942,26 +949,30 @@ function PaidEntryPanel({
 
         <div className="flex flex-wrap items-center gap-2">
           {!entry.wallet.wallet ? (
-            <Button
-              size="sm"
-              disabled={
-                entry.wallet.phase === "awaiting-wallet" ||
-                entry.wallet.phase === "verifying"
-              }
-              onClick={() => {
-                if (entry.wallet.provider === "available") {
-                  void entry.wallet.link();
-                  return;
+            entry.wallet.provider === "available" ? (
+              <Button
+                size="sm"
+                disabled={
+                  entry.wallet.phase === "awaiting-wallet" ||
+                  entry.wallet.phase === "verifying"
                 }
-                // Not available (web-unavailable / error): re-run detection —
-                // inside Nimiq Pay a second attempt often succeeds once the
-                // host finished injecting the provider.
-                entry.wallet.recheckProvider();
-              }}
-            >
-              <Wallet aria-hidden />
-              Connect Nimiq Wallet
-            </Button>
+                onClick={() => void entry.wallet.link()}
+              >
+                <Wallet aria-hidden />
+                Connect Nimiq Wallet
+              </Button>
+            ) : (
+              /* Outside Nimiq Pay (normal browser) the provider can never
+                 inject — a Connect button here is a dead end. Deep-link into
+                 Nimiq Pay instead: it opens THIS page inside the wallet. */
+              <a
+                href={nimiqPayDeepLinks()?.https ?? "#"}
+                className={buttonVariants({ size: "sm" })}
+              >
+                <ExternalLink aria-hidden />
+                Open in Nimiq Pay
+              </a>
+            )
           ) : uncredited ? (
             // A payment is on-chain and uncredited: paying again is how the
             // "endless paying loop" burned funds. Only Verify (above) and —
