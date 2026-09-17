@@ -71,9 +71,13 @@ export async function POST(req: NextRequest) {
       .from("avatars")
       .upload(path, buffer, { contentType: "image/webp", upsert: true });
     if (uploadError) {
+      // The bucket is missing: the operator's setup step, not the player's
+      // fault, so the message says the service is unavailable rather than
+      // surfacing migration instructions to the app.
+      console.error("avatar upload failed (missing avatars bucket?)", uploadError.message);
       return NextResponse.json(
-        { error: "Storage isn't ready: create the public `avatars` bucket (see 0011_avatars.sql)." },
-        { status: 500 },
+        { error: "Profile pictures are unavailable right now. Please try again later." },
+        { status: 503 },
       );
     }
     const { data } = admin.storage.from("avatars").getPublicUrl(path);

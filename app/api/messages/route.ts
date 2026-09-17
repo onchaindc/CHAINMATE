@@ -25,7 +25,7 @@ export const runtime = "nodejs";
 
 interface MessageBody {
   playerId?: string;
-  action?: "send" | "read";
+  action?: "send" | "read" | "read-feed" | "read-dm";
   toPlayerId?: string;
   body?: string;
 }
@@ -76,12 +76,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: acting.error }, { status: acting.status });
   }
 
-  if (body.action === "read") {
-    await markInboxRead(acting.playerId);
+  /* Read actions are split so the two badges clear independently:
+     "read-feed" marks announcements seen (the bell), "read-dm" marks the
+     DM inbox read (opening a chat thread), "read" does both. */
+  if (body.action === "read-feed" || body.action === "read") {
     // Feed-only copies (broadcasts this account never received directly)
     // are marked read by remembering the player saw the feed. Persisted as
     // a per-player watermark so the bell stops counting them.
     await markBroadcastFeedSeen(acting.playerId);
+    if (body.action === "read") {
+      await markInboxRead(acting.playerId);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "read-dm") {
+    await markInboxRead(acting.playerId);
     return NextResponse.json({ ok: true });
   }
 

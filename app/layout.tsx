@@ -41,6 +41,10 @@ const jetbrainsMono = JetBrains_Mono({
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  /* Belt-and-suspenders against focus zoom: with the 16px input floor in CSS
+     this is a no-op on healthy browsers, but it also stops double-tap zoom
+     from disturbing the layout while typing on some Android skins. */
+  maximumScale: 1,
 };
 
 export const metadata: Metadata = {

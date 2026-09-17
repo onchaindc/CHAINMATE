@@ -29,6 +29,9 @@ export interface MessageEnvelope {
   id: string;
   fromPlayerId: string;
   fromName: string;
+  /** Recipient for dm/support envelopes; null for broadcasts. This is what
+      lets the sender's own copy group into the right conversation thread. */
+  toPlayerId?: string | null;
   /** "dm" player-to-player · "support" player→operator · "broadcast" operator→all. */
   kind: "dm" | "support" | "broadcast";
   body: string;
@@ -164,17 +167,20 @@ export async function sendDirectMessage(
     id: newId(),
     fromPlayerId,
     fromName,
+    toPlayerId,
     kind: "dm",
     body: text,
     sentAt,
     readAt: null,
   });
   // The sender keeps their own copy too, pre-read so it never inflates the
-  // bell: a thread view needs both directions to render a conversation.
+  // bell: a thread view needs both directions to render a conversation, and
+  // the recipient field on this copy is what files it under the right peer.
   await push(fromPlayerId, {
     id: newId(),
     fromPlayerId,
     fromName,
+    toPlayerId,
     kind: "dm",
     body: text,
     sentAt,
@@ -195,6 +201,7 @@ export async function sendSupportMessage(
     id: newId(),
     fromPlayerId,
     fromName: await displayNameFor(fromPlayerId),
+    toPlayerId: CHAINMATE_ID,
     kind: "support",
     body: text,
     sentAt: Date.now(),

@@ -382,6 +382,7 @@ function Dashboard({
   const [pendingBan, setPendingBan] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AdminAccount | null>(null);
   const [pendingBroadcast, setPendingBroadcast] = useState<"all" | "reply" | null>(null);
+  const [messagingTarget, setMessagingTarget] = useState<string | null>(null);
   const [pendingTourAction, setPendingTourAction] = useState<{
     row: AdminTournamentRow;
     action: "cancel" | "complete" | "delete";
@@ -432,6 +433,11 @@ function Dashboard({
 
   useEffect(() => {
     void load();
+    /* Live dashboard: support messages, new accounts and tournament states
+       refresh on their own, so the headline tiles count up the moment a
+       player writes in. 15s keeps it current without hammering the API. */
+    const t = setInterval(() => void load(), 15_000);
+    return () => clearInterval(t);
   }, [load]);
 
   const flash = (msg: string) => {
@@ -671,6 +677,20 @@ function Dashboard({
                       </p>
                     </div>
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() =>
+                          setMessagingTarget(
+                            messagingTarget === a.playerId ? null : a.playerId,
+                          )
+                        }
+                        aria-expanded={messagingTarget === a.playerId}
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                        Message
+                      </Button>
                       {a.banned ? (
                         <Button
                           variant="outline"
@@ -703,6 +723,29 @@ function Dashboard({
                         Delete
                       </Button>
                     </div>
+                    {messagingTarget === a.playerId && (
+                      <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
+                        <input
+                          type="text"
+                          value={replyDrafts[a.playerId] ?? ""}
+                          onChange={(e) =>
+                            setReplyDrafts((prev) => ({ ...prev, [a.playerId]: e.target.value }))
+                          }
+                          maxLength={2000}
+                          placeholder={`Message ${a.username ?? a.playerId} as ChainMate…`}
+                          className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
+                        />
+                        <Button
+                          size="sm"
+                          className="w-full sm:w-auto"
+                          disabled={busy || !(replyDrafts[a.playerId] ?? "").trim()}
+                          onClick={() => void sendReply(a.playerId)}
+                        >
+                          {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
+                          Send
+                        </Button>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

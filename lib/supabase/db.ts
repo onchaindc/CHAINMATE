@@ -153,13 +153,41 @@ export async function upsertProfiles(statsList: PlayerStats[]): Promise<void> {
     last_played_at: statsList[i].lastPlayedAt ?? null,
   }));
 
-  const { error } = await admin.from("profiles").upsert(rows, { onConflict: "player_id" });
-  if (!error) return;
-  // Missing column (migration 0003 not applied) — keep the rating itself.
-  const { error: fallbackError } = await admin
+  // Account-hood is decided ONLY by the link flow (linkProfileToAccount),
+  // never by the stats mirror. A per-instance stats blob can be stale or a
+  // materialized default carrying isGuest: true, and writing that over an
+  // account row demoted real registered players back to guests, which drained
+  // the admin's registered count and the leaderboard toward zero. So: existing
+  // rows get counters and ratings only; the is_guest/username pair rides
+  // solely on brand-new inserts (fresh guests).
+  const ids = rows.map((r) => r.player_id);
+  const { data: existing, error: selErr } = await admin
     .from("profiles")
-    .upsert(base, { onConflict: "player_id" });
-  if (fallbackError) throw new Error(fallbackError.message);
+    .select("player_id")
+    .in("player_id", ids);
+  const existingIds = new Set(
+    selErr || !existing ? [] : (existing as { player_id: string }[]).map((r) => r.player_id),
+  );
+
+  const updates = rows.filter((r) => existingIds.has(r.player_id));
+  const inserts = rows.filter((r) => !existingIds.has(r.player_id));
+
+  for (const row of updates) {
+    const { is_guest: _isGuest, username: _username, ...counters } = row;
+    const { error } = await admin.from("profiles").update(counters).eq("player_id", row.player_id);
+    if (error) throw new Error(error.message);
+  }
+  if (inserts.length > 0) {
+    const { error } = await admin.from("profiles").upsert(inserts, { onConflict: "player_id" });
+    if (error) {
+      // Missing column (migration 0003 not applied) — keep the rating itself.
+      const stripped = inserts.map(({ rd: _rd, last_played_at: _lp, ...rest }) => rest);
+      const { error: fallbackError } = await admin
+        .from("profiles")
+        .upsert(stripped, { onConflict: "player_id" });
+      if (fallbackError) throw new Error(fallbackError.message);
+    }
+  }
 }
 
 /**

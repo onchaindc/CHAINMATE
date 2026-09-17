@@ -1,22 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, MessageSquare, Volume2 } from "lucide-react";
+import { Bell, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
+import { useMessageCounts } from "@/hooks/use-message-counts";
 import { cn } from "@/lib/utils";
 
 /**
- * The notification bell.
+ * The notification bell: OFFICIAL ANNOUNCEMENTS ONLY.
  *
- * Every player has one durable inbox (DMs, official broadcasts, and their
- * own support thread's replies). The bell polls unread count on an interval
- * — deliberately a poll, not a socket: message delivery is not latency-
- * critical, and a poll survives every network and hosting condition. Opening
- * the dropdown marks the inbox read on the server; a link goes to the full
- * messages panel on the profile.
+ * Player-to-player DMs never appear here and never inflate its badge; they
+ * live exclusively in /messages behind the hamburger's Messages entry, which
+ * carries the WhatsApp-style unread superscript (see use-message-counts).
+ * The bell polls the shared counter, opening it marks announcements seen on
+ * the server, and a link goes to the full feed.
  */
 
 interface MessageEnvelope {
@@ -43,47 +43,58 @@ export function NotificationBell() {
   const identity = useIdentity();
   const playerId = identity.playerId;
   const authed = !identity.isGuest && Boolean(identity.username);
+  const { bellUnread: unread } = useMessageCounts();
 
-  const [unread, setUnread] = useState(0);
   const [messages, setMessages] = useState<MessageEnvelope[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const poll = useCallback(async () => {
-    if (!playerId) return;
-    try {
-      const token = getIdentityToken();
-      const res = await fetch(`/api/messages?playerId=${encodeURIComponent(playerId)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (!res.ok) return;
-      const data = (await res.json()) as { messages?: MessageEnvelope[]; unread?: number };
-      setUnread(data.unread ?? 0);
-      setMessages((data.messages ?? []).slice(0, 6));
-    } catch {
-      // Transient network issue: keep the previous count.
-    }
-  }, [playerId]);
-
+  /* The dropdown body loads only while open: announcements the player has
+     not seen yet, from the same endpoint the badge counts. */
   useEffect(() => {
-    if (!authed) return;
-    void poll();
-    const t = setInterval(() => void poll(), 30_000);
-    return () => clearInterval(t);
-  }, [authed, poll]);
+    if (!open || !playerId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = getIdentityToken();
+        const res = await fetch(`/api/messages?playerId=${encodeURIComponent(playerId)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { messages?: MessageEnvelope[] };
+        if (!cancelled) {
+          setMessages(
+            (data.messages ?? []).filter((m) => m.kind === "broadcast").slice(0, 8),
+          );
+        }
+      } catch {
+        // transient
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, playerId]);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   if (!authed) return null;
 
-  const markRead = () => {
+  const markAnnouncementsSeen = () => {
     setOpen(true);
     if (unread > 0) {
       const token = getIdentityToken();
@@ -93,8 +104,8 @@ export function NotificationBell() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ playerId, action: "read" }),
-      }).then(() => setUnread(0));
+        body: JSON.stringify({ playerId, action: "read-feed" }),
+      });
     }
   };
 
@@ -103,8 +114,8 @@ export function NotificationBell() {
       <Button
         variant="ghost"
         size="icon"
-        aria-label={unread > 0 ? `${unread} unread notifications` : "Notifications"}
-        onClick={markRead}
+        aria-label={unread > 0 ? `${unread} announcements` : "Announcements"}
+        onClick={markAnnouncementsSeen}
         className="relative"
       >
         <Bell aria-hidden />
@@ -126,23 +137,19 @@ export function NotificationBell() {
            overhanging. From sm up it anchors to the bell again. */
         <div className="animate-fade-in-up fixed inset-x-3 top-[calc(var(--nav-h)+0.5rem)] z-50 max-h-[70dvh] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-elevation-3 backdrop-blur sm:absolute sm:inset-x-auto sm:top-full sm:mt-2 sm:max-h-none sm:w-80">
           <p className="border-b border-border/60 px-3 py-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Notifications
+            Announcements
           </p>
           {messages.length === 0 ? (
             <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Nothing yet. Game invites and official announcements land here.
+              Nothing yet. Official ChainMate announcements land here.
             </p>
           ) : (
             <ul className="max-h-[min(20rem,55dvh)] divide-y divide-border/50 overflow-y-auto">
               {messages.map((m) => (
                 <li key={m.id} className={cn("px-3 py-2.5", m.readAt === null && "bg-primary/[0.06]")}>
                   <p className="flex items-center gap-1.5 text-xs font-medium">
-                    {m.kind === "broadcast" ? (
-                      <Volume2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-                    ) : (
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                    )}
-                    <span className="truncate">{m.fromName}</span>
+                    <Volume2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                    <span className="truncate">ChainMate</span>
                     <span className="ml-auto shrink-0 font-normal text-2xs text-muted-foreground">
                       {timeAgo(m.sentAt)}
                     </span>
@@ -155,7 +162,7 @@ export function NotificationBell() {
             </ul>
           )}
           <Link
-            href="/profile?tab=messages"
+            href="/messages"
             onClick={() => setOpen(false)}
             className="block border-t border-border/60 px-3 py-2 text-center text-xs font-medium text-primary hover:bg-secondary/40"
           >

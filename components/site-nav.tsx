@@ -8,6 +8,7 @@ import { PlayerMenu } from "@/components/auth/player-menu";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { buttonVariants } from "@/components/ui/button";
 import { useIdentity } from "@/lib/identity-context";
+import { useMessageCounts } from "@/hooks/use-message-counts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -61,6 +62,7 @@ export function SiteNav() {
   const pathname = usePathname();
   const identity = useIdentity();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { dmUnread } = useMessageCounts();
 
   /* The homepage is a welcome, not a hub: its tabs stay out of the header
      until the player has moved on from it (Play, sign-in, any other page).
@@ -106,8 +108,10 @@ export function SiteNav() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
+        {/* Home is where the player's session lives: a signed-in account lands
+            on the play dashboard, everyone else on the welcome page. */}
         <Link
-          href="/"
+          href={isAuthed ? "/play" : "/"}
           className="group flex shrink-0 items-center"
           aria-label="ChainMate home"
         >
@@ -206,6 +210,7 @@ export function SiteNav() {
             <ul className="mx-auto grid w-full max-w-6xl gap-0.5 px-2 py-3 sm:px-4">
               {links.map(({ href, label }) => {
                 const active = isActive(pathname, href);
+                const dmBadge = label === "Messages" && dmUnread > 0 ? dmUnread : null;
                 return (
                   <li key={label}>
                     <Link
@@ -218,7 +223,17 @@ export function SiteNav() {
                           : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground",
                       )}
                     >
-                      {label}
+                      <span className="flex items-center gap-2">
+                        {label}
+                        {dmBadge !== null && (
+                          <span
+                            className="flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1.5 font-mono text-2xs font-bold text-white"
+                            aria-label={`${dmBadge} unread messages`}
+                          >
+                            {dmBadge > 9 ? "9+" : dmBadge}
+                          </span>
+                        )}
+                      </span>
                       {active && (
                         <span
                           className="h-1.5 w-1.5 rounded-full bg-primary"
