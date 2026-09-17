@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
+  claimOperatorSeat,
   isAdminPlayer,
+  operatorPlayerId,
   passcodeIsSet,
   passcodeSessionValid,
   setPasscode,
+  usernameForPlayer,
   verifyPasscode,
 } from "@/lib/server/admin";
 import {
@@ -19,8 +22,13 @@ export const runtime = "nodejs";
  * Admin messaging + dashboard passcode.
  *
  * POST actions:
- *   passcode-status  → is a code set? (drives the setup vs unlock screen)
- *   passcode-set     → first-time set + confirm (requires admin identity)
+ *   passcode-status  → is a code set? (open — just a boolean, drives the UI)
+ *   passcode-set     → first-time set + confirm. While NO code exists and the
+ *                      operator seat is unclaimed, the first signed-in
+ *                      registered account to complete setup CLAIMS the seat
+ *                      (bootstrap — the env allowlist is otherwise unset on
+ *                      hosting). Once a code exists, only a recognized admin
+ *                      may touch this action.
  *   passcode-verify  → unlock a 30-minute dashboard session
  *   support-inbox    → everything players sent to ChainMate
  *   reply            → official-account DM to one player
@@ -61,15 +69,40 @@ export async function POST(req: NextRequest) {
   }
   const claimed = typeof body.playerId === "string" ? body.playerId.trim() : "";
   const fromQuery = req.nextUrl.searchParams.get("playerId")?.trim() ?? "";
+
+  // passcode-status is intentionally open: the setup screen must be reachable
+  // before any admin exists, and a true/false boolean leaks nothing.
+  if (body.action === "passcode-status") {
+    return NextResponse.json({ set: await passcodeIsSet() });
+  }
+
+  // passcode-set bootstrap: while no code exists AND nobody holds the seat,
+  // the first signed-in REGISTERED account (guests excluded) completes setup
+  // and claims the operator console for good.
+  if (body.action === "passcode-set" && !(await passcodeIsSet()) && !(await operatorPlayerId())) {
+    const acting = await resolveActingPlayer(req, claimed || fromQuery);
+    if (!acting.ok) {
+      return NextResponse.json({ error: acting.error }, { status: acting.status });
+    }
+    const username = await usernameForPlayer(acting.playerId);
+    if (!username) {
+      return NextResponse.json(
+        { error: "Sign in with a registered account to claim the console" },
+        { status: 403 },
+      );
+    }
+    const res = await setPasscode((body.code ?? "").trim(), (body.codeConfirm ?? "").trim());
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });
+    await claimOperatorSeat(acting.playerId);
+    return NextResponse.json({ ok: true, token: res.token, claimed: true });
+  }
+
   const identity = await adminIdentity(req, claimed || fromQuery);
   if (!identity.ok) {
     return NextResponse.json({ error: identity.error }, { status: identity.status });
   }
 
   try {
-    if (body.action === "passcode-status") {
-      return NextResponse.json({ set: await passcodeIsSet() });
-    }
     if (body.action === "passcode-set") {
       const res = await setPasscode((body.code ?? "").trim(), (body.codeConfirm ?? "").trim());
       if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });

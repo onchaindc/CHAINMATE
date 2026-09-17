@@ -137,6 +137,8 @@ function adminUsernames(): string[] {
     .filter(Boolean);
 }
 
+const OPERATOR_KEY = "chainmate:admin:operator";
+
 /** Resolve a playerId to a signed-in username (null for guests/unknowns). */
 export async function usernameForPlayer(playerId: string): Promise<string | null> {
   if (!playerId) return null;
@@ -149,11 +151,35 @@ export async function usernameForPlayer(playerId: string): Promise<string | null
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Operator seat                                                       */
+/* ------------------------------------------------------------------ */
+/* Deployment reality: ADMIN_USERNAMES lives in Vercel env vars, and while
+   it is unset NOBODY is an admin — the dashboard would be unreachable
+   forever. So the seat also self-bootstraps: the first signed-in account
+   to complete passcode setup claims it durably, and the server keeps
+   honoring that account even after the env var is configured. Guests can
+   never claim it (no username). Claim is first-come, one-time. */
+
+export async function operatorPlayerId(): Promise<string | null> {
+  const raw = await getGameStorage().get(OPERATOR_KEY);
+  return raw ?? null;
+}
+
+/** One-time claim; returns false when somebody already holds the seat. */
+export async function claimOperatorSeat(playerId: string): Promise<boolean> {
+  const existing = await operatorPlayerId();
+  if (existing) return existing === playerId;
+  await getGameStorage().set(OPERATOR_KEY, playerId);
+  return true;
+}
+
 /** True when this playerId belongs to a configured admin account. */
 export async function isAdminPlayer(playerId: string): Promise<boolean> {
   const username = await usernameForPlayer(playerId);
   if (!username) return false;
-  return adminUsernames().includes(username.toLowerCase());
+  if (adminUsernames().includes(username.toLowerCase())) return true;
+  return (await operatorPlayerId()) === playerId;
 }
 
 export interface AdminGuard {

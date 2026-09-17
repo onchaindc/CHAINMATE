@@ -30,12 +30,14 @@ import { getIdentityToken } from "@/lib/identity";
 /**
  * ChainMate admin dashboard.
  *
- * Three gates stand between the internet and this console: the route fails
- * closed (404) for non-admin accounts, then the 4-digit passcode (set once,
- * confirmed, salted-hash stored) opens a 30-minute session that re-locks on
- * idle. Only inside a live session can the operator ban, unban, permanently
- * delete accounts, read the support inbox, reply as ChainMate, or broadcast
- * to every player at once.
+ * Gates: the 4-digit passcode (set once, confirmed, salted-hash stored)
+ * opens a 30-minute session that re-locks on idle. The FIRST registered
+ * account to complete setup claims the operator seat (bootstrap, so the
+ * console works with no env configuration); after that, only the seat
+ * holder (or an ADMIN_USERNAMES account) reaches the console at all.
+ * Only inside a live session can the operator ban, unban, permanently
+ * delete accounts, read the support inbox, reply as ChainMate, or
+ * broadcast to every player at once.
  */
 
 interface BanRecord {
@@ -167,6 +169,13 @@ export default function AdminPage() {
     );
   }
 
+  // Gate order matters: while no passcode exists the setup screen must be
+  // reachable (first visitor claims the seat), so the admin check only
+  // decides the outcome once a code is set.
+  if (passcodeSet === false) {
+    return <PasscodeSetup playerId={playerId} onSet={unlock} />;
+  }
+
   if (isAdmin === false) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
@@ -182,7 +191,7 @@ export default function AdminPage() {
     );
   }
 
-  if (passcodeSet === null) {
+  if (passcodeSet === null || isAdmin === null) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
         <Panel>
@@ -193,11 +202,7 @@ export default function AdminPage() {
   }
 
   if (!token) {
-    return passcodeSet ? (
-      <PasscodeUnlock playerId={playerId} onUnlock={unlock} />
-    ) : (
-      <PasscodeSetup playerId={playerId} onSet={unlock} />
-    );
+    return <PasscodeUnlock playerId={playerId} onUnlock={unlock} />;
   }
 
   return <Dashboard playerId={playerId} passcodeToken={token} onLock={relock} />;

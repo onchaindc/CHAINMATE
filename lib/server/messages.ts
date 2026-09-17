@@ -20,6 +20,7 @@ import { getGameStorage } from "@/lib/server/storage";
 import { usernameForPlayer } from "@/lib/server/admin";
 
 const MESSAGES_KEY = "chainmate:messages:inboxes";
+const BROADCAST_FEED_KEY = "chainmate:messages:broadcasts";
 const CHAINMATE_ID = "chainmate";
 
 export const OFFICIAL_ACCOUNT_ID = CHAINMATE_ID;
@@ -92,7 +93,39 @@ export async function inboxFor(playerId: string): Promise<MessageEnvelope[]> {
 
 export async function unreadCount(playerId: string): Promise<number> {
   const inbox = await inboxFor(playerId);
-  return inbox.filter((m) => m.readAt === null).length;
+  const feed = await broadcastFeedFor(playerId);
+  return (
+    inbox.filter((m) => m.readAt === null).length + feed.filter((m) => m.readAt === null).length
+  );
+}
+
+const FEED_SEEN_KEY = "chainmate:messages:feed-seen";
+
+/** Remember that this player has seen the broadcast feed (bell clears). */
+export async function markBroadcastFeedSeen(playerId: string): Promise<void> {
+  const raw = await getGameStorage().get(FEED_SEEN_KEY);
+  let seen: Record<string, number> = {};
+  try {
+    seen = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    seen = {};
+  }
+  seen[playerId] = Date.now();
+  await getGameStorage().set(FEED_SEEN_KEY, JSON.stringify(seen));
+}
+
+/** Feed envelopes newer than the player's last feed-view watermark. */
+export async function unseenFeedFor(playerId: string): Promise<MessageEnvelope[]> {
+  const raw = await getGameStorage().get(FEED_SEEN_KEY);
+  let watermark = 0;
+  try {
+    const seen = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    watermark = seen[playerId] ?? 0;
+  } catch {
+    watermark = 0;
+  }
+  const feed = await broadcastFeedFor(playerId);
+  return feed.filter((m) => m.sentAt > watermark);
 }
 
 export async function markInboxRead(playerId: string): Promise<void> {
@@ -183,22 +216,61 @@ export async function sendBroadcast(
   const targets = toPlayerId ? [toPlayerId] : await audiencePlayerIds();
   const all = await readAll();
   const now = Date.now();
+  const envelope: MessageEnvelope = {
+    id: newId(),
+    fromPlayerId: CHAINMATE_ID,
+    fromName: "ChainMate",
+    kind: "broadcast",
+    body: text,
+    sentAt: now,
+    readAt: null,
+  };
   for (const tid of targets) {
     if (tid === adminPlayerId && !toPlayerId) continue;
     const inbox = all[tid] ?? [];
-    inbox.unshift({
-      id: newId(),
-      fromPlayerId: CHAINMATE_ID,
-      fromName: "ChainMate",
-      kind: "broadcast",
-      body: text,
-      sentAt: now,
-      readAt: null,
-    });
+    inbox.unshift({ ...envelope, id: newId() });
     all[tid] = inbox.slice(0, INBOX_LIMIT);
   }
   await writeAll(all);
+  // Global feed: broadcasts are ALSO visible to every account the moment it
+  // signs in — guests, alts created after the send, and anyone the audience
+  // list missed. The feed is capped to the newest 20; read state stays per
+  // player (in the inbox copies above) for accounts that received one.
+  if (!toPlayerId) {
+    const feedRaw = await getGameStorage().get(BROADCAST_FEED_KEY);
+    let feed: MessageEnvelope[] = [];
+    try {
+      feed = feedRaw ? (JSON.parse(feedRaw) as MessageEnvelope[]) : [];
+    } catch {
+      feed = [];
+    }
+    feed.unshift({ ...envelope, readAt: null });
+    await getGameStorage().set(
+      BROADCAST_FEED_KEY,
+      JSON.stringify(feed.slice(0, 20)),
+    );
+  }
   return { ok: true, recipients: targets.length };
+}
+
+/**
+ * The global announcement feed, merged into any inbox that has not received
+ * the broadcast copy directly (accounts created after the send, guests).
+ * Already-received envelopes are matched on body+sentAt so nobody sees one
+ * announcement twice.
+ */
+export async function broadcastFeedFor(playerId: string): Promise<MessageEnvelope[]> {
+  const feedRaw = await getGameStorage().get(BROADCAST_FEED_KEY);
+  let feed: MessageEnvelope[] = [];
+  try {
+    feed = feedRaw ? (JSON.parse(feedRaw) as MessageEnvelope[]) : [];
+  } catch {
+    feed = [];
+  }
+  if (feed.length === 0) return [];
+  const own = await inboxFor(playerId);
+  const seen = new Set(own.map((m) => `${m.kind}:${m.body}:${m.sentAt}`));
+  return feed.filter((m) => !seen.has(`${m.kind}:${m.body}:${m.sentAt}`));
 }
 
 /**

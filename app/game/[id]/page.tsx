@@ -25,6 +25,7 @@ import { BoardSettings } from "@/components/game/board-settings";
 import { CaptureTray } from "@/components/game/capture-tray";
 import { ChessBoard } from "@/components/game/chess-board";
 import { EndGameModal } from "@/components/game/end-game-modal";
+import { GameChat } from "@/components/game/game-chat";
 import { MoveHistory } from "@/components/game/move-history";
 import { PlayerCard } from "@/components/game/player-card";
 import { StatusBar } from "@/components/game/status-bar";
@@ -179,9 +180,27 @@ export default function GamePage() {
    * the timer only ever fires once per result.
    */
   const announcedResult = useRef<string | null>(null);
+  /**
+   * True once this page load has seen the game in a NON-terminal state. A
+   * player opening a link straight into a finished game (match report,
+   * notification, refresh after the fact) already saw the popup when the
+   * game actually ended — reopening it on load was the "stubborn popup"
+   * complaint. The banner above the board still tells the result; the
+   * ceremony belongs to the moment the game ends, not to every visit.
+   */
+  const sawLiveGame = useRef(false);
   const modalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!game || !gameOver) return;
+    if (!game) return;
+    if (!gameOver) {
+      sawLiveGame.current = true;
+      return;
+    }
+    // Aborted games are non-events: no result, no rating change, nothing to
+    // report. The quiet banner below is the whole ceremony they get.
+    if (game.status === "aborted") return;
+    // A page load landing directly on a finished game never auto-opens.
+    if (!sawLiveGame.current) return;
     const key = `${game.id}:${game.status}`;
     if (announcedResult.current === key) return;
     announcedResult.current = key;
@@ -901,6 +920,13 @@ export default function GamePage() {
 
             {movesSection}
             {gameInfo}
+
+            {/* Two humans talking while they play — spectators and AI games
+                never see this (the component renders null). */}
+            <GameChat
+              gameId={game.id}
+              enabled={!isAiGame && !spectator && !canJoinAsBlack && game.opponent !== ""}
+            />
           </div>
         </div>
       </div>

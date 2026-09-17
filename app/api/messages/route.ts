@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
   inboxFor,
+  markBroadcastFeedSeen,
   markInboxRead,
   sendDirectMessage,
   sendSupportMessage,
   unreadCount,
+  unseenFeedFor,
 } from "@/lib/server/messages";
 
 export const runtime = "nodejs";
@@ -36,11 +38,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: acting.error }, { status: acting.status });
   }
   try {
-    const [messages, unread] = await Promise.all([
+    const [own, feed] = await Promise.all([
       inboxFor(acting.playerId),
-      unreadCount(acting.playerId),
+      unseenFeedFor(acting.playerId),
     ]);
-    return NextResponse.json({ messages, unread });
+    // Merge, newest first. Feed copies are only the announcements this
+    // account has not laid eyes on yet (past the seen-watermark), so the
+    // bell counts them exactly once per player.
+    const merged = [...own, ...feed].sort((a, b) => b.sentAt - a.sentAt);
+    const unread = merged.filter((m) => m.readAt === null).length;
+    return NextResponse.json({ messages: merged, unread });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load messages";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -62,6 +69,10 @@ export async function POST(req: NextRequest) {
 
   if (body.action === "read") {
     await markInboxRead(acting.playerId);
+    // Feed-only copies (broadcasts this account never received directly)
+    // are marked read by remembering the player saw the feed. Persisted as
+    // a per-player watermark so the bell stops counting them.
+    await markBroadcastFeedSeen(acting.playerId);
     return NextResponse.json({ ok: true });
   }
 

@@ -939,6 +939,15 @@ export async function abortHostedGame(id: string, playerId: string): Promise<Gam
 }
 
 /**
+ * Persist chat appended to a game. Chat rides on the game document like any
+ * other annotation; this re-exports the private write so the chat module
+ * does not duplicate persistence (or diverge from it).
+ */
+export async function writeHostedGameWithChat(game: GameState): Promise<void> {
+  await writeGame(game);
+}
+
+/**
  * One-click rematch: a fresh match against the same opponent with the same
  * time control, colours swapped, starting immediately. The opponent can
  * abort it (no rating impact) before the first move if they don't want it.

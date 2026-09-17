@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
 import { describeResult } from "@/lib/game-result";
 import { guestDisplayName } from "@/lib/identity";
-import { analysisPending, displaySummary, isFallbackSummary, keyMoments } from "@/lib/summary";
+import { displaySummary, keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
   AI_PLAYER_ID,
@@ -90,16 +90,12 @@ export function EndGameModal({
 
   /* The match report, and how much of it is real. `report` is the analysis once
      it exists and the deterministic fallback until then, so the text on screen
-     upgrades in place with no separate empty state to design. */
+     upgrades in place with no separate empty state to design. Infrastructure
+     errors (RPC nonces, unreachable endpoints) stay in the console — players
+     never saw a report they could act on, only a wall of red text and a Retry
+     button that re-failed. */
   const report = displaySummary(game);
-  const showingFallback = isFallbackSummary(game);
   const analysisDone = !!game.analysis;
-  /* A missing analysis is worth retrying unless something already reported it
-     as impossible on this deployment — no signing key, no AI key. Retrying
-     those would fail identically every time. */
-  const retryable =
-    analysisPending(game) ||
-    !!(game.analysisError && !/isn't configured|not configured/i.test(game.analysisError));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -243,9 +239,9 @@ export function EndGameModal({
             <p className="mt-2 text-sm leading-relaxed text-foreground/90">{report}</p>
           )}
 
-          {/* Where that report came from, and what is still coming. Saying so
-              matters: the fallback and the analysis read alike, and a player
-              should be able to tell whether the deeper report has landed. */}
+          {/* Where the report stands, said only when there is something to
+              say: ready, or still being written. Failures stay silent here —
+              the deterministic report above is already on screen. */}
           {analysisDone ? (
             <p className="mt-2.5 flex items-center gap-1.5 text-2xs font-medium text-primary">
               <Sparkles className="h-3 w-3" aria-hidden />
@@ -256,25 +252,6 @@ export function EndGameModal({
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
               Analyzing the game…
             </p>
-          ) : showingFallback ? (
-            <div className="mt-2.5">
-              <p className="text-2xs leading-snug text-muted-foreground">
-                {game.analysisError
-                  ? `Automatic match report. Analysis unavailable: ${game.analysisError}`
-                  : "Automatic match report."}
-              </p>
-              {retryable && (
-                <Button
-                  onClick={onGenerateSummary}
-                  className="mt-2"
-                  variant="outline"
-                  size="sm"
-                >
-                  <Sparkles aria-hidden />
-                  Retry analysis
-                </Button>
-              )}
-            </div>
           ) : null}
 
           <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-foreground/80">

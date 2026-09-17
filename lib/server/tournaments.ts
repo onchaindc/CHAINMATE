@@ -358,6 +358,32 @@ async function transitionTournamentInner(
 
   // Side effects that must happen under the transition itself.
   if (to === "in_progress") {
+    // The mirror may already say in_progress while the live document never
+    // got there: the durable status UPDATE commits BEFORE the fast-store
+    // document is written, so a crash (or a cold function instance losing the
+    // race mid-write) between the two steps left a "half-started" event —
+    // every later Start retry then hit "already started elsewhere" and no
+    // fixtures were ever generated. Recognise that wedge and heal it instead
+    // of failing: reconcile the mirror back to the live status, then let the
+    // normal path proceed.
+    if (doc.status !== "in_progress") {
+      const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
+      const admin = getSupabaseAdmin();
+      if (admin) {
+        const { data: mirrorRow } = await admin
+          .from("tournaments")
+          .select("status")
+          .eq("id", doc.id)
+          .maybeSingle();
+        if (mirrorRow?.status === "in_progress") {
+          const healed = await transitionTournamentStatus(doc.id, "in_progress", doc.status);
+          if (!healed) {
+            // Another instance is starting it right now — report the race honestly.
+            return { ok: false, error: "The tournament was already started elsewhere" };
+          }
+        }
+      }
+    }
     if (activeEntryCount(doc) < 2) {
       return { ok: false, error: "Need at least 2 players to start" };
     }
