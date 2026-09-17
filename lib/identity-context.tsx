@@ -31,6 +31,8 @@ export interface IdentityState {
    * user to finish setup rather than showing an editable-looking placeholder.
    */
   linked: boolean;
+  /** Public URL of the signed-in player's uploaded picture (null → initial). */
+  avatarUrl: string | null;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -43,6 +45,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   const [username, setUsername] = useState("");
   const [rating, setRating] = useState<number | null>(null);
   const [linked, setLinked] = useState(true);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const guest = getGuestIdentity();
@@ -72,6 +75,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           linked?: boolean;
           username?: string | null;
           playerId?: string | null;
+          avatarUrl?: string | null;
         };
         if (data.authenticated) {
           const nextPlayerId = data.playerId ?? basePlayerId;
@@ -84,6 +88,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           setPlayerId(nextPlayerId);
           setUsername(nextUsername);
           setLinked(isLinked);
+          setAvatarUrl(data.avatarUrl ?? null);
           setStatus("user");
           setAuthIdentity({
             userId: auth.userId,
@@ -98,6 +103,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           setStatus("guest");
           setPlayerId(g.playerId);
           setUsername(g.username);
+          setAvatarUrl(null);
           ratedPlayerId = g.playerId;
           // Guests have no account to link; don't leave the flag false.
           setLinked(true);
@@ -192,6 +198,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
         rating,
         isGuest: status === "guest",
         linked,
+        avatarUrl,
         refresh,
         signOut,
       }}

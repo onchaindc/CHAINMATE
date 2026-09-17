@@ -271,6 +271,7 @@ function profileRow(playerId: string, over: Partial<ProfileRow> = {}): ProfileRo
     games: 18,
     current_streak: 3,
     best_streak: 5,
+    avatar_url: null,
     created_at: new Date(1_600_000_000_000).toISOString(),
     updated_at: new Date(1_700_000_000_000).toISOString(),
     ...over,

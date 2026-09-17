@@ -307,6 +307,8 @@ export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
           username: row.username,
           isGuest: row.is_guest,
           country: row.country ?? undefined,
+          avatarUrl: row.avatar_url ?? null,
+          createdAt: row.created_at,
           rating: row.rating,
           rd: row.rd ?? START_RD,
           lastPlayedAt: row.last_played_at ?? null,
@@ -405,6 +407,8 @@ export function reconcileWithProfile(
     ...stats,
     isGuest: row.is_guest,
     username: row.username ?? stats.username,
+    avatarUrl: row.avatar_url ?? null,
+    createdAt: row.created_at ?? stats.createdAt,
   };
   if (rowAt <= stats.updatedAt) return identity;
   return {

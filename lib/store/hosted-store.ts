@@ -69,6 +69,10 @@ export interface PublicPlayer {
   currentStreak: number;
   bestStreak: number;
   createdAt: string;
+  /** Uploaded profile picture, when the player set one. */
+  avatarUrl?: string | null;
+  /** ISO timestamp the account joined. */
+  joinedAt?: string;
 }
 
 /** One row from the username search. */
@@ -79,6 +83,8 @@ export interface SearchPlayerResult {
   rating: number;
   country: string | null;
   games: number;
+  /** The VIEWER's friendship state with this player ("self" = it's me). */
+  friendship?: "none" | "requested" | "incoming" | "friends" | "self";
 }
 
 export type SeekResult =
@@ -476,7 +482,10 @@ export class HostedGameStore implements GameStore {
 
   /** Search ChainMate accounts by username fragment. */
   async searchPlayers(q: string): Promise<SearchPlayerResult[]> {
-    const data = await api(`/api/players/search?q=${encodeURIComponent(q)}`);
+    const viewer = getMyPlayerId();
+    const data = await api(
+      `/api/players/search?q=${encodeURIComponent(q)}&viewer=${encodeURIComponent(viewer)}`,
+    );
     return data.playersSearch ?? [];
   }
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, Plus, X } from "lucide-react";
 import { PlayerMenu } from "@/components/auth/player-menu";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { buttonVariants } from "@/components/ui/button";
 import { useIdentity } from "@/lib/identity-context";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ const LINKS: {
   { href: "/watch", label: "Watch", hideBelow: "md" },
   { href: "/games", label: "Games", hideBelow: "md" },
   { href: "/leaderboard", label: "Leaderboard", hideBelow: "lg" },
+  { href: "/news", label: "News", hideBelow: "lg" },
 ];
 
 const HIDE_CLASS = {
@@ -153,6 +155,8 @@ export function SiteNav() {
               </Link>
             );
           })}
+
+          <NotificationBell />
 
           <PlayerMenu />
 

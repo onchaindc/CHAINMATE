@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Search, UserPlus, Users, X } from "lucide-react";
+import { Check, Search, UserPlus, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
@@ -190,12 +190,22 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
                 </div>
                 <Button
                   size="sm"
-                  variant="outline"
-                  disabled={busyId === r.player_id}
+                  variant={r.friendship === "none" ? "outline" : "ghost"}
+                  disabled={busyId === r.player_id || r.friendship !== "none"}
                   onClick={() => void act("request", r.player_id)}
                 >
-                  <UserPlus className="h-3.5 w-3.5" aria-hidden />
-                  Add
+                  {r.friendship === "none" ? (
+                    <UserPlus className="h-3.5 w-3.5" aria-hidden />
+                  ) : (
+                    <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
+                  )}
+                  {r.friendship === "none"
+                    ? "Add"
+                    : r.friendship === "requested"
+                      ? "Sent"
+                      : r.friendship === "incoming"
+                        ? "Wants to add you"
+                        : "Friends"}
                 </Button>
               </div>
             ))}

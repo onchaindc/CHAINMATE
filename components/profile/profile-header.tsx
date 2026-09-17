@@ -26,6 +26,8 @@ export function ProfileHeader({
   isGuest,
   badges,
   actions,
+  avatarUrl,
+  joinedAt,
   className,
 }: {
   name: string;
@@ -45,8 +47,19 @@ export function ProfileHeader({
   badges?: ReactNode;
   /** Buttons in the right-hand cluster, before the rating block. */
   actions?: ReactNode;
+  /** The player's uploaded picture, when one exists. */
+  avatarUrl?: string | null;
+  /** Unix ms the account joined — shown as a small "Joined" line. */
+  joinedAt?: number | string | null;
   className?: string;
 }) {
+  const joined =
+    joinedAt
+      ? new Date(joinedAt).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "long",
+        })
+      : null;
   return (
     <div
       className={cn(
@@ -54,7 +67,7 @@ export function ProfileHeader({
         className,
       )}
     >
-      <PlayerAvatar name={name} size="lg" />
+      <PlayerAvatar name={name} avatarUrl={avatarUrl} size="lg" />
 
       <div className="min-w-0">
         {eyebrow && (
@@ -76,6 +89,9 @@ export function ProfileHeader({
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
             {description}
           </p>
+        )}
+        {joined && (
+          <p className="mt-1 text-2xs text-muted-foreground">Joined {joined}</p>
         )}
       </div>
 

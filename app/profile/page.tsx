@@ -10,6 +10,8 @@ import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
 import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
+import { AvatarUploadCard } from "@/components/profile/avatar-upload-card";
+import { MessagesPanel } from "@/components/profile/messages-panel";
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { GuestBanner } from "@/components/auth/guest-banner";
@@ -132,6 +134,8 @@ function ProfileContent() {
         rating={rating}
         ratingDelta={stats?.ratingHistory?.[0]?.change ?? null}
         isGuest={identity.isGuest}
+        avatarUrl={identity.avatarUrl ?? stats?.avatarUrl}
+        joinedAt={stats?.createdAt}
         badges={stats && provisional && <ProfileBadge>Provisional</ProfileBadge>}
         description={
           identity.isGuest
@@ -216,6 +220,9 @@ function ProfileContent() {
       {/* Nimiq wallet binding — real provider flow, server-verified link. */}
       <NimiqWalletCard playerId={playerId} />
 
+      {/* Profile picture — upload/replace, normalized server-side. */}
+      <AvatarUploadCard className="animate-fade-in-up [animation-delay:70ms]" />
+
       {/* Stats */}
       <StatTiles
         layout="five"
@@ -276,6 +283,14 @@ function ProfileContent() {
             ) : (
               <LoadingRows className="px-0 py-0" rowClassName="h-16 rounded-lg" />
             )}
+          </div>
+        </div>
+
+        {/* Messages — DMs, official announcements, and the support thread. */}
+        <div className="animate-fade-in-up [animation-delay:150ms]">
+          <SectionLabel>Messages</SectionLabel>
+          <div className="mt-3">
+            <MessagesPanel />
           </div>
         </div>
 

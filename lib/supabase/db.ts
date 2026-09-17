@@ -29,6 +29,8 @@ export interface ProfileRow {
   games: number;
   current_streak: number;
   best_streak: number;
+  /** Public URL of the player's uploaded picture (null → initial avatar). */
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -775,6 +777,47 @@ export async function searchPlayersByUsername(
     .limit(limit);
   if (error || !data) return [];
   return data as unknown as PlayerSearchResult[];
+}
+
+/**
+ * Permanently delete an ACCOUNT: the auth user row first — every player-owned
+ * row cascades from it (profiles, wallet bindings, tx ledger rows, messages
+ * references) by the 0005 migration's design. Irreversible.
+ */
+export async function deleteAccountByPlayerId(
+  playerId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { ok: false, error: "Accounts aren't configured yet." };
+  const profile = await profileForPlayerId(playerId);
+  if (!profile) return { ok: false, error: "No account with that player id" };
+  const { error } = await admin.auth.admin.deleteUser(profile.user_id);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+/** Every registered (non-guest) player id — the broadcast audience. */
+export async function listRegisteredPlayerIds(): Promise<string[]> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return [];
+  const { data, error } = await admin
+    .from("profiles")
+    .select("player_id")
+    .eq("is_guest", false);
+  if (error || !data) return [];
+  return (data as unknown as { player_id: string }[]).map((r) => r.player_id);
+}
+
+/** Count of registered (non-guest) accounts — the admin headline stat. */
+export async function countRegisteredPlayers(): Promise<number> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return 0;
+  const { count, error } = await admin
+    .from("profiles")
+    .select("player_id", { count: "exact", head: true })
+    .eq("is_guest", false);
+  if (error) return 0;
+  return count ?? 0;
 }
 
 /** Look up a profile by exact username (case-insensitive). */

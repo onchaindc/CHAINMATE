@@ -1,23 +1,41 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Ban, CheckCircle2, Loader2, ShieldAlert, ShieldX, Trash2, Undo2, XCircle } from "lucide-react";
+import {
+  Ban,
+  CheckCircle2,
+  Inbox,
+  Loader2,
+  Lock,
+  LogOut,
+  MessageSquare,
+  Send,
+  ShieldAlert,
+  ShieldX,
+  Trash2,
+  Undo2,
+  Users,
+  Volume2,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
+import { StatTiles } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
 
 /**
- * ChainMate admin dashboard — penal actions.
+ * ChainMate admin dashboard.
  *
- * Reachable only by the operator: the /api/admin routes fail closed with a
- * 404 for anyone else, and this page mirrors that (a non-admin sees a bare
- * "not found" panel with no hint of what lives here). For now the panel is
- * restrictions: ban (with reason) and unban. The anti-cheat detector the
- * operator plans lands later; these doors are what its findings will act on.
+ * Three gates stand between the internet and this console: the route fails
+ * closed (404) for non-admin accounts, then the 4-digit passcode (set once,
+ * confirmed, salted-hash stored) opens a 30-minute session that re-locks on
+ * idle. Only inside a live session can the operator ban, unban, permanently
+ * delete accounts, read the support inbox, reply as ChainMate, or broadcast
+ * to every player at once.
  */
 
 interface BanRecord {
@@ -27,9 +45,22 @@ interface BanRecord {
   bannedBy: string;
 }
 
-interface BansPayload {
-  bans: BanRecord[];
-  names: Record<string, string>;
+interface AdminAccount {
+  playerId: string;
+  username: string | null;
+  rating: number | null;
+  games: number;
+  banned: boolean;
+  banReason: string | null;
+}
+
+interface SupportMessage {
+  id: string;
+  fromPlayerId: string;
+  fromName: string;
+  body: string;
+  sentAt: number;
+  readAt: number | null;
 }
 
 interface AdminTournamentRow {
@@ -42,10 +73,6 @@ interface AdminTournamentRow {
   paidEntries: number;
   prizePoolNim: string | null;
   entryFeeNim: string | null;
-}
-
-interface TournamentsPayload {
-  tournaments: AdminTournamentRow[];
 }
 
 async function adminApi<T>(
@@ -70,43 +97,22 @@ async function adminApi<T>(
   return data;
 }
 
+const SESSION_KEY = "chainmate:admin:passcode-session";
+
 export default function AdminPage() {
   const identity = useIdentity();
   const playerId = identity.playerId;
 
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [bans, setBans] = useState<BanRecord[] | null>(null);
-  const [names, setNames] = useState<Record<string, string>>({});
-  const [tournaments, setTournaments] = useState<AdminTournamentRow[] | null>(null);
-  const [target, setTarget] =useState("");
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [pendingBan, setPendingBan] = useState<string | null>(null);
-  const [pendingTourAction, setPendingTourAction] = useState<{
-    row: AdminTournamentRow;
-    action: "cancel" | "complete" | "delete";
-  } | null>(null);
+  const [passcodeSet, setPasscodeSet] = useState<boolean | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!playerId) return;
-    try {
-      const data = await adminApi<BansPayload>("/api/admin/bans", playerId);
-      setBans(data.bans);
-      setNames(data.names);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load bans");
-      setBans((prev) => prev ?? []);
-    }
-    try {
-      const data = await adminApi<TournamentsPayload>("/api/admin/tournaments", playerId);
-      setTournaments(data.tournaments);
-    } catch {
-      setTournaments((prev) => prev ?? []);
-    }
-  }, [playerId]);
+  // Restore a still-live passcode session across reloads (the 30-minute
+  // clock itself is enforced server-side).
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? window.sessionStorage.getItem(SESSION_KEY) : null;
+    if (saved) setToken(saved);
+  }, []);
 
   useEffect(() => {
     if (identity.status === "loading" || !playerId) return;
@@ -118,53 +124,36 @@ export default function AdminPage() {
       } catch {
         if (!cancelled) setIsAdmin(false);
       }
-      if (!cancelled) void load();
+      try {
+        const data = await adminApi<{ set: boolean }>("/api/admin/messages", playerId, {
+          method: "POST",
+          body: JSON.stringify({ action: "passcode-status" }),
+        });
+        if (!cancelled) setPasscodeSet(data.set);
+      } catch {
+        if (!cancelled) setPasscodeSet(null);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [identity.status, playerId, load]);
+  }, [identity.status, playerId]);
 
-  const act = async (action: "ban" | "unban", targetPlayerId: string, banReason?: string) => {
-    if (!targetPlayerId) return;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
+  const unlock = (t: string) => {
+    setToken(t);
     try {
-      await adminApi("/api/admin/bans", playerId, {
-        method: "POST",
-        body: JSON.stringify({ action, targetPlayerId, reason: banReason ?? "" }),
-      });
-      setNotice(
-        action === "ban"
-          ? "Account restricted."
-          : "Restriction lifted.",
-      );
-      setTarget("");
-      setReason("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setBusy(false);
+      window.sessionStorage.setItem(SESSION_KEY, t);
+    } catch {
+      // Private mode — the session just won't survive a reload.
     }
   };
 
-  const tourAction = async (tournamentId: string, action: "cancel" | "complete" | "delete") => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
+  const relock = () => {
+    setToken(null);
     try {
-      const data = await adminApi<{ message: string }>("/api/admin/tournaments", playerId, {
-        method: "POST",
-        body: JSON.stringify({ action, tournamentId }),
-      });
-      setNotice(data.message ?? "Done.");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setBusy(false);
+      window.sessionStorage.removeItem(SESSION_KEY);
+    } catch {
+      // ignore
     }
   };
 
@@ -193,6 +182,351 @@ export default function AdminPage() {
     );
   }
 
+  if (passcodeSet === null) {
+    return (
+      <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
+        <Panel>
+          <LoadingRows rows={2} />
+        </Panel>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return passcodeSet ? (
+      <PasscodeUnlock playerId={playerId} onUnlock={unlock} />
+    ) : (
+      <PasscodeSetup playerId={playerId} onSet={unlock} />
+    );
+  }
+
+  return <Dashboard playerId={playerId} passcodeToken={token} onLock={relock} />;
+}
+
+/* ------------------------------------------------------------------ */
+/* Passcode: first-time setup                                          */
+/* ------------------------------------------------------------------ */
+
+function PasscodeSetup({
+  playerId,
+  onSet,
+}: {
+  playerId: string;
+  onSet: (token: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await adminApi<{ token: string }>("/api/admin/messages", playerId, {
+        method: "POST",
+        body: JSON.stringify({ action: "passcode-set", code, codeConfirm: confirm }),
+      });
+      onSet(data.token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Setup failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const ready = /^[0-9]{4}$/.test(code) && code === confirm;
+
+  return (
+    <div className="mx-auto w-full max-w-sm px-4 py-10 sm:py-16">
+      <Panel className="p-5">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <Lock className="h-4 w-4 text-primary" aria-hidden />
+          Set your dashboard code
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+          Pick a 4-digit code for the admin console. You will be asked for it
+          whenever the dashboard has been idle for 30 minutes.
+        </p>
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          maxLength={4}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
+          placeholder="••••"
+          className="mt-4 w-full rounded-md border border-border/70 bg-background px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] outline-none transition-colors focus:border-primary/50"
+        />
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          maxLength={4}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value.replace(/[^0-9]/g, ""))}
+          placeholder="Confirm"
+          className="mt-2 w-full rounded-md border border-border/70 bg-background px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] outline-none transition-colors focus:border-primary/50"
+        />
+        {code.length === 4 && confirm.length === 4 && code !== confirm && (
+          <p className="mt-2 text-2xs text-destructive">The two codes do not match</p>
+        )}
+        {error && <ErrorNote message={error} className="mt-2" />}
+        <Button className="mt-4 w-full" disabled={busy || !ready} onClick={() => void submit()}>
+          {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Lock aria-hidden />}
+          Set code and open dashboard
+        </Button>
+      </Panel>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Passcode: unlock a locked console                                   */
+/* ------------------------------------------------------------------ */
+
+function PasscodeUnlock({
+  playerId,
+  onUnlock,
+}: {
+  playerId: string;
+  onUnlock: (token: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await adminApi<{ token: string }>("/api/admin/messages", playerId, {
+        method: "POST",
+        body: JSON.stringify({ action: "passcode-verify", code }),
+      });
+      onUnlock(data.token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unlock failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-sm px-4 py-10 sm:py-16">
+      <Panel className="p-5">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <Lock className="h-4 w-4 text-primary" aria-hidden />
+          Dashboard locked
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+          Enter your 4-digit code. The console re-locks after 30 minutes idle.
+        </p>
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="current-password"
+          maxLength={4}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
+          onKeyDown={(e) => e.key === "Enter" && code.length === 4 && void submit()}
+          placeholder="••••"
+          className="mt-4 w-full rounded-md border border-border/70 bg-background px-3 py-2.5 text-center font-mono text-xl tracking-[0.5em] outline-none transition-colors focus:border-primary/50"
+        />
+        {error && <ErrorNote message={error} className="mt-2" />}
+        <Button
+          className="mt-4 w-full"
+          disabled={busy || code.length !== 4}
+          onClick={() => void submit()}
+        >
+          {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Lock aria-hidden />}
+          Unlock
+        </Button>
+      </Panel>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* The dashboard itself                                                */
+/* ------------------------------------------------------------------ */
+
+function Dashboard({
+  playerId,
+  passcodeToken,
+  onLock,
+}: {
+  playerId: string;
+  passcodeToken: string;
+  onLock: () => void;
+}) {
+  const [bans, setBans] = useState<BanRecord[] | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [accounts, setAccounts] = useState<AdminAccount[] | null>(null);
+  const [totalUsers, setTotalUsers] = useState<number | null>(null);
+  const [support, setSupport] = useState<SupportMessage[] | null>(null);
+  const [tournaments, setTournaments] = useState<AdminTournamentRow[] | null>(null);
+
+  const [target, setTarget] = useState("");
+  const [reason, setReason] = useState("");
+  const [broadcastText, setBroadcastText] = useState("");
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pendingBan, setPendingBan] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AdminAccount | null>(null);
+  const [pendingBroadcast, setPendingBroadcast] = useState<"all" | "reply" | null>(null);
+  const [pendingTourAction, setPendingTourAction] = useState<{
+    row: AdminTournamentRow;
+    action: "cancel" | "complete" | "delete";
+  } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const bansData = await adminApi<{ bans: BanRecord[]; names: Record<string, string> }>(
+        "/api/admin/bans",
+        playerId,
+      );
+      setBans(bansData.bans);
+      setNames((prev) => ({ ...prev, ...bansData.names }));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load bans");
+      setBans((prev) => prev ?? []);
+    }
+    try {
+      const accountsData = await adminApi<{ accounts: AdminAccount[]; totalUsers: number }>(
+        "/api/admin/accounts",
+        playerId,
+      );
+      setAccounts(accountsData.accounts);
+      setTotalUsers(accountsData.totalUsers);
+    } catch {
+      setAccounts((prev) => prev ?? []);
+    }
+    try {
+      const msgData = await adminApi<{ messages: SupportMessage[] }>("/api/admin/messages", playerId, {
+        method: "POST",
+        body: JSON.stringify({ action: "support-inbox", passcodeToken }),
+      });
+      setSupport(msgData.messages);
+    } catch {
+      setSupport((prev) => prev ?? []);
+    }
+    try {
+      const tourData = await adminApi<{ tournaments: AdminTournamentRow[] }>(
+        "/api/admin/tournaments",
+        playerId,
+      );
+      setTournaments(tourData.tournaments);
+    } catch {
+      setTournaments((prev) => prev ?? []);
+    }
+  }, [playerId, passcodeToken]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const flash = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 4000);
+  };
+
+  const act = async (action: "ban" | "unban", targetPlayerId: string, banReason?: string) => {
+    if (!targetPlayerId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi("/api/admin/accounts", playerId, {
+        method: "POST",
+        body: JSON.stringify({ passcodeToken, action, targetPlayerId, reason: banReason ?? "" }),
+      });
+      flash(action === "ban" ? "Account restricted." : "Restriction lifted.");
+      setTarget("");
+      setReason("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteAccount = async (account: AdminAccount) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi("/api/admin/accounts", playerId, {
+        method: "POST",
+        body: JSON.stringify({ passcodeToken, action: "delete-account", targetPlayerId: account.playerId }),
+      });
+      flash(`Account ${account.username ?? account.playerId} permanently deleted.`);
+      setPendingDelete(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendBroadcast = async () => {
+    if (!broadcastText.trim()) return;
+    setPendingBroadcast("all");
+    setError(null);
+    try {
+      const data = await adminApi<{ recipients: number }>("/api/admin/messages", playerId, {
+        method: "POST",
+        body: JSON.stringify({ passcodeToken, action: "broadcast", body: broadcastText }),
+      });
+      flash(`Announcement sent to ${data.recipients} player${data.recipients === 1 ? "" : "s"}.`);
+      setBroadcastText("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Broadcast failed");
+    } finally {
+      setPendingBroadcast(null);
+    }
+  };
+
+  const sendReply = async (toPlayerId: string) => {
+    const text = (replyDrafts[toPlayerId] ?? "").trim();
+    if (!text) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi("/api/admin/messages", playerId, {
+        method: "POST",
+        body: JSON.stringify({ passcodeToken, action: "reply", toPlayerId, body: text }),
+      });
+      flash(`Reply sent to ${names[toPlayerId] ?? "player"}.`);
+      setReplyDrafts((prev) => ({ ...prev, [toPlayerId]: "" }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reply failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tourAction = async (tournamentId: string, action: "cancel" | "complete" | "delete") => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await adminApi<{ message: string }>("/api/admin/tournaments", playerId, {
+        method: "POST",
+        body: JSON.stringify({ action, tournamentId }),
+      });
+      flash(data.message ?? "Done.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const fmt = (ts: number) => new Date(ts).toLocaleString();
 
   return (
@@ -203,20 +537,48 @@ export default function AdminPage() {
       <PageHeader
         eyebrow="Operator"
         title="Admin dashboard"
-        description="Restrict accounts for cheating or abuse. Banned players cannot join or host tournaments or open paid seats until lifted."
+        description="Accounts, restrictions, support and official announcements. Every action below is permanent where it says so."
+        actions={
+          <Button variant="ghost" size="sm" onClick={onLock}>
+            <LogOut aria-hidden />
+            Lock now
+          </Button>
+        }
       />
 
-      <div className="animate-fade-in-up mt-8 grid gap-6">
+      {/* Headline stat */}
+      <StatTiles
+        layout="three"
+        className="animate-fade-in-up mt-6"
+        tiles={[
+          { label: "Registered players", value: totalUsers === null ? "—" : String(totalUsers) },
+          {
+            label: "Active restrictions",
+            value: bans === null ? "—" : String(bans.length),
+          },
+          {
+            label: "Support messages",
+            value: support === null ? "—" : String(support.filter((m) => m.readAt === null).length),
+          },
+        ]}
+      />
+
+      {notice && (
+        <p className="animate-fade-in-up mt-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground/90">
+          {notice}
+        </p>
+      )}
+
+      <div className="mt-6 grid gap-6">
+        {/* ---------- Restrict / unban ---------- */}
         <Panel>
-          <div className="space-y-3 p-5">
+          <div className="space-y-3 p-4 sm:p-5">
             <p className="flex items-center gap-2 text-sm font-semibold">
               <ShieldAlert className="h-4 w-4 text-warning" aria-hidden />
               Restrict an account
             </p>
-            <div className="grid gap-3 sm:grid-cols-[1fr_2fr]">
-              {/* Below sm both fields stack full-width; the player field keeps
-                  its monospace input readable on a 360px viewport. */}
-              <label className="block">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block min-w-0">
                 <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Player id or username
                 </span>
@@ -228,7 +590,7 @@ export default function AdminPage() {
                   className="mt-1.5 w-full rounded-md border border-border/70 bg-background px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-primary/50"
                 />
               </label>
-              <label className="block">
+              <label className="block min-w-0">
                 <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Reason (shown to the player)
                 </span>
@@ -263,54 +625,79 @@ export default function AdminPage() {
                 Lift restriction
               </Button>
             </div>
-            {notice && (
-              <p className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground/90">
-                {notice}
-              </p>
-            )}
           </div>
         </Panel>
 
+        {/* ---------- Accounts ---------- */}
         <section>
-          <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Active restrictions
+          <p className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <Users className="h-3.5 w-3.5" aria-hidden />
+            Accounts ({accounts?.length ?? "…"})
           </p>
           <Panel className="mt-3">
-            {bans === null ? (
+            {accounts === null ? (
               <LoadingRows rows={3} />
-            ) : bans.length === 0 ? (
+            ) : accounts.length === 0 ? (
               <EmptyState
-                icon={ShieldAlert}
-                title="No restricted accounts"
-                description="Everyone is in good standing."
+                icon={Users}
+                title="No registered accounts yet"
+                description="Every sign-up appears here with rating, games and restriction state."
                 className="py-10"
               />
             ) : (
               <ul className="divide-y divide-border/50">
-                {bans.map((b) => (
+                {accounts.map((a) => (
                   <li
-                    key={b.playerId}
+                    key={a.playerId}
                     className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-mono text-sm">
-                        {names[b.playerId] ?? b.playerId}
+                      <p className="flex items-center gap-2 truncate text-sm font-medium">
+                        {a.username ?? a.playerId}
+                        {a.banned && (
+                          <span className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1 py-px text-2xs font-semibold uppercase tracking-wider text-destructive">
+                            Restricted
+                          </span>
+                        )}
                       </p>
-                      <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
-                        <span className="line-clamp-2">{b.reason}</span>
-                        <span className="block sm:inline"> {fmt(b.bannedAt)} · by {names[b.bannedBy] ?? b.bannedBy}</span>
+                      <p className="mt-0.5 truncate font-mono text-2xs text-muted-foreground">
+                        {a.rating ?? "—"} rating · {a.games} games
+                        {a.banned && a.banReason ? ` · ${a.banReason}` : ""}
                       </p>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full sm:w-auto"
-                      disabled={busy}
-                      onClick={() => void act("unban", b.playerId)}
-                    >
-                      <Undo2 className="h-3.5 w-3.5" aria-hidden />
-                      Lift
-                    </Button>
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:shrink-0">
+                      {a.banned ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => void act("unban", a.playerId)}
+                        >
+                          <Undo2 className="h-3.5 w-3.5" aria-hidden />
+                          Lift
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => setPendingBan(a.username ?? a.playerId)}
+                        >
+                          <Ban className="h-3.5 w-3.5" aria-hidden />
+                          Restrict
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:bg-destructive/10"
+                        disabled={busy}
+                        onClick={() => setPendingDelete(a)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        Delete
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -318,6 +705,104 @@ export default function AdminPage() {
           </Panel>
         </section>
 
+        {/* ---------- Support inbox ---------- */}
+        <section>
+          <p className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <Inbox className="h-3.5 w-3.5" aria-hidden />
+            Support inbox
+          </p>
+          <Panel className="mt-3">
+            {support === null ? (
+              <LoadingRows rows={3} />
+            ) : support.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title="Nothing from players yet"
+                description="Messages players send to ChainMate support land here."
+                className="py-10"
+              />
+            ) : (
+              <ul className="divide-y divide-border/50">
+                {support.map((m) => (
+                  <li key={m.id} className="px-4 py-3">
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium">
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="truncate">{m.fromName}</span>
+                      <span className="ml-auto shrink-0 font-normal text-2xs text-muted-foreground">
+                        {fmt(m.sentAt)}
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-foreground/85">
+                      {m.body}
+                    </p>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <input
+                        type="text"
+                        value={replyDrafts[m.fromPlayerId] ?? ""}
+                        onChange={(e) =>
+                          setReplyDrafts((prev) => ({ ...prev, [m.fromPlayerId]: e.target.value }))
+                        }
+                        placeholder={`Reply as ChainMate to ${m.fromName}…`}
+                        className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
+                      />
+                      <Button
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        disabled={busy || !(replyDrafts[m.fromPlayerId] ?? "").trim()}
+                        onClick={() => void sendReply(m.fromPlayerId)}
+                      >
+                        {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
+                        Reply
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </section>
+
+        {/* ---------- Broadcast ---------- */}
+        <Panel>
+          <div className="space-y-3 p-4 sm:p-5">
+            <p className="flex items-center gap-2 text-sm font-semibold">
+              <Volume2 className="h-4 w-4 text-primary" aria-hidden />
+              Official announcement
+            </p>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Sent from the official ChainMate account to every registered
+              player&apos;s messages at once.
+            </p>
+            <textarea
+              value={broadcastText}
+              onChange={(e) => setBroadcastText(e.target.value)}
+              maxLength={2000}
+              rows={3}
+              placeholder="Tournament starting Saturday — registration is open…"
+              className="w-full resize-y rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
+            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span className="font-mono text-2xs text-muted-foreground">
+                {broadcastText.length}/2000
+              </span>
+              <Button
+                size="sm"
+                className="w-full sm:w-auto"
+                disabled={busy || broadcastText.trim().length === 0}
+                onClick={() => void sendBroadcast()}
+              >
+                {pendingBroadcast === "all" ? (
+                  <Loader2 className="animate-spin" aria-hidden />
+                ) : (
+                  <Volume2 aria-hidden />
+                )}
+                Send to everyone
+              </Button>
+            </div>
+          </div>
+        </Panel>
+
+        {/* ---------- Tournaments ---------- */}
         <section>
           <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             Tournaments
@@ -341,11 +826,12 @@ export default function AdminPage() {
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{t.name}</p>
-                      <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
-                        <span className="line-clamp-2">
-                          {t.status} · {t.format} · host {t.hostName ?? t.id} · {t.entries} player{t.entries === 1 ? "" : "s"}
-                          {t.prizePoolNim ? ` · pool ${t.prizePoolNim} NIM (${t.paidEntries} paid @ ${t.entryFeeNim})` : " · free"}
-                        </span>
+                      <p className="mt-0.5 line-clamp-2 text-2xs leading-snug text-muted-foreground">
+                        {t.status} · {t.format} · host {t.hostName ?? t.id} · {t.entries} player
+                        {t.entries === 1 ? "" : "s"}
+                        {t.prizePoolNim
+                          ? ` · pool ${t.prizePoolNim} NIM (${t.paidEntries} paid @ ${t.entryFeeNim})`
+                          : " · free"}
                       </p>
                     </div>
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:shrink-0">
@@ -389,10 +875,62 @@ export default function AdminPage() {
             )}
           </Panel>
         </section>
+
+        {/* ---------- Active restrictions ---------- */}
+        <section>
+          <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Active restrictions
+          </p>
+          <Panel className="mt-3">
+            {bans === null ? (
+              <LoadingRows rows={3} />
+            ) : bans.length === 0 ? (
+              <EmptyState
+                icon={ShieldAlert}
+                title="No restricted accounts"
+                description="Everyone is in good standing."
+                className="py-10"
+              />
+            ) : (
+              <ul className="divide-y divide-border/50">
+                {bans.map((b) => (
+                  <li
+                    key={b.playerId}
+                    className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-mono text-sm">
+                        {names[b.playerId] ?? b.playerId}
+                      </p>
+                      <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
+                        <span className="line-clamp-2">{b.reason}</span>
+                        <span className="block sm:inline">
+                          {" "}
+                          {fmt(b.bannedAt)} · by {names[b.bannedBy] ?? b.bannedBy}
+                        </span>
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      disabled={busy}
+                      onClick={() => void act("unban", b.playerId)}
+                    >
+                      <Undo2 className="h-3.5 w-3.5" aria-hidden />
+                      Lift
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </section>
       </div>
 
       {error && <ErrorNote message={error} className="mt-4" />}
 
+      {/* ---------- Confirms ---------- */}
       <ConfirmDialog
         open={pendingBan !== null}
         title={`Restrict ${pendingBan ?? ""}?`}
@@ -408,6 +946,21 @@ export default function AdminPage() {
       >
         They will be shut out of hosting, joining and paying until you lift the
         restriction.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`Permanently delete ${pendingDelete?.username ?? pendingDelete?.playerId ?? ""}?`}
+        confirmLabel="Delete forever"
+        destructive
+        busy={busy}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) void deleteAccount(pendingDelete);
+        }}
+      >
+        This erases the account, username, rating, history, wallet binding and
+        messages. There is no undo and no recovery.
       </ConfirmDialog>
 
       <ConfirmDialog

@@ -86,9 +86,10 @@
 
        Measured budget (trimmed to what the rows actually occupy):
        2.5rem page padding + 3.25rem match header + 1.9rem column gaps
-       + 5.4rem for the two compact player cards + 2.4rem of controls,
-       with headroom so a long username wrap never clips a card. */
-    --board-chrome: 16.25rem;
+       + 5.4rem for the two compact player cards + 1.9rem of controls.
+       Banners between header and board (result/error) are measured at
+       runtime and subtracted via --board-banner. */
+    --board-chrome: 14rem;
 
     --scrollbar-thumb: 220 8% 20%;
   }

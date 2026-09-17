@@ -67,5 +67,6 @@ export async function GET(req: NextRequest) {
     rating: profile.rating,
     games: profile.games,
     isGuest: false,
+    avatarUrl: profile.avatar_url ?? null,
   });
 }

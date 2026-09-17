@@ -73,6 +73,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
         currentStreak: profile.current_streak,
         bestStreak: profile.best_streak,
         createdAt: profile.created_at,
+        avatarUrl: profile.avatar_url,
       },
       stats: profileData.stats,
       games: profileData.games,

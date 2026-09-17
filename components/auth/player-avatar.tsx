@@ -2,6 +2,8 @@ import { cn } from "@/lib/utils";
 
 interface PlayerAvatarProps {
   name: string;
+  /** Public URL of an uploaded picture; falls back to the initial. */
+  avatarUrl?: string | null;
   size?: "xs" | "sm" | "md" | "lg";
   className?: string;
 }
@@ -15,8 +17,28 @@ const SIZES = {
   lg: "h-14 w-14 text-xl",
 } as const;
 
-/** Compact initial-based avatar — no images, no external services. */
-export function PlayerAvatar({ name, size = "sm", className }: PlayerAvatarProps) {
+/**
+ * The player's avatar: their uploaded picture when one exists, otherwise the
+ * compact initial disc. Uploads are normalized server-side to a single
+ * 256px webp, so the same file is sharp at every size here — no giant
+ * originals squashed into 28px, which is where avatar blur comes from.
+ */
+export function PlayerAvatar({ name, avatarUrl, size = "sm", className }: PlayerAvatarProps) {
+  if (avatarUrl) {
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element */
+      <img
+        src={avatarUrl}
+        alt=""
+        loading="lazy"
+        className={cn(
+          "shrink-0 select-none rounded-full border border-border/70 object-cover shadow-elevation-1",
+          SIZES[size],
+          className,
+        )}
+      />
+    );
+  }
   const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
   return (
     <span

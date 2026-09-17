@@ -47,6 +47,8 @@ export default function PublicPlayerPage() {
     games: number;
     currentStreak: number;
     bestStreak: number;
+    createdAt?: string;
+    avatarUrl?: string | null;
   } | null>(null);
   const [games, setGames] = useState<GameState[]>([]);
   /**
@@ -202,6 +204,8 @@ export default function PublicPlayerPage() {
         rating={player.rating}
         ratingDelta={stats?.ratingHistory?.[0]?.change ?? null}
         isGuest={player.isGuest}
+        avatarUrl={player.avatarUrl}
+        joinedAt={player.createdAt}
         description={
           <>
             {player.isGuest ? "Guest player" : "ChainMate player"}

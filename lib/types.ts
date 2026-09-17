@@ -200,6 +200,10 @@ export interface PlayerStats {
   /** Achievements awarded from real game data (server-side only). */
   achievements: AchievementEntry[];
   updatedAt: number;
+  /** Public URL of the player's uploaded profile picture (null → initial). */
+  avatarUrl?: string | null;
+  /** ISO timestamp the account joined (durable profile record). */
+  createdAt?: string;
 }
 
 /** One player shown in the live Watch feed (real server data). */

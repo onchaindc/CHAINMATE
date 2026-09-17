@@ -285,7 +285,7 @@ export default function GamePage() {
     return (
       <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 lg:py-5">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,72rem,max(20rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
+          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="aspect-square w-full" />
             <Skeleton className="h-14 w-full" />
@@ -511,7 +511,11 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* Action error banner */}
+      {/* Action error banner + result strip. Their combined height is measured
+          (MeasuredBanners below) and subtracted from the board column's width
+          formula — without it an over-tall square clips the bottom rank (the
+          white pieces) in exactly the match-report view. */}
+      <MeasuredBanners>
       {error && (
         <div className="mb-3 flex shrink-0 items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
@@ -562,15 +566,18 @@ export default function GamePage() {
           )}
         </div>
       )}
+      </MeasuredBanners>
 
       {/* Board and match console share one row on desktop: the board is a
           square, so its size is capped by the space left over VERTICALLY (nav,
-          header, player cards, controls — see --board-chrome in globals.css) —
-          that is the largest fully-visible board the screen allows. The
-          leftover width goes to the match console, which scrolls inside
-          itself. Nothing here exceeds the viewport, and no horizontal space
-          is wasted on empty margins either. Below `lg` it stacks: a phone
-          cannot fit a usable board and a readable console at once. */}
+          header, player cards, controls — see --board-chrome in globals.css).
+          Banners rendered above the board (result strip, error banner) eat
+          height the formula cannot see, which previously clipped the bottom
+          rank exactly in the match-report view — so the board column
+          measures them at runtime and publishes --board-banner, which the
+          width calc subtracts. The leftover width goes to the match console,
+          which scrolls inside itself. Below `lg` it stacks: a phone cannot
+          fit a usable board and a readable console at once. */}
       <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-8">
         {/* The board column's WIDTH is the viewport-height budget on desktop:
             a square board can never be wider than the height it is allowed,
@@ -578,7 +585,7 @@ export default function GamePage() {
             tall monitors the match console keeps a readable column instead of
             being squeezed to nothing. Mobile stays width-driven. */}
         <div
-          className="mx-auto flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,72rem,max(20rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))] lg:flex-none"
+          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome)-var(--board-banner,0rem))))] lg:flex-none"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
@@ -935,4 +942,40 @@ export default function GamePage() {
       )}
     </div>
   );
+}
+
+/**
+ * Wraps the banners that render between the page header and the board and
+ * publishes their combined height as the `--board-banner` custom property on
+ * the document root. The board column's width formula subtracts it, so an
+ * over-tall square can never clip the bottom rank (the white pieces) in the
+ * match-report view — the exact bug that showed up only after a game ended.
+ *
+ * A small separate component rather than an effect in the page body: the page
+ * has early returns (loading / game-missing), and an effect there would run
+ * conditionally — a rules-of-hooks violation. Placed here it always runs.
+ */
+function MeasuredBanners({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    /* On the document root, not on this element: the board column is a
+       SIBLING of these banners, and custom properties only inherit downward —
+       a var set here would read as its 0rem fallback where it is consumed. */
+    const root = el.ownerDocument.documentElement;
+    const publish = () => {
+      root.style.setProperty("--board-banner", `${el.scrollHeight / 16}rem`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--board-banner");
+    };
+  }, []);
+
+  return <div ref={ref}>{children}</div>;
 }
