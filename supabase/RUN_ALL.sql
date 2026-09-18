@@ -1018,6 +1018,11 @@ create table if not exists public.tournament_refunds (
   verified_at timestamptz
 );
 
+-- Refund records are who was paid back and how much: financial data. RLS on,
+-- no policies, so anon/authenticated clients can read nothing directly; the
+-- service role (the only writer/reader, via the server routes) bypasses RLS.
+alter table public.tournament_refunds enable row level security;
+
 -- One refund per player per tournament, ever.
 create unique index if not exists tournament_refunds_one_per_player
   on public.tournament_refunds (tournament_id, player_id);
