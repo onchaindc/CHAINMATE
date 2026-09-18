@@ -75,7 +75,15 @@ export async function GET(req: NextRequest) {
       });
     }
     accounts.sort((a, b) => (a.username ?? "").localeCompare(b.username ?? ""));
-    return NextResponse.json({ accounts, totalUsers: await totalRegisteredUsers() });
+    const totalUsers = await totalRegisteredUsers();
+    // The headline count must never read lower than the list we just served:
+    // the list is a page-capped slice, the count is the authoritative total.
+    // If the count lookup fails while the list succeeds, the list length is
+    // a far better answer than a confident zero.
+    return NextResponse.json({
+      accounts,
+      totalUsers: Math.max(totalUsers, ids.length),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load accounts";
     return NextResponse.json({ error: message }, { status: 500 });

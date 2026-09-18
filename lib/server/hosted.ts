@@ -676,6 +676,14 @@ export async function updatePlayerCountry(
 /* ------------------------------------------------------------------ */
 
 async function writeGame(game: GameState): Promise<void> {
+  // In-game chat is ephemeral by contract: it exists only in the fast store
+  // while the game is running. The moment the game reaches a terminal state
+  // the conversation is erased here, and it is never written to the durable
+  // mirror below — so a finished game carries no chat history anywhere, and
+  // nothing a player said outlives the match.
+  if (isGameOver(game.status)) {
+    delete (game as GameState & { chat?: unknown }).chat;
+  }
   await getGameStorage().set(keyFor(game.id), JSON.stringify(game));
   await upsertIndex(entryFromGame(game));
   // Keep the live broadcast feed in sync with real game lifecycle: register
@@ -688,9 +696,12 @@ async function writeGame(game: GameState): Promise<void> {
   // Durability: mirror the full state to Supabase so a mid-game cold start
   // or storage reset can never turn into "Game not found" (restored in
   // getHostedGame). Best-effort — the game store stays the source of truth.
+  // Chat is stripped from the mirror: it is session chatter, not game record.
   if (supabaseConfigured()) {
     try {
-      await upsertGameSnapshot(game);
+      const mirror = { ...game } as GameState & { chat?: unknown };
+      delete mirror.chat;
+      await upsertGameSnapshot(mirror);
     } catch {
       // Supabase hiccups must never break a chess move.
     }

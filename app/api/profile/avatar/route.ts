@@ -121,3 +121,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+/**
+ * Remove my profile picture: deletes the stored image and clears the URL,
+ * which puts the default (initial) avatar back everywhere at once.
+ */
+export async function DELETE(req: NextRequest) {
+  const claimed = req.nextUrl.searchParams.get("playerId") ?? "";
+  const acting = await resolveActingPlayer(req, claimed);
+  if (!acting.ok) {
+    return NextResponse.json({ error: acting.error }, { status: acting.status });
+  }
+  const profile = await profileForPlayerId(acting.playerId);
+  if (!profile || profile.is_guest) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 403 });
+  }
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    return NextResponse.json({ error: "Accounts aren't configured yet." }, { status: 503 });
+  }
+  // Best-effort object delete: clearing the URL is what actually hides the
+  // picture, so a storage hiccup must not block the reset.
+  await admin.storage
+    .from("avatars")
+    .remove([`${acting.playerId}.webp`])
+    .catch(() => {});
+  const { error } = await admin
+    .from("profiles")
+    .update({ avatar_url: null })
+    .eq("player_id", acting.playerId);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
+}

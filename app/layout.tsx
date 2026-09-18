@@ -45,6 +45,11 @@ export const viewport: Viewport = {
      this is a no-op on healthy browsers, but it also stops double-tap zoom
      from disturbing the layout while typing on some Android skins. */
   maximumScale: 1,
+  /* iOS Safari resizes the *visual viewport* (and rubber-bands the page) when
+     the keyboard opens, unless the page opts into the in-page overlay mode.
+     `resizes-content` keeps the layout viewport exactly as tall as the visible
+     area, so focusing an input no longer scrolls/jumps the whole page. */
+  interactiveWidget: "resizes-content",
 };
 
 export const metadata: Metadata = {

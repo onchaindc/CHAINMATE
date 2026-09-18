@@ -50,7 +50,7 @@ async function resignGame(gameId, playerId) {
   return g;
 }
 
-let semis = await activeMatches(ko.id);
+const semis = await activeMatches(ko.id);
 console.log("semis:", semis.map((m) => `${m.whitePlayerId.slice(-2)}v${m.blackPlayerId.slice(-2)}`).join(", "));
 // Losers: the black side of semi 0 and the white side of semi 1.
 await resignGame(semis[0].gameId, semis[0].blackPlayerId);
@@ -104,7 +104,7 @@ const arStart = await engine.transitionTournament(ar.id, HOST, "in_progress");
 if (!arStart.ok) throw new Error("arena start: " + arStart.error);
 
 // A asks for a pairing.
-let pair = await engine.requestArenaPairing(ar.id, A);
+const pair = await engine.requestArenaPairing(ar.id, A);
 if (!pair.ok) throw new Error("arena pair: " + pair.error);
 console.log("A paired vs:", pair.match.whitePlayerId === A ? pair.match.blackPlayerId.slice(-2) : pair.match.whitePlayerId.slice(-2));
 const arenaGameId = pair.match.gameId;
@@ -123,7 +123,7 @@ const dg = await hosted.getHostedGame(arenaGameId);
 const loser = dg.creator === A ? B : A;
 await resignGame(arenaGameId, loser);
 
-let pair2 = await engine.requestArenaPairing(ar.id, loser);
+const pair2 = await engine.requestArenaPairing(ar.id, loser);
 console.log("loser re-pairing:", pair2.ok ? `got game vs ${(pair2.match.whitePlayerId === loser ? pair2.match.blackPlayerId : pair2.match.whitePlayerId).slice(-2)}` : `refused: ${pair2.error}`);
 
 // Complete the arena from the host console.

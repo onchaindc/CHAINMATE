@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, MessageCircle, Send } from "lucide-react";
+import { Loader2, MessageCircle, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useIdentity } from "@/lib/identity-context";
@@ -9,10 +9,18 @@ import { getIdentityToken } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 /**
- * Chat between the two players inside one game — the chess.com pattern.
- * Participant-only server-side; the panel is simply absent for spectators
- * and AI games. Polls on the same cadence as the game itself; messages are
- * small and the endpoint is cheap.
+ * Chat between the two players inside one game.
+ *
+ * Entry is a single chat icon — the conversation is opt-in, not a permanent
+ * panel bolted under the moves list. The exchange is deliberately EPHEMERAL:
+ * the server erases it the moment the game reaches a terminal state (see
+ * writeGame in lib/server/hosted.ts) and never mirrors it to durable storage,
+ * so what is said during a match stays in the match.
+ *
+ * There is no "Loading chat…" state: the icon opens instantly, and the thread
+ * simply reads empty until the first poll answers. That kills the stuck
+ * "Loading chat…" screen (an unanswered or slow poll previously locked the
+ * panel in a spinner-adjacent state forever).
  */
 
 interface ChatMessage {
@@ -43,7 +51,10 @@ export function GameChat({
   const identity = useIdentity();
   const playerId = identity.playerId;
 
-  const [messages, setMessages] = useState<ChatMessage[] | null>(null);
+  const [open, setOpen] = useState(false);
+  // null = not fetched yet, [] = fetched and empty. Renders identically
+  // (an inviting "no messages yet" line) — no loading gate, ever.
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,17 +81,18 @@ export function GameChat({
     }
   }, [gameId, playerId]);
 
+  // Poll only while the panel is open — a closed icon costs nothing.
   useEffect(() => {
-    if (!enabled || !playerId) return;
+    if (!enabled || !open || !playerId) return;
     void poll();
     const t = setInterval(() => void poll(), 4000);
     return () => clearInterval(t);
-  }, [enabled, playerId, poll]);
+  }, [enabled, open, playerId, poll]);
 
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, open]);
 
   const send = async () => {
     const text = draft.trim();
@@ -110,6 +122,24 @@ export function GameChat({
 
   if (!enabled) return null;
 
+  // Collapsed: just the icon, aligned with the panel's other section headers.
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label="Open game chat"
+        className={cn(
+          "flex items-center gap-2 border-t border-border/60 px-4 py-2.5 text-muted-foreground transition-colors hover:text-foreground",
+          className,
+        )}
+      >
+        <MessageCircle className="h-3.5 w-3.5" aria-hidden />
+        <span className="text-2xs font-semibold uppercase tracking-wider">Chat</span>
+      </button>
+    );
+  }
+
   return (
     <div className={cn("border-t border-border/60", className)}>
       <div className="flex items-center gap-2 px-4 py-2">
@@ -117,11 +147,20 @@ export function GameChat({
         <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
           Chat
         </span>
+        <span className="ml-auto text-2xs text-muted-foreground/70">
+          Gone when the game ends
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          aria-label="Close game chat"
+          className="ml-1 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
       </div>
       <div ref={listRef} className="max-h-44 space-y-1.5 overflow-y-auto px-4 pb-2">
-        {messages === null ? (
-          <p className="py-3 text-center text-2xs text-muted-foreground">Loading chat…</p>
-        ) : messages.length === 0 ? (
+        {messages.length === 0 ? (
           <p className="py-3 text-center text-2xs text-muted-foreground">
             Say hello. Only you two can see this.
           </p>

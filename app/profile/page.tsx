@@ -35,6 +35,12 @@ export default function ProfilePage() {
   );
 }
 
+/**
+ * Account deletion is temporarily disabled (launch decision). The API route
+ * stays live; only the UI entry is masked. Flip this to restore the section.
+ */
+const ACCOUNT_DELETION_ENABLED = false;
+
 function ProfileContent() {
   const identity = useIdentity();
   const [stats, setStats] = useState<PlayerStats | null>(null);
@@ -219,7 +225,7 @@ function ProfileContent() {
       {/* Nimiq wallet binding — real provider flow, server-verified link. */}
       <NimiqWalletCard playerId={playerId} />
 
-      {/* Profile picture — upload/replace, normalized server-side. */}
+      {/* Profile picture — inline camera on the avatar + remove option. */}
       <AvatarUploadCard className="animate-fade-in-up [animation-delay:70ms]" />
 
       {/* Stats */}
@@ -317,8 +323,9 @@ function ProfileContent() {
         <FriendsLinkRow />
       </div>
 
-      {/* Danger zone — delete account */}
-      {!identity.isGuest && (
+      {/* Danger zone — temporarily hidden: account deletion is disabled while
+          the app is in launch mode. Flip to bring the section back. */}
+      {ACCOUNT_DELETION_ENABLED && !identity.isGuest && (
         <div className="mt-10 animate-fade-in-up [animation-delay:200ms]">
           <DeleteAccountSection />
         </div>

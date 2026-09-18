@@ -12,6 +12,7 @@
  */
 
 import { getHostedGame, writeHostedGameWithChat } from "@/lib/server/hosted";
+import { isGameOver } from "@/lib/types";
 import { usernameForPlayer } from "@/lib/server/admin";
 
 const CHAT_LIMIT = 200;
@@ -65,6 +66,11 @@ export async function sendGameChat(
 ): Promise<{ ok: true; message: ChatMessage } | { ok: false; error: string }> {
   const text = (body ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_LEN);
   if (!text) return { ok: false, error: "Message is empty" };
+
+  const existing = await getHostedGame(gameId);
+  if (existing && isGameOver(existing.status)) {
+    return { ok: false, error: "This game is over" };
+  }
 
   const game = await getHostedGame(gameId);
   if (!game) return { ok: false, error: "Game not found" };

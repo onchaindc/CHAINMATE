@@ -435,7 +435,11 @@ function Dashboard({
       );
       setAccounts(accountsData.accounts);
       setTotalUsers(accountsData.totalUsers);
-    } catch {
+    } catch (err) {
+      // A swallowed error made the headline tile read a confident "0" when
+      // the accounts endpoint was failing — indistinguishable from a genuinely
+      // empty database. Surface it so the operator knows the count is unknown.
+      setError(err instanceof Error ? err.message : "Failed to load accounts");
       setAccounts((prev) => prev ?? []);
     }
     try {
