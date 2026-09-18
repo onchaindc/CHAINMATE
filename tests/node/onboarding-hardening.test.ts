@@ -105,6 +105,10 @@ function fullDoc(partial: {
     createdAt: 1,
     registrationClosesAt: null,
     scheduledStartAt: null,
+    scheduledEndAt: null,
+    cancelReason: null,
+    startWhenFull: false,
+    minPlayers: null,
     startedAt: null,
     completedAt: null,
     currentRound: 0,
@@ -137,6 +141,9 @@ before(async () => {
   delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   process.env.NIMIQ_RPC_URL = "http://127.0.0.1:1";
+  // Hermetic: an operator's real server-side NIMIQ_TREASURY_ADDRESS (which
+  // wins over the public one) must not leak in from .env.local.
+  delete process.env.NIMIQ_TREASURY_ADDRESS;
   process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = TREASURY;
   process.env.NEXT_PUBLIC_NIMIQ_NETWORK = "test";
   economy = await import("@/lib/server/tournament-economy");

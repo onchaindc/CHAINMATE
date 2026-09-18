@@ -249,7 +249,7 @@ export function useTournamentEntry(playerId: string) {
         // characters.
         if (!isPlausibleNimiqAddress(NIMIQ_TREASURY_ADDRESS)) {
           throw new Error(
-            `The configured NIM treasury address is invalid (${NIMIQ_TREASURY_ADDRESS.replace(/\s/g, "").length} characters — Nimiq addresses are 36, e.g. NQxx XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX). The deployment operator must correct the treasury configuration.`,
+            `The configured NIM treasury address is invalid (${NIMIQ_TREASURY_ADDRESS.replace(/\s/g, "").length} characters, Nimiq addresses are 36, e.g. NQxx XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX). The deployment operator must correct the treasury configuration.`,
           );
         }
         const treasury = canonicalAddress(NIMIQ_TREASURY_ADDRESS);
@@ -277,7 +277,7 @@ export function useTournamentEntry(playerId: string) {
           );
           if (!activeHasLinked) {
             throw new Error(
-              `Your Nimiq Pay wallet is currently on a different account. Switch to the account linked to ChainMate (${shortNimiqAddress(wallet.wallet.address)}) before paying — payments from any other account cannot be credited.`,
+              `Your Nimiq Pay wallet is currently on a different account. Switch to the account linked to ChainMate (${shortNimiqAddress(wallet.wallet.address)}) before paying, payments from any other account cannot be credited.`,
             );
           }
         }

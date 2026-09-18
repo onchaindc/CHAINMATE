@@ -171,6 +171,9 @@ before(async () => {
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   process.env.NIMIQ_RPC_URL = "http://127.0.0.1:1";
   process.env.NIMIQ_CONFIRMATIONS_REQUIRED = "10";
+  // Hermetic: an operator's real server-side NIMIQ_TREASURY_ADDRESS (which
+  // wins over the public one) must not leak in from .env.local.
+  delete process.env.NIMIQ_TREASURY_ADDRESS;
   process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = TREASURY;
   process.env.NEXT_PUBLIC_NIMIQ_NETWORK = "test";
   tx = await import("@/lib/server/nimiq/transactions");

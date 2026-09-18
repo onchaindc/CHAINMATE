@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { guestDisplayName } from "@/lib/identity";
@@ -30,6 +31,8 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** Friend pending removal: the dialog names them before anything happens. */
+  const [removing, setRemoving] = useState<PlayerStats | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -83,6 +86,15 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
     } finally {
       setBusyId(null);
     }
+  };
+
+  /** Removal is destructive and deserves a named confirmation: removing a
+      friend cuts their chat access too (messaging is friends-only). */
+  const confirmRemove = async () => {
+    if (!removing) return;
+    const target = removing;
+    setRemoving(null);
+    await act("remove", target.playerId);
   };
 
   const friendRow = (p: PlayerStats, actions?: React.ReactNode) => {
@@ -267,7 +279,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
                   size="sm"
                   variant="ghost"
                   disabled={busyId === p.playerId}
-                  onClick={() => void act("remove", p.playerId)}
+                  onClick={() => setRemoving(p)}
                   className="text-muted-foreground hover:text-destructive"
                 >
                   Remove
@@ -277,6 +289,19 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={removing !== null}
+        title={`Remove ${guestDisplayName(removing?.username ?? "")}?`}
+        confirmLabel="Remove friend"
+        destructive
+        busy={removing !== null && busyId === removing.playerId}
+        onCancel={() => setRemoving(null)}
+        onConfirm={() => void confirmRemove()}
+      >
+        They will no longer appear in your friends list, and you will not be
+        able to message each other. You can always add them again later.
+      </ConfirmDialog>
     </Panel>
   );
 }

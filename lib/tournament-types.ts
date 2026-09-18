@@ -59,6 +59,13 @@ export interface TournamentEntry {
   joinedAt: number;
   /** Unix ms the player left, when they left during registration. */
   leftAt?: number;
+  /**
+   * Unix ms the player withdrew AFTER the tournament started. A withdrawn
+   * player keeps every completed result and their standing row (the record
+   * is never rewritten), but receives no future pairings. Entry fees stay
+   * locked once the event is running.
+   */
+  withdrawnAt?: number;
   /** Proof of payment for paid tournaments: the verified tx + verify time. */
   paid?: { txHash: string; paidAt: number };
 }
@@ -89,6 +96,12 @@ export interface TournamentMatch {
   createdAt: number;
   /** Unix ms the result was recorded. */
   completedAt?: number;
+  /**
+   * Knockout only: game ids of DECISIVE-GAME replays played after drawn
+   * games (the tiebreak policy). The current game lives in `gameId`; earlier
+   * drawn games are archived here so the record is auditable.
+   */
+  tiebreakGameIds?: string[];
 }
 
 /** A Swiss/Knockout round as the UI sees it. */
@@ -169,6 +182,8 @@ export interface TournamentSummary {
   registrationClosesAt: number | null;
   /** Scheduled start (Unix ms) — countdown shown while it is in the future. */
   scheduledStartAt?: number | null;
+  /** Arena: when the tournament window closes (Unix ms); auto-finalizes. */
+  scheduledEndAt?: number | null;
   startedAt: number | null;
   completedAt: number | null;
   createdAt: number;
@@ -182,13 +197,39 @@ export interface TournamentSummary {
   /** Phase 2B economy: prize distribution preset for paid tournaments. */
   prizePreset?: TournamentPrizePreset | null;
   /** Phase 2B economy: aggregate payout state ("none" until completion). */
-  payoutStatus?: "none" | "pending" | "partial" | "paid" | "refund_required";
+  payoutStatus?: "none" | "pending" | "partial" | "paid" | "refund_required" | "refunded";
+  /**
+   * Live verified prize pool in luna (paid tournaments only; the exact sum
+   * of verified entry payments, recomputed server-side on every read).
+   */
+  verifiedPoolLuna?: string | null;
+  /** Server-stored cancellation reason ("Not enough players…", host note…). */
+  cancelReason?: string | null;
+  /** Minimum players this event needed (set from the preset at creation). */
+  minPlayers?: number | null;
+  /**
+   * Host's creation-time choice: lock + start the moment the field reaches
+   * maxPlayers (instead of waiting for the scheduled start or the host).
+   */
+  startWhenFull?: boolean;
+}
+
+/**
+ * UI-safe refund line for the tournament detail page: one owed or returned
+ * entry fee from a cancelled paid event (or a player who left before lock).
+ */
+export interface TournamentRefundLine {
+  playerId: string;
+  amountLuna: string;
+  status: "owed" | "dispatched" | "verified" | "failed";
 }
 
 /** Full tournament detail payload served by GET /api/tournaments/[id]. */
 export interface TournamentDetail extends TournamentSummary {
   entries: TournamentEntry[];
   rounds: TournamentRound[];
+  /** Refund obligations for paid events (cancel / leave-before-lock). */
+  refunds?: TournamentRefundLine[];
   standings: StandingRow[];
   /** "host" | "entrant" | "none" from the requesting player's perspective. */
   myRole: "host" | "entrant" | "none";

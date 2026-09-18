@@ -134,6 +134,11 @@ before(async () => {
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   process.env.NIMIQ_RPC_URL = "http://127.0.0.1:1"; // present but unused (fakes override)
   process.env.NIMIQ_CONFIRMATIONS_REQUIRED = "10";
+  // Hermetic money tests: an operator's real NIMIQ_TREASURY_ADDRESS (the
+  // server-only variable that wins over the public one) must never leak in
+  // from the environment (.env.local is loaded into test runs too) or every
+  // fake transaction fails the recipient check. Pin BOTH variables.
+  delete process.env.NIMIQ_TREASURY_ADDRESS;
   process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = TREASURY_ADDRESS;
   process.env.NEXT_PUBLIC_NIMIQ_NETWORK = "test";
   ed.etc.sha512Async = async (m: Uint8Array) => sha512(m);

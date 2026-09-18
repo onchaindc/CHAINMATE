@@ -116,7 +116,7 @@ export function PlayerMenu() {
             <p className="mt-0.5 text-2xs text-muted-foreground">
               {isGuest ? (
                 <>
-                  Guest — progress saved on this device.
+                  Guest, progress saved on this device.
                   {identity.rating !== null && (
                     <span className="ml-1 font-mono text-primary">{identity.rating} ELO</span>
                   )}

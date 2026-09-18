@@ -56,7 +56,7 @@ export function RecentForm({
         <div className="mt-3 h-7 animate-pulse rounded-md bg-secondary/60" />
       ) : form.length === 0 ? (
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          No rated games yet — your first result shows up here.
+          No rated games yet. Your first result shows up here.
         </p>
       ) : (
         <>

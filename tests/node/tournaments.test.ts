@@ -259,9 +259,17 @@ test("leaving during registration frees the seat; re-joining reuses the entry", 
   assert.ok((await engine.joinTournament(doc.id, c)).ok);
   // Leaving twice is an error.
   assert.ok(!(await engine.leaveTournament(doc.id, a)).ok);
-  // Leave after start is refused.
+  // Leave after start becomes a WITHDRAWAL: allowed, idempotent, keeps the
+  // entry record (marked, not erased) — per the lifecycle brief (§13).
   await startTournament(doc, []);
-  assert.ok(!(await engine.leaveTournament(doc.id, b)).ok);
+  const wd = await engine.leaveTournament(doc.id, b);
+  assert.ok(wd.ok);
+  const afterWd = (await store.getTournamentDoc(doc.id))!;
+  assert.ok(afterWd.entries.find((e) => e.playerId === b)?.withdrawnAt);
+  // Withdrawn players are out of the active field: joining again is a rejoin
+  // of a LEFT entry only — a withdrawn entry stays withdrawn for seat math.
+  const wd2 = await engine.leaveTournament(doc.id, b);
+  assert.ok(wd2.ok); // idempotent second withdrawal
 });
 
 test("registration closes at the configured time", async () => {

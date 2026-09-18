@@ -70,6 +70,12 @@ export interface TournamentDetailPayload {
   entryNames?: Record<string, string>;
   /** Phase 2B: payout lines for completed paid tournaments. */
   payouts?: TournamentPayoutLine[];
+  /** Refund obligations for paid events (cancel / leave before lock). */
+  refunds?: Array<{
+    playerId: string;
+    amountLuna: string;
+    status: "owed" | "dispatched" | "verified" | "failed";
+  }>;
 }
 
 export type TournamentAction =

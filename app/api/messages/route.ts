@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
+  dmAllowedPeers,
   inboxFor,
+  inboxForDisplay,
   markBroadcastFeedSeen,
   markInboxRead,
   sendDirectMessage,
@@ -39,13 +41,16 @@ export async function GET(req: NextRequest) {
   // Optional ?threadWith=<playerId>: only the DM exchange with that player.
   const threadWith = req.nextUrl.searchParams.get("threadWith") ?? "";
   try {
-    const [own, feed] = await Promise.all([
-      inboxFor(acting.playerId),
+    // The display inbox: every envelope carries a RESOLVED counterpart name,
+    // so no client can ever render a raw acct_… player id (the leak the
+    // operator reported). Feed copies are only the announcements this account
+    // has not laid eyes on yet (past the seen-watermark), so the bell counts
+    // them exactly once per player.
+    const [ownDisplay, feed] = await Promise.all([
+      inboxForDisplay(acting.playerId),
       threadWith ? Promise.resolve([]) : unseenFeedFor(acting.playerId),
     ]);
-    // Merge, newest first. Feed copies are only the announcements this
-    // account has not laid eyes on yet (past the seen-watermark), so the
-    // bell counts them exactly once per player.
+    const own: (typeof ownDisplay[number] | (typeof feed)[number])[] = ownDisplay;
     const merged = [...own, ...feed]
       .filter((m) =>
         threadWith
@@ -56,7 +61,10 @@ export async function GET(req: NextRequest) {
       )
       .sort((a, b) => b.sentAt - a.sentAt);
     const unread = merged.filter((m) => m.readAt === null).length;
-    return NextResponse.json({ messages: merged, unread });
+    // The friends this account may chat with. The UI filters search results
+    // and the chat list through it; the SEND path enforces it independently.
+    const allowedPeers = threadWith ? [] : [...(await dmAllowedPeers(acting.playerId))];
+    return NextResponse.json({ messages: merged, unread, allowedPeers });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load messages";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -75,7 +75,7 @@ export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps
 
       {pairs.length === 0 ? (
         <p className="px-4 pb-4 text-center text-xs text-muted-foreground">
-          No moves yet — White opens the game.
+          No moves yet. White opens the game.
         </p>
       ) : (
         <div

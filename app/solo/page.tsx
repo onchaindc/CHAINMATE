@@ -203,7 +203,7 @@ export default function SoloPage() {
           </Button>
 
           <p className="mt-3 text-center font-mono text-2xs uppercase tracking-wider text-muted-foreground sm:text-left">
-            You play either colour — the board picks for you · Unrated
+            You play either colour, the board picks for you · Unrated
           </p>
         </div>
 

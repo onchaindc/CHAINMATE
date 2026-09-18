@@ -421,24 +421,32 @@ test("nimiqErrorMessage prefixes payment failures readably", () => {
 });
 
 test("syncing-your-account wallet failure maps to an actionable message", () => {
-  // The exact raw shape Nimiq Pay produced for the send failure. The
-  // message is network-aware: this deployment pays on Mainnet now, so the
-  // guidance is patience + the right network, not the testnet dev menu.
-  const normalized = normalizeNimiqError(new Error(
-    "Failed to send payment transaction: Something went wrong syncing your account",
-  ));
-  assert.equal(normalized.kind, "provider");
-  assert.match(normalized.message, /still syncing your account/);
-  assert.match(normalized.message, /Mainnet/);
-  // Same mapping through the payment prefix used by the entry UI.
-  assert.equal(
-    nimiqPaymentFailureMessage(
-      new Error(
-        "Failed to send payment transaction: Something went wrong syncing your account",
+  // The exact raw shape Nimiq Pay produced for the send failure. The message
+  // is network-aware, so the test PINS the network for its duration — an
+  // ambient NEXT_PUBLIC_NIMIQ_NETWORK from the developer's environment (or
+  // the deployment's .env.local) must not flip which branch is asserted.
+  const previousNetwork = process.env.NEXT_PUBLIC_NIMIQ_NETWORK;
+  process.env.NEXT_PUBLIC_NIMIQ_NETWORK = "main";
+  try {
+    const normalized = normalizeNimiqError(new Error(
+      "Failed to send payment transaction: Something went wrong syncing your account",
+    ));
+    assert.equal(normalized.kind, "provider");
+    assert.match(normalized.message, /still syncing your account/);
+    assert.match(normalized.message, /Mainnet/);
+    // Same mapping through the payment prefix used by the entry UI.
+    assert.equal(
+      nimiqPaymentFailureMessage(
+        new Error(
+          "Failed to send payment transaction: Something went wrong syncing your account",
+        ),
       ),
-    ),
-    `Nimiq payment failed: ${normalized.message}`,
-  );
+      `Nimiq payment failed: ${normalized.message}`,
+    );
+  } finally {
+    if (previousNetwork === undefined) delete process.env.NEXT_PUBLIC_NIMIQ_NETWORK;
+    else process.env.NEXT_PUBLIC_NIMIQ_NETWORK = previousNetwork;
+  }
   // "Transaction invalidated during transaction" (the Android WebView
   // failure the host produced for proof-carrying sends) is framed honestly:
   // a request the wallet never created, not a payment that failed.

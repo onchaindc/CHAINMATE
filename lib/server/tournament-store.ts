@@ -65,6 +65,25 @@ export interface TournamentDocument {
    * Purely a convenience — the host can still open/start manually earlier.
    */
   scheduledStartAt: number | null;
+  /**
+   * Arena end (Unix ms). When the window passes, the event finalizes
+   * automatically — standings freeze, prizes plan, no manual click needed.
+   * Null = host-controlled (manual end).
+  */
+  scheduledEndAt: number | null;
+  /** Server-stored reason for cancellation (deadline miss, host action…). */
+  cancelReason: string | null;
+  /**
+   * Host's creation-time choice: when the field reaches maxPlayers during
+   * registration, lock + start immediately instead of waiting for the
+   * scheduled start or a manual host action. Default false.
+   */
+  startWhenFull: boolean;
+  /**
+   * Minimum players for this event: max(2, advertised prize positions) for
+   * paid events. Below it, deadline expiry cancels + refunds.
+   */
+  minPlayers: number | null;
   startedAt: number | null;
   completedAt: number | null;
   /** Current round while in progress (1-based). */
@@ -85,7 +104,33 @@ export interface TournamentDocument {
   /** Phase 2B: prize distribution preset for paid tournaments. */
   prizePreset: "winner" | "top3" | "top5" | null;
   /** Phase 2B: aggregate payout state (server-maintained; "none" until paid out). */
-  payoutStatus: "none" | "pending" | "partial" | "paid" | "refund_required";
+  payoutStatus: "none" | "pending" | "partial" | "paid" | "refund_required" | "refunded";
+  /** Durable refund obligations for a cancelled paid event, keyed per player. */
+  refunds?: Record<string, RefundRecord>;
+}
+
+/**
+ * One refund obligation from a cancelled paid tournament. Durable, part of
+ * the tournament document (mirrored to Supabase): keyed per player so a
+ * retry can never create a second refund row. Status:
+ *   owed → dispatched → verified (or failed → owed again on retry-safe failure)
+ */
+export interface RefundRecord {
+  playerId: string;
+  /** The verified entry tx this refund returns. */
+  entryTxHash: string;
+  /** Exact luna to return (always exactly what was paid). */
+  amountLuna: string;
+  /** "owed" until a refund tx exists; "dispatched" once broadcast; verified after confirmation. */
+  status: "owed" | "dispatched" | "verified" | "failed";
+  /** Real outgoing refund tx hash (set on dispatch). */
+  refundTxHash: string | null;
+  /** Winner-write-ahead datum for the refund broadcast (crash recovery). */
+  validityStartHeight?: number | null;
+  attempts: number;
+  lastError: string | null;
+  createdAt: number;
+  verifiedAt: number | null;
 }
 
 export function tournamentKey(id: string): string {
@@ -164,7 +209,9 @@ export interface TournamentIndexEntry {
   /** Phase 2B economy fields (additive). */
   entryFeeLuna?: string | null;
   prizePreset?: "winner" | "top3" | "top5" | null;
-  payoutStatus?: "none" | "pending" | "partial" | "paid" | "refund_required";
+  payoutStatus?: "none" | "pending" | "partial" | "paid" | "refund_required" | "refunded";
+  /** Lifecycle: lock + start the moment the field fills (host's choice). */
+  startWhenFull?: boolean;
 }
 
 async function readIndex(): Promise<TournamentIndexEntry[]> {
@@ -216,6 +263,7 @@ export async function upsertTournamentIndexEntry(doc: TournamentDocument): Promi
     entry.entryFeeLuna = doc.entryFeeLuna ?? null;
     entry.prizePreset = doc.prizePreset ?? null;
     entry.payoutStatus = doc.payoutStatus ?? "none";
+    entry.startWhenFull = doc.startWhenFull ?? false;
     const idx = entries.findIndex((e) => e.id === doc.id);
     if (idx >= 0) entries[idx] = entry;
     else entries.unshift(entry);
@@ -249,6 +297,60 @@ export async function listTournamentDocs(opts?: {
     if (doc) docs.push(doc);
   }
   return docs;
+}
+
+/* ------------------------------------------------------------------ */
+/* Refund ledger                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The refund ledger rides the tournament document (one source of truth, the
+ * same lock, the same mirror) and is keyed per player — a retried refund
+ * rewrites its own row instead of adding one.
+ */
+export async function getRefunds(id: string): Promise<RefundRecord[]> {
+  const doc = await getTournamentDoc(id);
+  return doc?.refunds ? Object.values(doc.refunds) : [];
+}
+
+export async function upsertRefund(id: string, refund: RefundRecord): Promise<void> {
+  await withTournamentLock(id, async () => {
+    const doc = await getTournamentDoc(id);
+    if (!doc) return;
+    doc.refunds = doc.refunds ?? {};
+    doc.refunds[refund.playerId] = refund;
+    await writeTournamentDoc(doc);
+  });
+  await mirrorRefund(id, refund);
+}
+
+export async function mirrorRefund(tournamentId: string, refund: RefundRecord): Promise<void> {
+  if (!supabaseConfigured()) return;
+  try {
+    const admin = getSupabaseAdmin();
+    if (!admin) return;
+    const { error } = await admin.from("tournament_refunds").upsert(
+      {
+        tournament_id: tournamentId,
+        player_id: refund.playerId,
+        entry_tx_hash: refund.entryTxHash,
+        amount_luna: refund.amountLuna,
+        status: refund.status,
+        refund_tx_hash: refund.refundTxHash,
+        validity_start_height: refund.validityStartHeight ?? null,
+        attempts: refund.attempts,
+        last_error: refund.lastError,
+        created_at: new Date(refund.createdAt).toISOString(),
+        verified_at: refund.verifiedAt ? new Date(refund.verifiedAt).toISOString() : null,
+      },
+      { onConflict: "tournament_id,player_id" },
+    );
+    if (error) {
+      console.warn(`[chainmate] refund mirror failed (${tournamentId}):`, error.message);
+    }
+  } catch {
+    // Mirror is best-effort by design.
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -329,6 +431,10 @@ async function upsertTournamentRow(doc: TournamentDocument): Promise<void> {
       swiss_rounds: doc.swissRounds,
       registration_closes_at: iso(doc.registrationClosesAt),
       scheduled_start_at: iso(doc.scheduledStartAt),
+      scheduled_end_at: iso(doc.scheduledEndAt),
+      cancel_reason: doc.cancelReason ?? null,
+      min_players: doc.minPlayers ?? null,
+      start_when_full: doc.startWhenFull ?? false,
       started_at: iso(doc.startedAt),
       completed_at: iso(doc.completedAt),
       current_round: doc.currentRound,
@@ -418,7 +524,7 @@ async function listTournamentRowsFromSupabase(): Promise<TournamentDocument[]> {
   if (!admin) return [];
   const { data, error } = await admin
     .from("tournaments")
-    .select("id, name, description, creator_player_id, format, time_control, max_players, status, swiss_rounds, created_at, registration_closes_at, started_at, completed_at, current_round, total_rounds, winner_player_id, entry_fee_luna, prize_preset, payout_status")
+    .select("id, name, description, creator_player_id, format, time_control, max_players, status, swiss_rounds, created_at, registration_closes_at, scheduled_start_at, scheduled_end_at, cancel_reason, min_players, start_when_full, started_at, completed_at, current_round, total_rounds, winner_player_id, entry_fee_luna, prize_preset, payout_status")
     .order("created_at", { ascending: false })
     .limit(INDEX_MAX);
   if (error || !data) return [];
@@ -441,6 +547,12 @@ async function listTournamentRowsFromSupabase(): Promise<TournamentDocument[]> {
     scheduledStartAt: row.scheduled_start_at
       ? new Date(String(row.scheduled_start_at)).getTime()
       : null,
+    scheduledEndAt: row.scheduled_end_at
+      ? new Date(String(row.scheduled_end_at)).getTime()
+      : null,
+    cancelReason: row.cancel_reason ? String(row.cancel_reason) : null,
+    minPlayers: row.min_players === null || row.min_players === undefined ? null : Number(row.min_players),
+    startWhenFull: row.start_when_full === true,
     startedAt: row.started_at ? new Date(String(row.started_at)).getTime() : null,
     completedAt: row.completed_at ? new Date(String(row.completed_at)).getTime() : null,
     currentRound: Number(row.current_round ?? 0),
@@ -458,7 +570,8 @@ async function listTournamentRowsFromSupabase(): Promise<TournamentDocument[]> {
       row.payout_status === "pending" ||
       row.payout_status === "partial" ||
       row.payout_status === "paid" ||
-      row.payout_status === "refund_required"
+      row.payout_status === "refund_required" ||
+      row.payout_status === "refunded"
         ? row.payout_status
         : "none",
   }));
@@ -520,3 +633,40 @@ export async function transitionTournamentStatus(
 }
 
 export type { TournamentSummary };
+
+/* ------------------------------------------------------------------ */
+/* Durable full-field cross-check (cross-instance join race)           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cross-instance cap check against the durable mirror. The fast store is
+ * the source of truth for a tournament document, but a COLD instance (or
+ * one whose KV read raced a concurrent join's write) can read a stale entry
+ * list and admit one player too many. The mirrored rows are written
+ * synchronously inside every join's document write, so by the time a
+ * genuinely concurrent join on another instance lands, the durable count
+ * already reflects the earlier join.
+ *
+ * Returns FALSE (authoritative "full") only when the durable mirror is
+ * configured AND shows at least `maxPlayers` active rows — the one case the
+ * in-process lock cannot see. NULL means "no durable answer" (unconfigured,
+ * or a transient error): the caller falls back to the fast-store check
+ * rather than failing a legitimate join on a database hiccup.
+ */
+export async function durableJoinFieldCount(
+  tournamentId: string,
+): Promise<number | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  try {
+    const { count, error } = await admin
+      .from("tournament_entries")
+      .select("player_id", { count: "exact", head: true })
+      .eq("tournament_id", tournamentId)
+      .eq("withdrawn", false);
+    if (error) return null;
+    return count ?? 0;
+  } catch {
+    return null;
+  }
+}

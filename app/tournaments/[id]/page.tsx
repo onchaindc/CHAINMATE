@@ -20,6 +20,7 @@ import {
   UserMinus,
   UserPlus,
   Wallet,
+  XCircle,
   ExternalLink,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -455,6 +456,56 @@ export default function TournamentDetailPage() {
         {isHost && <span className="font-sans text-2xs text-primary">You host</span>}
       </div>
 
+      {/* ---------- Cancelled state: reason + refund progress ---------- */}
+      {s.status === "cancelled" && (
+        <div
+          className="animate-fade-in-up mt-4 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3.5"
+          role="status"
+        >
+          <div className="flex items-start gap-3">
+            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-destructive">Tournament cancelled</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground">
+                {s.cancelReason
+                  ? s.cancelReason
+                  : "The host cancelled this tournament before it started."}
+              </p>
+              {detail.refunds && detail.refunds.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Entry fee refunds
+                  </p>
+                  <ul className="mt-1.5 divide-y divide-border/40 rounded-md border border-border/50">
+                    {detail.refunds.map((r) => (
+                      <li key={r.playerId} className="flex items-center gap-3 px-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate">{nameOf(detail, r.playerId)}</span>
+                        <span className="font-mono text-xs tabular-nums text-foreground/80">
+                          {displayNim(r.amountLuna)} NIM
+                        </span>
+                        <span
+                          className={cn(
+                            "text-2xs font-semibold uppercase tracking-wider",
+                            r.status === "verified" && "text-positive",
+                            r.status === "dispatched" && "text-primary",
+                            (r.status === "owed" || r.status === "failed") && "text-warning",
+                          )}
+                        >
+                          {r.status === "owed" && "refund queued"}
+                          {r.status === "dispatched" && "returning"}
+                          {r.status === "verified" && "refunded"}
+                          {r.status === "failed" && "retrying"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {actionError && <ErrorNote message={actionError} className="mt-4" />}
 
       {/* ---------- Payment confirmation (the receipt) ---------- */}
@@ -780,6 +831,15 @@ export default function TournamentDetailPage() {
                     {e.playerId === s.creatorId && (
                       <span className="text-2xs uppercase tracking-wider text-muted-foreground">host</span>
                     )}
+                    {e.withdrawnAt ? (
+                      <span className="text-2xs uppercase tracking-wider text-negative">withdrawn</span>
+                    ) : e.paid ? (
+                      <span className="inline-flex items-center gap-1 text-2xs uppercase tracking-wider text-positive">
+                        <ShieldCheck className="h-3 w-3" aria-hidden /> paid
+                      </span>
+                    ) : isPaid ? (
+                      <span className="text-2xs uppercase tracking-wider text-warning">payment required</span>
+                    ) : null}
                   </li>
                 ))}
               </ul>

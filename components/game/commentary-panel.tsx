@@ -51,7 +51,7 @@ export function CommentaryPanel({
       <div className="max-h-64 space-y-2 overflow-y-auto p-3">
         {entries.length === 0 ? (
           <p className="px-1 py-3 text-center text-xs text-muted-foreground">
-            The analyst is ready — make a move to start the annotations.
+            The analyst is ready, make a move to start the annotations.
           </p>
         ) : (
           entries.map((entry, i) => (

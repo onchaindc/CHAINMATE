@@ -33,7 +33,9 @@ import {
   type TournamentDocument,
 } from "@/lib/server/tournament-store";
 import { isPaidTournamentDoc, markEntryPaid as markEntryPaidOnDoc } from "@/lib/server/tournament-economy-doc";
-import { isPaidEntryFee, lunaFromStored, validateEntryFee } from "@/lib/tournament-economy";
+import { listPaidEntries } from "@/lib/server/tournament-economy";
+import type { TournamentRefundLine } from "@/lib/tournament-types";
+import { isPaidEntryFee, lunaFromStored, presetRankCount, validateEntryFee } from "@/lib/tournament-economy";
 import { getHostedGame } from "@/lib/server/hosted";
 import { isGameOver, type GameStatus, type GameState } from "@/lib/types";
 import {
@@ -87,6 +89,18 @@ export interface CreateTournamentInput {
    * automatically at that instant; the host can always open it early.
    */
   scheduledStartAt?: number | null;
+  /**
+   * Arena: when the tournament window closes (Unix ms). When the instant
+   * passes the event finalizes automatically — standings freeze, paid
+   * events plan payouts, no host click required. Null = host-controlled.
+   */
+  scheduledEndAt?: number | null;
+  /**
+   * Lock + start the moment the field reaches maxPlayers (host's choice at
+   * creation). Default false — the event waits for its scheduled start or
+   * the host, matching the historical behaviour.
+   */
+  startWhenFull?: boolean;
   /** Phase 2B: exact entry fee in luna (omit or 0n for a free tournament). */
   entryFeeLuna?: bigint;
   /** Phase 2B: prize distribution preset — required for paid tournaments. */
@@ -144,6 +158,13 @@ export function validateTournamentInput(
     input.registrationClosesAt > input.scheduledStartAt
   ) {
     return "registration must close before the scheduled start";
+  }
+  if (
+    input.scheduledEndAt !== undefined &&
+    input.scheduledEndAt !== null &&
+    (!Number.isFinite(input.scheduledEndAt) || (input.scheduledEndAt as number) < Date.now())
+  ) {
+    return "scheduled end must be in the future";
   }
   // Phase 2B economy validation. entryFeeLuna arrives as an exact bigint
   // (already parsed from the human NIM string server-side); 0/absent = free.
@@ -276,6 +297,15 @@ export async function createTournament(
   if (!gate.ok) throw new Error(gate.error);
 
   const now = Date.now();
+  // Minimum field: max(2, advertised prize positions). The preset's rank
+  // count is what the UI advertises as paid places, so an event that starts
+  // below this could never pay its advertised structure — better to cancel
+  // and refund at the deadline than to silently shortchange a rank.
+  const presetRankCountOf = input.prizePreset ?? null;
+  const minPlayers =
+    input.entryFeeLuna !== undefined && input.entryFeeLuna > 0n && presetRankCountOf
+      ? Math.max(2, presetRankCount(presetRankCountOf))
+      : 2;
   const doc: TournamentDocument = {
     id: newTournamentId(),
     name: input.name.trim(),
@@ -290,6 +320,10 @@ export async function createTournament(
     createdAt: now,
     registrationClosesAt: input.registrationClosesAt ?? null,
     scheduledStartAt: input.scheduledStartAt ?? null,
+    scheduledEndAt: input.scheduledEndAt ?? null,
+    minPlayers,
+    startWhenFull: input.startWhenFull ?? false,
+    cancelReason: null,
     startedAt: null,
     completedAt: null,
     currentRound: 0,
@@ -336,9 +370,10 @@ export async function transitionTournament(
   tournamentId: string,
   actorId: string,
   to: TournamentStatus,
+  cancelReason?: string,
 ): Promise<TransitionResult> {
   return withTournamentLock(tournamentId, () =>
-    transitionTournamentInner(tournamentId, actorId, to),
+    transitionTournamentInner(tournamentId, actorId, to, cancelReason),
   );
 }
 
@@ -346,6 +381,7 @@ async function transitionTournamentInner(
   tournamentId: string,
   actorId: string,
   to: TournamentStatus,
+  cancelReason?: string,
 ): Promise<TransitionResult> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) return { ok: false, error: "Tournament not found" };
@@ -358,59 +394,12 @@ async function transitionTournamentInner(
 
   // Side effects that must happen under the transition itself.
   if (to === "in_progress") {
-    // The mirror may already say in_progress while the live document never
-    // got there: the durable status UPDATE commits BEFORE the fast-store
-    // document is written, so a crash (or a cold function instance losing the
-    // race mid-write) between the two steps left a "half-started" event. // every later Start retry then hit "already started elsewhere" and no
-    // fixtures were ever generated. Recognise that wedge and heal it instead
-    // of failing: reconcile the mirror back to the live status, then let the
-    // normal path proceed.
-    if (doc.status !== "in_progress") {
-      const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
-      const admin = getSupabaseAdmin();
-      if (admin) {
-        const { data: mirrorRow } = await admin
-          .from("tournaments")
-          .select("status")
-          .eq("id", doc.id)
-          .maybeSingle();
-        if (mirrorRow?.status === "in_progress") {
-          const healed = await transitionTournamentStatus(doc.id, "in_progress", doc.status);
-          if (!healed) {
-            // Another instance is starting it right now — report the race honestly.
-            return { ok: false, error: "The tournament was already started elsewhere" };
-          }
-        }
-      }
-    }
-    if (activeEntryCount(doc) < 2) {
-      return { ok: false, error: "Need at least 2 players to start" };
-    }
-    // Phase 2B: a PAID tournament cannot start with unpaid entries.
-    if (isPaidTournamentDoc(doc)) {
-      const { assertAllEntriesPaid } = await import("@/lib/server/tournament-economy");
-      try {
-        await assertAllEntriesPaid(doc.id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "entry payment check failed";
-        return { ok: false, error: `Cannot start yet — ${message}` };
-      }
-    }
-    const won = await transitionTournamentStatus(doc.id, doc.status, "in_progress");
-    if (!won) return { ok: false, error: "The tournament was already started elsewhere" };
-
-    doc.status = "in_progress";
-    doc.startedAt = Date.now();
-    doc.totalRounds = totalRoundsFor(doc, activeEntryCount(doc));
-    doc.currentRound = 0;
-    doc.standings = recomputeStandings(doc);
-    await writeTournamentDoc(doc);
-
-    // First round generation is part of the start transition for formats
-    // that need one (knockout always, swiss round 1). Arena pairs on demand.
-    // Inner variant: we are already inside the document lock.
-    await ensureNextRoundInner(doc.id).catch(() => {});
-    return { ok: true, doc };
+    // One code path for every start (host action, startWhenFull, scheduled
+    // start): the same wedge-heal, entry-payment gate and round generation.
+    // transitionTournament only ever arrives from the HOST (the actor check
+    // above), so this door may refuse on unpaid entries; the time-driven
+    // callers below pass "authority" and drop them instead.
+    return startTournamentNow(doc, "host");
   }
 
   if (to === "completed") {
@@ -419,43 +408,7 @@ async function transitionTournamentInner(
     doc.status = "completed";
     doc.completedAt = Date.now();
     await writeTournamentDoc(doc);
-    // Phase 2B: a PAID tournament now materialises its payout records from
-    // the verified ledger + final standings. Best-effort: completion itself
-    // must succeed even if payout planning fails (it can be re-run).
-    if (isPaidTournamentDoc(doc) && doc.prizePreset) {
-      try {
-        const [{ planTournamentPayouts }, { getVerifiedPrizePool, listPaidEntries }] =
-          await Promise.all([
-            import("@/lib/server/tournament-payouts"),
-            import("@/lib/server/tournament-economy"),
-          ]);
-        const standings = recomputeStandings(doc);
-        const result = await planTournamentPayouts(
-          doc.id,
-          {
-            preset: doc.prizePreset,
-            standingsRanks: standings
-              .filter((r) => r.rank <= 5)
-              .map((r) => ({ rank: r.rank, playerId: r.playerId })),
-          },
-          {
-            getPrizePool: (id) => getVerifiedPrizePool(id),
-            getWallet: async (playerId) => {
-              // Paid tournaments are account-gated in practice, but read the
-              // binding defensively: no wallet → durable blocked state.
-              const { getLinkedWallet } = await import("@/lib/server/nimiq/service");
-              return getLinkedWallet(playerId);
-            },
-          },
-        );
-        if ("created" in result && result.created > 0) {
-          doc.payoutStatus = "pending";
-          await writeTournamentDoc(doc);
-        }
-      } catch {
-        // Payout planning can be re-run by the host; completion stands.
-      }
-    }
+    await planPayoutsIfPaid(doc).catch(() => undefined);
     return { ok: true, doc };
   }
 
@@ -463,13 +416,18 @@ async function transitionTournamentInner(
     const won = await transitionTournamentStatus(doc.id, doc.status, "cancelled");
     if (!won) return { ok: false, error: "The tournament was already closed elsewhere" };
     doc.status = "cancelled";
+    // Reason of record: the deadline-miss path names its exact cause; a host
+    // cancellation records the host's own words. Empty → generic.
+    doc.cancelReason = cancelReason ?? null;
     // Phase 2B: cancelling a PAID tournament that has verified entries
-    // requires refunds ChainMate cannot send — record it durably instead of
-    // pretending the money was returned.
+    // materialises one durable refund obligation per verified entrant —
+    // status 'owed' in the refund ledger, aggregated as refund_required.
+    // Dispatch is an operations concern; nothing here pretends money moved.
     if (isPaidTournamentDoc(doc)) {
       try {
-        const { listPaidEntries } = await import("@/lib/server/tournament-economy");
-        if ((await listPaidEntries(doc.id)).length > 0) {
+        const paid = await listPaidEntries(doc.id);
+        if (paid.length > 0) {
+          await materializeRefunds(doc, paid);
           doc.payoutStatus = "refund_required";
         }
       } catch {
@@ -494,12 +452,375 @@ function totalRoundsFor(doc: TournamentDocument, playerCount: number): number {
 }
 
 /* ------------------------------------------------------------------ */
+/* Maintenance — the idempotent time-driven state machine              */
+/* ------------------------------------------------------------------ */
+
+/** Exact entry fee for a paid tournament (0 luna when free). */
+function entryFeeLunaOf(doc: TournamentDocument): bigint {
+  return doc.entryFeeLuna ? lunaFromStored(doc.entryFeeLuna) : 0n;
+}
+
+/**
+ * Materialise the payout records for a completed PAID tournament from the
+ * verified ledger + final standings. Runs on EVERY completion path (host
+ * action and engine progression alike), so no finished event is ever left
+ * without its purse. Best-effort: completion stands even if planning fails
+ * (maintenance re-runs it — planTournamentPayouts is idempotent). The doc
+ * passed in is fresh and already persisted as completed; payoutStatus is
+ * written back when rows are created.
+ */
+async function planPayoutsIfPaid(doc: TournamentDocument): Promise<void> {
+  if (!isPaidTournamentDoc(doc) || !doc.prizePreset) return;
+  const { planTournamentPayouts } = await import("@/lib/server/tournament-payouts");
+  const { getVerifiedPrizePool } = await import("@/lib/server/tournament-economy");
+  const standings = recomputeStandings(doc);
+  const result = await planTournamentPayouts(
+    doc.id,
+    {
+      preset: doc.prizePreset,
+      standingsRanks: standings
+        .filter((r) => r.rank <= 5)
+        .map((r) => ({ rank: r.rank, playerId: r.playerId })),
+    },
+    {
+      getPrizePool: (id) => getVerifiedPrizePool(id),
+      getWallet: async (playerId) => {
+        // Paid tournaments are account-gated in practice, but read the
+        // binding defensively: no wallet → durable blocked state.
+        const { getLinkedWallet } = await import("@/lib/server/nimiq/service");
+        return getLinkedWallet(playerId);
+      },
+    },
+  );
+  if ("created" in result && result.created > 0 && doc.payoutStatus !== "refund_required" && doc.payoutStatus !== "refunded") {
+    doc.payoutStatus = "pending";
+    await writeTournamentDoc(doc);
+  }
+}
+
+/**
+ * Materialise one durable refund obligation per verified paid entrant of a
+ * cancelled tournament. Writes the refund records INTO the document (the
+ * caller holds the lock and persists it), then mirrors each row to Supabase
+ * where schema-level uniqueness (0012) makes a duplicate refund impossible
+ * even across instances. Status starts at 'owed': dispatch is an operations
+ * concern and this phase never pretends money moved.
+ */
+async function materializeRefunds(
+  doc: TournamentDocument,
+  paid: Array<{ playerId: string; txHash: string; amountLuna: bigint }>,
+): Promise<void> {
+  doc.refunds = doc.refunds ?? {};
+  const now = Date.now();
+  for (const p of paid) {
+    const existing = doc.refunds[p.playerId];
+    if (existing) continue; // idempotent: one obligation per player, ever
+    doc.refunds[p.playerId] = {
+      playerId: p.playerId,
+      entryTxHash: p.txHash,
+      amountLuna: p.amountLuna.toString(),
+      status: "owed",
+      refundTxHash: null,
+      attempts: 0,
+      lastError: null,
+      createdAt: now,
+      verifiedAt: null,
+    };
+  }
+  // Mirror after the caller persists the document, so the mirror can never
+  // outpace the fast store.
+  const { mirrorRefund } = await import("@/lib/server/tournament-store");
+  for (const p of paid) {
+    const record = doc.refunds[p.playerId];
+    if (record) await mirrorRefund(doc.id, record).catch(() => undefined);
+  }
+}
+
+/**
+ * Start a locked/registration tournament RIGHT NOW (lock already held, doc
+ * fresh). Shared by the host transition, the startWhenFull auto-start, and
+ * the scheduled-start maintenance sweep — one code path, one set of checks.
+ */
+async function startTournamentNow(
+  doc: TournamentDocument,
+  source: "host" | "authority" = "host",
+): Promise<TransitionResult> {
+  // The mirror may already say in_progress while the live document never
+  // got there: the durable status UPDATE commits BEFORE the fast-store
+  // document is written, so a crash (or a cold function instance losing the
+  // race mid-write) between the two steps left a "half-started" event. Every
+  // later Start retry then hit "already started elsewhere" and no fixtures
+  // were ever generated. Recognise that wedge and heal it instead of
+  // failing: reconcile the mirror back to the live status, then proceed.
+  if (doc.status !== "in_progress") {
+    const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
+    const admin = getSupabaseAdmin();
+    if (admin) {
+      const { data: mirrorRow } = await admin
+        .from("tournaments")
+        .select("status")
+        .eq("id", doc.id)
+        .maybeSingle();
+      if (mirrorRow?.status === "in_progress") {
+        const healed = await transitionTournamentStatus(doc.id, "in_progress", doc.status);
+        if (!healed) {
+          // Another instance is starting it right now — report the race honestly.
+          return { ok: false, error: "The tournament was already started elsewhere" };
+        }
+      }
+    }
+  }
+  if (activeEntryCount(doc) < 2) {
+    return { ok: false, error: "Need at least 2 players to start" };
+  }
+  // Phase 2B: a PAID tournament cannot start with unpaid entries. When the
+  // start is AUTHORITY-DRIVEN (deadline passed / scheduled start / field
+  // filled), waiting on a straggler would freeze the event forever: unpaid
+  // entries are DROPPED instead — they were never confirmed, so nobody paid
+  // anything to lose — and the event starts with the verified field. When
+  // the start is HOST-driven (manual click), the host is told who is unpaid
+  // so they can chase or drop them first: nothing silently deletes a seat
+  // someone is actively trying to pay for.
+  if (isPaidTournamentDoc(doc)) {
+    const { listPaidEntries } = await import("@/lib/server/tournament-economy");
+    const paidIds = new Set((await listPaidEntries(doc.id)).map((p) => p.playerId));
+    const unpaid = doc.entries.filter(
+      (e) => e.leftAt === undefined && !paidIds.has(e.playerId),
+    );
+    if (unpaid.length > 0) {
+      if (source === "host") {
+        const names = unpaid.map((e) => e.playerId.slice(0, 12)).join(", ");
+        return {
+          ok: false,
+          error: `Cannot start yet — ${unpaid.length} entr${unpaid.length === 1 ? "y has" : "ies have"} not completed their entry payment (${names})`,
+        };
+      }
+      for (const e of unpaid) e.leftAt = Date.now();
+      await writeTournamentDoc(doc);
+    }
+  }
+  const won = await transitionTournamentStatus(doc.id, doc.status, "in_progress");
+  if (!won) return { ok: false, error: "The tournament was already started elsewhere" };
+
+  doc.status = "in_progress";
+  doc.startedAt = Date.now();
+  doc.totalRounds = totalRoundsFor(doc, activeEntryCount(doc));
+  doc.currentRound = 0;
+  doc.standings = recomputeStandings(doc);
+  await writeTournamentDoc(doc);
+
+  // First round generation is part of the start transition for formats
+  // that need one (knockout always, swiss round 1). Arena pairs on demand.
+  await ensureNextRoundInner(doc.id).catch(() => {});
+  return { ok: true, doc };
+}
+
+/**
+ * The field just reached maxPlayers (join path, lock held). Registration is
+ * closed by the cap itself; the host's startWhenFull choice decides whether
+ * "full" also means "playing now". Fully idempotent: a second call (a race,
+ * or the maintenance sweep catching the same event) finds the tournament
+ * already locked/started and does nothing.
+ */
+async function onFieldFilled(doc: TournamentDocument): Promise<void> {
+  if (doc.status !== "registration") return;
+  if (activeEntryCount(doc) < doc.maxPlayers) return;
+
+  // Only the host's explicit startWhenFull choice turns a full field into
+  // "playing now". The DEFAULT keeps the historical behaviour the schema
+  // documents (0013_tournament_auto_start: "Default FALSE — the historical
+  // behaviour is preserved"): the event stays in REGISTRATION with the cap
+  // blocking further joins, until the host closes/starts it, the registration
+  // deadline passes, or the scheduled start arrives. Auto-locking here broke
+  // that contract — it also made leave-after-full impossible, since LEAVE is
+  // a REGISTRATION-window action (a full event must be able to lose a player
+  // and admit the next one).
+  if (doc.startWhenFull !== true) return;
+
+  // Lock + start in one sweep. The durable transition guards against a
+  // concurrent instance doing the same; the loser re-reads and sees it done.
+  const won = await transitionTournamentStatus(doc.id, "registration", "locked");
+  if (!won) return; // someone else locked/started it
+  doc.status = "locked";
+  await writeTournamentDoc(doc);
+  const fresh = await getTournamentDoc(doc.id);
+  if (fresh && fresh.status === "locked") {
+    await startTournamentNow(fresh, "authority").catch(() => undefined);
+  }
+}
+
+/**
+ * Deadline processing for one registration tournament whose window has
+ * passed (lock held, doc fresh). THE underfilled rule:
+ *
+ *   active < minPlayers → CANCELLED (+ refunds for a paid event)
+ *   otherwise           → LOCKED (field frozen, structure ready)
+ *
+ * minPlayers = max(2, advertised prize positions) for paid events — a Top-5
+ * event can never start with 4 players and silently shortchange rank 5.
+ */
+async function processRegistrationDeadline(doc: TournamentDocument): Promise<void> {
+  const active = activeEntryCount(doc);
+  const min = doc.minPlayers ?? 2;
+  const paid = isPaidTournamentDoc(doc);
+
+  if (active < min) {
+    const won = await transitionTournamentStatus(doc.id, doc.status, "cancelled");
+    if (!won) return; // raced with a host action — their outcome wins
+    doc.status = "cancelled";
+    doc.cancelReason =
+      `Not enough players joined before registration closed (${active}/${min} needed).` +
+      (paid ? " Entry fees are being refunded." : "");
+    if (paid) {
+      try {
+        const paidEntries = await listPaidEntries(doc.id);
+        if (paidEntries.length > 0) {
+          await materializeRefunds(doc, paidEntries);
+          doc.payoutStatus = "refund_required";
+        }
+      } catch {
+        doc.payoutStatus = "refund_required";
+      }
+    }
+    await writeTournamentDoc(doc);
+    return;
+  }
+
+  // Enough players: freeze the field. (For a startWhenFull event that never
+  // filled, this is also the correct resting state: locked, waiting.)
+  const won = await transitionTournamentStatus(doc.id, doc.status, "locked");
+  if (!won) return;
+  doc.status = "locked";
+  await writeTournamentDoc(doc);
+  // A scheduled start that has also passed starts the event immediately.
+  if (doc.scheduledStartAt != null && Date.now() >= doc.scheduledStartAt) {
+    const fresh = await getTournamentDoc(doc.id);
+    if (fresh && fresh.status === "locked") {
+      await startTournamentNow(fresh, "authority").catch(() => undefined);
+    }
+  }
+}
+
+/**
+ * Auto-start for a locked tournament whose scheduled start has arrived
+ * (lock held). Idempotent: startTournamentNow no-ops the second time.
+ */
+async function autoStartIfDue(doc: TournamentDocument): Promise<void> {
+  if (doc.status !== "locked") return;
+  if (doc.scheduledStartAt == null || Date.now() < doc.scheduledStartAt) return;
+  const fresh = await getTournamentDoc(doc.id);
+  if (fresh && fresh.status === "locked") {
+    await startTournamentNow(fresh, "authority").catch(() => undefined);
+  }
+}
+
+/**
+ * Arena window close: stop new games, freeze standings, complete + plan
+ * payouts. Idempotent (completeTournamentInner short-circuits on completed).
+ */
+async function finalizeArenaIfDue(doc: TournamentDocument): Promise<void> {
+  if (doc.format !== "arena" || doc.status !== "in_progress") return;
+  if (doc.scheduledEndAt == null || Date.now() < doc.scheduledEndAt) return;
+  await completeTournamentInner(doc.id, null);
+}
+
+/**
+ * The time-driven state machine — the engine's scheduler, run from every
+ * tournament list/detail read (the app's poll cadence) and from the
+ * maintenance API endpoint (a Vercel cron can hit it hourly). Every step is
+ * idempotent and lock-guarded, so running it twice — or from two instances
+ * at once — converges to the same state instead of duplicating work.
+ */
+export async function runTournamentMaintenance(): Promise<void> {
+  let docs: TournamentDocument[];
+  try {
+    docs = await listTournamentDocs({ limit: 100 });
+  } catch {
+    return; // reads must never fail because of the scheduler
+  }
+  const now = Date.now();
+  for (const doc of docs) {
+    try {
+      if (doc.status === "draft") {
+        if (doc.scheduledStartAt != null && doc.scheduledStartAt <= now) {
+          await withTournamentLock(doc.id, async () => {
+            const fresh = await getTournamentDoc(doc.id);
+            if (!fresh || fresh.status !== "draft") return;
+            if (fresh.scheduledStartAt == null || fresh.scheduledStartAt > Date.now()) return;
+            const won = await transitionTournamentStatus(fresh.id, fresh.status, "registration");
+            if (!won) return;
+            fresh.status = "registration";
+            await writeTournamentDoc(fresh);
+          });
+        }
+        continue;
+      }
+      if (doc.status === "registration") {
+        if (doc.registrationClosesAt != null && Date.now() >= doc.registrationClosesAt) {
+          await withTournamentLock(doc.id, async () => {
+            const fresh = await getTournamentDoc(doc.id);
+            if (!fresh || fresh.status !== "registration") return;
+            if (fresh.registrationClosesAt == null || Date.now() < fresh.registrationClosesAt) return;
+            await processRegistrationDeadline(fresh);
+          });
+          continue;
+        }
+        // startWhenFull safety net: a fill that raced a crash between the
+        // cap write and onFieldFilled converges here.
+        if (doc.startWhenFull === true && activeEntryCount(doc) >= doc.maxPlayers) {
+          await withTournamentLock(doc.id, async () => {
+            const fresh = await getTournamentDoc(doc.id);
+            if (!fresh || fresh.status !== "registration") return;
+            if (activeEntryCount(fresh) < fresh.maxPlayers) return;
+            await onFieldFilled(fresh);
+          });
+        }
+        continue;
+      }
+      if (doc.status === "locked") {
+        await withTournamentLock(doc.id, () => autoStartIfDue(doc));
+        continue;
+      }
+      if (doc.status === "in_progress") {
+        await withTournamentLock(doc.id, () => finalizeArenaIfDue(doc));
+        // Stale-round recovery: a crash between a result landing and round
+        // generation (or between the last game of a final round and
+        // completion) must not leave the event frozen. ensureNextRoundInner
+        // is a no-op when the round is still live; maybeProgressAfterResult
+        // advances and completes when it is not.
+        await withTournamentLock(doc.id, () =>
+          maybeProgressAfterResult(doc.id).catch(() => undefined),
+        );
+        continue;
+      }
+      // completed / cancelled: settlement (below) is their only work.
+    } catch {
+      // One bad tournament must not block the rest of the sweep.
+    }
+  }
+  // Phase 3B: money obligations of terminal paid events advance here —
+  // payout dispatch/verify, refund dispatch/verify, aggregate status. Every
+  // step idempotent; a second run converges to the same state.
+  try {
+    const { runSettlementSweep } = await import("@/lib/server/tournament-settlement");
+    await runSettlementSweep();
+  } catch {
+    // Settlement must never break the lifecycle sweep that precedes it.
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Registration                                                        */
 /* ------------------------------------------------------------------ */
 
-/** Entries that are actually in the event (not withdrawn). */
+/**
+ * Entries that are actually in the event: not left (registration window)
+ * and not withdrawn (mid-event exit after start). Withdrawn players keep
+ * every completed result and their standings row, but never receive a new
+ * pairing and never block a round's completion.
+ */
 function activeEntries(doc: TournamentDocument): TournamentEntry[] {
-  return doc.entries.filter((e) => e.leftAt === undefined);
+  return doc.entries.filter((e) => e.leftAt === undefined && e.withdrawnAt === undefined);
 }
 
 function activeEntryCount(doc: TournamentDocument): number {
@@ -550,6 +871,12 @@ async function joinTournamentInner(
     return { ok: false, error: "You have already joined this tournament" };
   }
   if (activeEntryCount(doc) >= doc.maxPlayers) {
+    // The fast store is the source of truth for the field: full means full.
+    // (The cross-instance race is covered AFTER the write below — a loser of
+    // a genuine cold-instance race withdraws itself deterministically. The
+    // durable mirror must never override a fast-store "full" here: when it is
+    // unconfigured or hiccups it returns "no answer", and a cap is a promise
+    // the engine cannot quietly reopen.)
     return { ok: false, error: "The tournament is full" };
   }
 
@@ -564,6 +891,41 @@ async function joinTournamentInner(
     doc.entries.push({ playerId, joinedAt: now });
   }
   await writeTournamentDoc(doc);
+  // The 17th seat can never open: re-read AFTER the write and undo if a
+  // concurrent joiner slipped past their own pre-check. Cheap (one read),
+  // and it converts "eventually noticed too many players" into "the loser
+  // of the race is refunded their join immediately".
+  const fresh = await getTournamentDoc(tournamentId);
+  if (
+    fresh &&
+    fresh.entries.filter((e) => e.leftAt === undefined).length > doc.maxPlayers
+  ) {
+    // Two racers must agree on WHO withdraws, or both pulling themselves out
+    // would drop the field below the cap. Deterministic rule both compute
+    // from the same data: the latest join (joinedAt, then id) withdraws.
+    const actives = fresh.entries
+      .filter((e) => e.leftAt === undefined)
+      .sort((a, b) => b.joinedAt - a.joinedAt || (a.playerId < b.playerId ? 1 : -1));
+    const loser = actives[0];
+    const mine = fresh.entries.find((e) => e.playerId === playerId);
+    if (
+      mine &&
+      mine.leftAt === undefined &&
+      !mine.paid &&
+      loser &&
+      loser.playerId === playerId
+    ) {
+      mine.leftAt = Date.now(); // withdrawn: frees the seat, keeps the record
+      await writeTournamentDoc(fresh);
+      return { ok: false, error: "The tournament just filled up — try again later" };
+    }
+  }
+  // Registration auto-close on the cap. The host's startWhenFull choice
+  // decides whether "full" means "locked and playing now" or "locked and
+  // waiting". Runs after the write, under the same lock.
+  if (activeEntryCount(doc) >= doc.maxPlayers) {
+    await onFieldFilled(doc);
+  }
   return { ok: true, doc };
 }
 
@@ -581,7 +943,9 @@ async function leaveTournamentInner(
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) return { ok: false, error: "Tournament not found" };
   if (doc.status === "in_progress") {
-    return { ok: false, error: "The tournament is running, leaving mid-event is not supported in this phase" };
+    // After start, leaving becomes WITHDRAWAL: keep every completed result
+    // and the standings row, but no future pairings. Entry fees stay locked.
+    return withdrawFromTournamentInner(tournamentId, playerId);
   }
   if (isTournamentTerminal(doc.status)) {
     return { ok: false, error: `Tournament is ${doc.status}` };
@@ -590,15 +954,84 @@ async function leaveTournamentInner(
   if (!entry || entry.leftAt !== undefined) {
     return { ok: false, error: "You are not registered in this tournament" };
   }
-  // Phase 2B: a player leaving a PAID tournament during registration is a
-  // refund question — ChainMate has no refund mechanism, so the entry is
-  // flagged refund_required on the tournament and the payment stays recorded
-  // in the ledger (it still counts toward the prize pool — it was real).
+  // Phase 2B: leaving a PAID tournament before lock returns the fee. The
+  // refund obligation is durable and keyed per player, so repeated calls
+  // (or a retry after a crash) can never create a second one. The payment
+  // stays in the ledger history, but it no longer counts toward the prize
+  // pool: the seat was vacated, the money must go back.
+  let refundRecorded = false;
   if (isPaidTournamentDoc(doc) && entry.paid) {
-    doc.payoutStatus = "refund_required";
+    doc.refunds = doc.refunds ?? {};
+    const existing = doc.refunds[playerId];
+    // ONE refund row per (tournament, player) — schema-mandated (0012).
+    //   none      → create the obligation for THIS payment
+    //   verified  → the previous return completed; replace with the new one
+    //   otherwise → an obligation is already in flight; it keeps its tx.
+    //               The newer payment stays in the auditable ledger, and the
+    //               event still shows refund_required — nothing is hidden.
+    if (!existing || existing.status === "verified") {
+      doc.refunds[playerId] = {
+        playerId,
+        entryTxHash: entry.paid.txHash,
+        amountLuna: entryFeeLunaOf(doc).toString(),
+        status: "owed",
+        refundTxHash: null,
+        attempts: 0,
+        lastError: null,
+        createdAt: Date.now(),
+        verifiedAt: null,
+      };
+    }
+    // The seat is vacated and the fee is leaving: the entry is no longer
+    // paid. (Otherwise a free-path rejoin would resurrect a "paid" seat
+    // whose money is being refunded — a real accounting hole.)
+    entry.paid = undefined;
+    refundRecorded = doc.refunds[playerId].status !== "verified";
   }
   entry.leftAt = Date.now();
   await writeTournamentDoc(doc);
+  // Mirror refund rows AFTER the document persists (mirror can never outpace
+  // the fast store).
+  const refundRecord = doc.refunds?.[playerId];
+  if (refundRecord) {
+    const { mirrorRefund } = await import("@/lib/server/tournament-store");
+    await mirrorRefund(doc.id, refundRecord).catch(() => undefined);
+  }
+  // Aggregate status reflects any outstanding refund.
+  if (refundRecorded) {
+    const fresh = await getTournamentDoc(tournamentId);
+    if (fresh && fresh.payoutStatus !== "refunded") {
+      fresh.payoutStatus = "refund_required";
+      await writeTournamentDoc(fresh);
+      return { ok: true, doc: fresh };
+    }
+  }
+  return { ok: true, doc };
+}
+
+/** Withdraw mid-event: keep results, stop future pairings, fee stays locked. */
+async function withdrawFromTournamentInner(
+  tournamentId: string,
+  playerId: string,
+): Promise<TransitionResult> {
+  const doc = await getTournamentDoc(tournamentId);
+  if (!doc) return { ok: false, error: "Tournament not found" };
+  const entry = doc.entries.find((e) => e.playerId === playerId);
+  if (!entry || entry.leftAt !== undefined) {
+    return { ok: false, error: "You are not registered in this tournament" };
+  }
+  if (entry.withdrawnAt !== undefined) {
+    return { ok: true, doc }; // idempotent
+  }
+  entry.withdrawnAt = Date.now();
+  doc.standings = recomputeStandings(doc);
+  await writeTournamentDoc(doc);
+  // With no unfinished pairing left, their withdrawal may complete the round
+  // for everyone else (a Swiss round can now pair / finish, a knockout
+  // bracket can advance). Best-effort — progression retries on the next poll.
+  if (doc.format !== "arena") {
+    await maybeProgressAfterResult(tournamentId).catch(() => undefined);
+  }
   return { ok: true, doc };
 }
 
@@ -679,9 +1112,18 @@ function activeGameFor(doc: TournamentDocument, playerId: string): TournamentMat
   );
 }
 
-/** Players with no unfinished match this round/window. */
+/**
+ * Players with no unfinished match this round/window who are still IN the
+ * event — a withdrawn player is never paired again and never counted as an
+ * unresolved game (no dead browser tab can freeze a round).
+ */
 function idlePlayers(doc: TournamentDocument, playerIds: string[]): string[] {
-  return playerIds.filter((id) => !activeGameFor(doc, id));
+  const withdrawn = new Set(
+    doc.entries.filter((e) => e.withdrawnAt !== undefined).map((e) => e.playerId),
+  );
+  return playerIds.filter(
+    (id) => !withdrawn.has(id) && !activeGameFor(doc, id),
+  );
 }
 
 /**
@@ -873,9 +1315,20 @@ async function ensureNextRoundInner(tournamentId: string): Promise<TransitionRes
   // Odd player out gets a bye: 1 free point, recorded as a marker match that
   // the standings module treats as a point WITHOUT a game (no played, no
   // win for tiebreaks, no Buchholz contribution).
+  //
+  // FAIRNESS: the bye goes to the LOWEST-ranked player who has not had one
+  // yet (never the same player twice), falling back to the lowest-ranked
+  // player overall when everyone has already had one. Standard Swiss
+  // practice — byes are a disadvantage, so they rotate downward deterministically.
   if (order.length % 2 === 1) {
     const paired = new Set(pairs.flat());
-    const bye = order.find((id) => !paired.has(id));
+    const unpaired = order.filter((id) => !paired.has(id));
+    const byedBefore = new Set(
+      doc.matches
+        .filter((m) => m.resultReason === "bye")
+        .map((m) => (m.whitePlayerId === SWISS_BYE_OPPONENT ? m.blackPlayerId : m.whitePlayerId)),
+    );
+    const bye = unpaired.find((id) => !byedBefore.has(id)) ?? unpaired[unpaired.length - 1];
     if (bye) {
       doc.matches.push({
         id: newMatchId(),
@@ -922,6 +1375,81 @@ function seedPosition(seed: number, size: number): number {
 
 /** Sentinel opponent for knockout byes (auto-advance markers). */
 const BYE_OPPONENT = "__bye__";
+
+/**
+ * Resolve ONE knockout match to an advancing player.
+ *
+ * Draws: the bracket must never stay unresolved. Policy (documented for the
+ * UI): a drawn game is recorded, then a DECISIVE replay is generated
+ * immediately — same time control, colours re-flipped so the player who had
+ * White now has Black. Replays continue until a decisive result. Every
+ * replay's game id is archived on the match (tiebreakGameIds) so the record
+ * is auditable. The server determines the advancing player from real game
+ * results only.
+ *
+ * Aborted games: never a loss for either player (nothing was decided). The
+ * withdrawal/default rule applies instead — the BETTER SEED advances, where
+ * seeding is registration order (the same deterministic order the bracket
+ * itself was built from). An eliminated-looking player can never lose a
+ * match they did not play.
+ *
+ * Returns null only for an unfinished match.
+ */
+function knockoutAdvancer(
+  doc: TournamentDocument,
+  match: TournamentMatch,
+): string | null {
+  if (match.status !== "complete") return null;
+  if (match.result === "white") return match.whitePlayerId;
+  if (match.result === "black") return match.blackPlayerId;
+  if (match.resultReason === "aborted" || !match.result) {
+    // Abort default: better seed advances. Registration order is the
+    // deterministic seed; the earlier joiner is the better seed.
+    const wBetter = joinOrder(doc, match.whitePlayerId) <= joinOrder(doc, match.blackPlayerId);
+    return wBetter ? match.whitePlayerId : match.blackPlayerId;
+  }
+  return null;
+}
+
+/**
+ * Schedule the decisive replay for a DRAWN knockout game (lock held, doc
+ * fresh). THE MATCH IS MUTATED IN PLACE: the drawn game id is archived in
+ * tiebreakGameIds and the SAME match row is repointed at the new hosted
+ * game. A second match row for the same pair would freeze the bracket
+ * forever (progression reads one match per slot and would see an
+ * unresolved duplicate), so it must never exist.
+ *
+ * Colours flip: tiebreak slot parity +1 inverts createMatch's alternation,
+ * so the player who had White now has Black. Replays continue until a
+ * decisive result; every replayed game id is archived for audit.
+ *
+ * Idempotent by construction: only an ACTIVE match with a terminal game
+ * reaches here, and once gameId points at the replay the drawn game cannot
+ * re-trigger it.
+ */
+async function scheduleKnockoutTiebreak(
+  doc: TournamentDocument,
+  match: TournamentMatch,
+): Promise<void> {
+  if (match.status !== "active") return; // guard: only a live match replays
+  // Archive the drawn game.
+  match.tiebreakGameIds = [...(match.tiebreakGameIds ?? []), match.gameId];
+  // Colours flip: tiebreak slot parity +1 inverts createMatch's alternation.
+  await createMatch(doc, match.whitePlayerId, match.blackPlayerId, match.round, match.slot + 1);
+  // createMatch PUSHES a new match row — find it (same pair, latest) and
+  // MERGE it into the original row, so the bracket keeps exactly one row
+  // per slot: the replay's game id, still active.
+  const replay = [...doc.matches]
+    .reverse()
+    .find((m) => m !== match && m.gameId && (m.whitePlayerId === match.whitePlayerId && m.blackPlayerId === match.blackPlayerId || m.whitePlayerId === match.blackPlayerId && m.blackPlayerId === match.whitePlayerId));
+  if (!replay) throw new Error("Tiebreak replay row not found");
+  doc.matches.splice(doc.matches.indexOf(replay), 1);
+  match.gameId = replay.gameId;
+  match.status = "active";
+  match.result = undefined;
+  match.resultReason = undefined;
+  match.completedAt = undefined;
+}
 
 /**
  * Swiss pairing for one round, given players ordered by standings (best
@@ -1093,14 +1621,35 @@ async function ingestInner(
   if (match.status === "complete") return;
 
   const status = game.status as GameStatus;
+  // KNOCKOUT DRAWS: a drawn knockout game can never leave the bracket
+  // stuck. The drawn result is RECORDED for the audit trail, then a
+  // decisive replay is generated immediately (same match row, colours
+  // flipped). The replay's result later overwrites the draw on the same
+  // match, so exactly one advancement ever comes out of this pairing.
+  if (doc.format === "knockout" && status !== "aborted" && !game.winner) {
+    match.result = "draw";
+    match.resultReason = status;
+    match.tiebreakGameIds = [...(match.tiebreakGameIds ?? []), match.gameId];
+    await writeTournamentDoc(doc); // persist the audit trail first
+    try {
+      await scheduleKnockoutTiebreak(doc, match);
+    } catch {
+      // Replay creation failed (store hiccup): the match stays recorded as
+      // a draw; the maintenance sweep re-detects a drawn knockout match and
+      // re-schedules the replay. The bracket is never silently stuck.
+    }
+    await writeTournamentDoc(doc);
+    return; // nothing advanced yet — the replay decides
+  }
+
   // Aborted games never happened: the match is voided, no standings impact.
   if (status === "aborted") {
     match.status = "complete";
     match.resultReason = "aborted";
     match.completedAt = Date.now();
   } else if (!game.winner) {
-    // Draw: checkmate-less terminal with no winner (stalemate, agreement,
-    // repetition…). All existing draw-ish terminal states land here.
+    // Draw (Swiss/Arena): half point to each side. All existing draw-ish
+    // terminal states land here (stalemate, agreement, repetition…).
     match.status = "complete";
     match.result = "draw";
     match.resultReason = status;
@@ -1147,17 +1696,37 @@ async function maybeProgressAfterResult(tournamentId: string): Promise<void> {
 
   if (doc.format === "knockout") {
     const roundMatches = doc.matches.filter((m) => m.round === doc.currentRound);
-    if (roundMatches.length === 0 || roundMatches.some((m) => m.status !== "complete")) {
-      return; // round still running
+    if (roundMatches.length === 0) return;
+    // A DRAWN knockout match never resolves on its own: reschedule its
+    // decisive replay (idempotent — only fires when the referenced game is
+    // terminal-drawn and no replay exists yet). The round stays open until
+    // a decisive result lands, exactly as the brief requires.
+    for (const m of roundMatches) {
+      if (m.status === "complete" && m.result === "draw" && m.resultReason !== "aborted") {
+        // Reactivate the REAL row (not a copy) so the round correctly reads
+        // unresolved while the replay runs, and reschedule it.
+        m.status = "active";
+        await scheduleKnockoutTiebreak(doc, m).catch(() => {
+          // Replay creation failed: keep the draw recorded; the next sweep
+          // retries. The bracket shows the drawn game meanwhile.
+          m.status = "complete";
+        });
+      }
     }
-    const winners = roundMatches.map((m) =>
-      m.result === "white" ? m.whitePlayerId : m.blackPlayerId,
-    );
+    if (roundMatches.some((m) => m.status !== "complete")) {
+      return; // round still running (a rescheduled replay is active again)
+    }
+    // Resolve every match through ONE advancer — the same function the
+    // bracket builder uses — so a draw/abort can never silently hand the
+    // match to Black via the old `result === "white" ? white : black` trap.
+    const winners = roundMatches
+      .map((m) => knockoutAdvancer(doc, m))
+      .filter((id): id is string => id !== null);
     if (winners.length === 1) {
       await completeTournamentInner(tournamentId, winners[0]);
       return;
     }
-    // Every match in the round is done — build the next one. Byes can make
+    // Every match resolved — build the next round. Byes can make
     // winners.length odd: an odd winner gets a free pass (documented).
     await ensureNextRoundInner(tournamentId);
     return;
@@ -1237,6 +1806,11 @@ async function completeTournamentInner(
   doc.winnerId = winner;
   doc.standings = recomputeStandings(doc);
   await writeTournamentDoc(doc);
+  // Engine completions plan the purse too - the host transition is not the
+  // only door to COMPLETED (Swiss final round, knockout final, arena window
+  // close all arrive here). planTournamentPayouts is idempotent, so the two
+  // paths racing converge on one set of payout rows.
+  await planPayoutsIfPaid(doc).catch(() => undefined);
   return { ok: true, doc };
 }
 
@@ -1251,32 +1825,14 @@ async function completeTournamentInner(
  * has to a background scheduler, and good enough: the event opens within
  * one poll of its scheduled instant without any cron infrastructure.
  */
+/**
+ * Back-compat shim: reads used to run only the scheduled-open sweep. They
+ * now run the full time-driven state machine (opens, deadlines, auto-start,
+ * arena finals) — every step idempotent, so a poll every few seconds is the
+ * app's scheduler without any cron infrastructure.
+ */
 async function openDueTournaments(): Promise<void> {
-  let docs: TournamentDocument[];
-  try {
-    docs = await listTournamentDocs({ status: "draft", limit: 50 });
-  } catch {
-    return; // reads must never fail because of the scheduler
-  }
-  const now = Date.now();
-  for (const doc of docs) {
-    if (doc.scheduledStartAt == null || doc.scheduledStartAt > now) continue;
-    // Lock under the per-document lock; a host opening it manually first
-    // simply makes this a no-op.
-    try {
-      await withTournamentLock(doc.id, async () => {
-        const fresh = await getTournamentDoc(doc.id);
-        if (!fresh || fresh.status !== "draft") return;
-        if (fresh.scheduledStartAt == null || fresh.scheduledStartAt > Date.now()) return;
-        const won = await transitionTournamentStatus(fresh.id, fresh.status, "registration");
-        if (!won) return;
-        fresh.status = "registration";
-        await writeTournamentDoc(fresh);
-      });
-    } catch {
-      // One bad tournament must not block the rest of the list.
-    }
-  }
+  await runTournamentMaintenance();
 }
 
 export async function getTournamentDetail(
@@ -1291,6 +1847,7 @@ export async function getTournamentDetail(
   myActiveGameId: string | null;
   entryNames: Record<string, string>;
   payouts?: TournamentPayoutLine[];
+  refunds?: TournamentRefundLine[];
 } | null> {
   await openDueTournaments();
   const doc = await getTournamentDoc(tournamentId);
@@ -1349,11 +1906,22 @@ export async function getTournamentDetail(
     }
   }
 
+  // Refund lines for paid events (cancel / leave-before-lock) — UI-safe.
+  let refunds: TournamentRefundLine[] | undefined;
+  if (doc.refunds && Object.keys(doc.refunds).length > 0) {
+    refunds = Object.values(doc.refunds).map((r) => ({
+      playerId: r.playerId,
+      amountLuna: r.amountLuna,
+      status: r.status,
+    }));
+  }
+
   return {
     summary,
     entries: entrants,
     rounds,
     standings: doc.standings.length > 0 ? doc.standings : recomputeStandings(doc),
+    refunds,
     myRole:
       viewerId && doc.creatorId === viewerId
         ? "host"
@@ -1379,6 +1947,7 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
     playerCount,
     registrationClosesAt: doc.registrationClosesAt,
     scheduledStartAt: doc.scheduledStartAt,
+    scheduledEndAt: doc.scheduledEndAt,
     startedAt: doc.startedAt,
     completedAt: doc.completedAt,
     createdAt: doc.createdAt,
@@ -1389,6 +1958,11 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
     entryFeeLuna: doc.entryFeeLuna ?? null,
     prizePreset: doc.prizePreset ?? null,
     payoutStatus: doc.payoutStatus ?? "none",
+    // Lifecycle fields: why a cancelled event died, and what happens when
+    // the field fills. Additive; older clients ignore them.
+    cancelReason: doc.cancelReason ?? null,
+    minPlayers: doc.minPlayers ?? null,
+    startWhenFull: doc.startWhenFull ?? false,
   };
 }
 

@@ -393,6 +393,14 @@ export function configureTreasurySigner(signer: TreasurySigner | null): void {
 }
 
 /**
+ * The currently installed signer, if any — lets sibling modules (refund
+ * settlement) honor the same installation instead of ignoring it.
+ */
+export function getConfiguredTreasurySigner(): TreasurySigner | null {
+  return configuredSigner;
+}
+
+/**
  * Try to send one payout. Typed configuration error when no real signer is
  * configured — the brief forbids inventing one or faking hashes.
  */

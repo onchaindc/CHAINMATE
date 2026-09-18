@@ -29,6 +29,9 @@ interface Envelope {
   body: string;
   sentAt: number;
   readAt: number | null;
+  /** Server-resolved display name for the OTHER side (never a raw id). */
+  counterpartName?: string;
+  counterpartId?: string;
 }
 
 interface SearchRow {
@@ -68,6 +71,8 @@ export default function MessagesPage() {
   const authed = !identity.isGuest && Boolean(identity.username);
 
   const [inbox, setInbox] = useState<Envelope[] | null>(null);
+  /** The friends this account may chat with (server decides, not the UI). */
+  const [allowedPeers, setAllowedPeers] = useState<Set<string>>(new Set());
   const [peer, setPeer] = useState<SearchRow | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchRow[]>([]);
@@ -86,8 +91,9 @@ export default function MessagesPage() {
         { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
       );
       if (!res.ok) return;
-      const data = (await res.json()) as { messages?: Envelope[] };
+      const data = (await res.json()) as { messages?: Envelope[]; allowedPeers?: string[] };
       setInbox(data.messages ?? []);
+      setAllowedPeers(new Set(data.allowedPeers ?? []));
     } catch {
       // transient; keep the previous list
     }
@@ -132,7 +138,13 @@ export default function MessagesPage() {
           `/api/players/search?q=${encodeURIComponent(q)}&viewer=${encodeURIComponent(identity.playerId ?? "")}`,
         );
         const data = (await res.json()) as { playersSearch?: SearchRow[] };
-        setResults((data.playersSearch ?? []).filter((r) => r.player_id !== identity.playerId));
+        // Messaging is friends-only: the search offers exactly the players
+        // this account can actually chat with, nothing else.
+        setResults(
+          (data.playersSearch ?? []).filter(
+            (r) => r.player_id !== identity.playerId && allowedPeers.has(r.player_id),
+          ),
+        );
       } catch {
         setResults([]);
       } finally {
@@ -140,19 +152,24 @@ export default function MessagesPage() {
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [query, authed, identity.playerId]);
+  }, [query, authed, identity.playerId, allowedPeers]);
 
   /* Conversations: group DM envelopes by the OTHER side of the exchange,
      oldest copy of my sent message included (that is what makes an
-     initiated-but-unanswered chat show up in the list). */
+     initiated-but-unanswered chat show up in the list). The peer name is the
+     SERVER-RESOLVED counterpart name on every envelope, so the list can
+     never show a raw acct_… id even for a chat this player started that has
+     had no reply yet (the exact leak that was reported). */
   const conversations = useMemo<Conversation[]>(() => {
     if (!inbox) return [];
     const map = new Map<string, Conversation>();
     for (const m of inbox) {
       if (m.kind !== "dm") continue;
-      const peerId =
-        m.fromPlayerId === identity.playerId ? (m.toPlayerId ?? null) : m.fromPlayerId;
+      const mine = m.fromPlayerId === identity.playerId;
+      const peerId = m.counterpartId ?? (mine ? (m.toPlayerId ?? null) : m.fromPlayerId);
       if (!peerId) continue;
+      // Friends-only: the server sends the allowlist; the UI mirrors it.
+      if (!allowedPeers.has(peerId)) continue;
       const unread = m.kind === "dm" && m.readAt === null && m.fromPlayerId !== identity.playerId;
       const existing = map.get(peerId);
       if (existing) {
@@ -165,14 +182,14 @@ export default function MessagesPage() {
       }
       map.set(peerId, {
         peerId,
-        peerName: m.fromPlayerId === identity.playerId ? (m.toPlayerId ?? peerId) : m.fromName,
+        peerName: m.counterpartName ?? m.fromName ?? peerId,
         lastBody: preview(m.body),
         lastAt: m.sentAt,
         unread: unread ? 1 : 0,
       });
     }
     return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
-  }, [inbox, identity.playerId]);
+  }, [inbox, identity.playerId, allowedPeers]);
 
   const thread = useMemo(() => {
     if (!inbox || !peer) return [];
@@ -254,7 +271,6 @@ export default function MessagesPage() {
       <PageHeader
         eyebrow="Direct"
         title="Messages"
-        description="Pick a player, say hello. Official announcements land in your bell."
       />
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-6">
@@ -278,8 +294,10 @@ export default function MessagesPage() {
             {query.trim().length >= 2 && (
               <ul className="mt-2 space-y-0.5">
                 {results.length === 0 && !searching && (
-                  <li className="px-2 py-3 text-center text-xs text-muted-foreground">
-                    No players found
+                  <li className="px-2 py-3 text-center text-xs leading-relaxed text-muted-foreground">
+                    {allowedPeers.size === 0
+                      ? "Messaging is for friends. Add friends from your profile, then chat here."
+                      : "No friends match that search"}
                   </li>
                 )}
                 {results.map((r) => (
@@ -451,7 +469,7 @@ export default function MessagesPage() {
               <EmptyState
                 icon={MessagesSquare}
                 title="Pick a conversation"
-                description="Search for a player on the left and start chatting."
+                description="Chats are between friends. Add friends from your profile, then pick one here."
               />
             </div>
           )}
