@@ -168,12 +168,13 @@ export const tournamentApi = {
   async payoutAction(
     tournamentId: string,
     playerId: string,
-    action: "plan" | "send" | "retry" | "dispatch" | "verify",
+    action: "plan" | "send" | "retry" | "dispatch" | "verify" | "wallet-prepare" | "wallet-claim" | "wallet-confirm",
     targetPlayerId?: string,
+    txHash?: string,
   ): Promise<Record<string, unknown>> {
     return call(`/api/tournaments/${encodeURIComponent(tournamentId)}/payouts`, {
       method: "POST",
-      body: JSON.stringify({ playerId, action, targetPlayerId }),
+      body: JSON.stringify({ playerId, action, targetPlayerId, txHash }),
     });
   },
 };

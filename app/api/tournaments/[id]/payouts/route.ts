@@ -15,6 +15,12 @@ import {
   dispatchPayout,
   verifyOutgoingPayout,
 } from "@/lib/server/tournament-payouts-dispatch";
+import {
+  PayoutClaimError,
+  claimPayoutWithWalletTransaction,
+  confirmSentWalletPayout,
+  preparePayoutClaim,
+} from "@/lib/server/tournament-payouts-wallet";
 
 export const runtime = "nodejs";
 
@@ -45,10 +51,12 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 interface PayoutActionBody {
-  action: "plan" | "send" | "retry" | "dispatch" | "verify";
+  action: "plan" | "send" | "retry" | "dispatch" | "verify" | "wallet-prepare" | "wallet-claim" | "wallet-confirm";
   playerId?: string;
   /** For send/dispatch/retry/verify: which winner's payout to act on. */
   targetPlayerId?: string;
+  /** For wallet-claim: the hash of the host's Nimiq Pay transaction. */
+  txHash?: string;
 }
 
 /**
@@ -197,6 +205,59 @@ export async function POST(req: NextRequest, { params }: Params) {
           },
         });
       }
+      case "wallet-prepare": {
+        // The host pays from their own Nimiq Pay wallet: return the exact
+        // wire facts (winner's linked address, exact prize luna) to prefill
+        // the wallet sheet. No secret ever crosses to the client.
+        if (!body.targetPlayerId) {
+          return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+        }
+        const intent = await preparePayoutClaim(id, acting.playerId, body.targetPlayerId);
+        return NextResponse.json({ intent });
+      }
+      case "wallet-claim": {
+        // Verify the host's real on-chain prize payment and mark the payout
+        // sent. All checks server-side: exists, network, host sender (or
+        // owned wrapper), winner recipient, exact amount, execution, ≥8
+        // confirmations, hash never claimed before.
+        if (!body.targetPlayerId || !body.txHash) {
+          return NextResponse.json(
+            { error: "targetPlayerId and txHash are required" },
+            { status: 400 },
+          );
+        }
+        const result = await claimPayoutWithWalletTransaction(
+          id,
+          acting.playerId,
+          body.targetPlayerId,
+          body.txHash,
+        );
+        return NextResponse.json({
+          payout: {
+            playerId: result.payout.playerId,
+            status: result.payout.status,
+            amountLuna: result.payout.amountLuna,
+            payoutTxHash: result.payout.payoutTxHash,
+            confirmations: result.confirmations,
+          },
+        });
+      }
+      case "wallet-confirm": {
+        // Refresh confirmations for an already-claimed prize → 'verified'.
+        if (!body.targetPlayerId) {
+          return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+        }
+        const result = await confirmSentWalletPayout(id, acting.playerId, body.targetPlayerId);
+        return NextResponse.json({
+          payout: {
+            playerId: result.payout.playerId,
+            status: result.payout.status,
+            amountLuna: result.payout.amountLuna,
+            payoutTxHash: result.payout.payoutTxHash,
+            confirmations: result.confirmations,
+          },
+        });
+      }
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
@@ -205,6 +266,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     if (err instanceof PayoutDispatchError) {
+      return NextResponse.json(
+        { error: err.message, kind: err.kind },
+        { status: err.status },
+      );
+    }
+    if (err instanceof PayoutClaimError) {
       return NextResponse.json(
         { error: err.message, kind: err.kind },
         { status: err.status },

@@ -221,7 +221,7 @@ export default function TournamentDetailPage() {
   }, [stillJoined, entry.pendingTxHash]);
 
   /** Host-only payout dispatch/verify — crash-safe on the server. */
-  const runPayoutAction = async (action: "dispatch" | "verify", targetPlayerId: string) => {
+  const runPayoutAction = async (action: "dispatch" | "verify" | "wallet-confirm", targetPlayerId: string) => {
     if (!detail || payoutBusy) return;
     setPayoutBusy(`${action}:${targetPlayerId}`);
     setActionError(null);
@@ -230,6 +230,66 @@ export default function TournamentDetailPage() {
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Payout action failed");
+    } finally {
+      setPayoutBusy(null);
+    }
+  };
+
+  /**
+   * HOST-WALLET PRIZE PAYMENT — the zero-infrastructure treasury.
+   *
+   * 1. Ask the server for the exact wire facts (winner's linked address +
+   *    exact prize luna) — the host never types an address.
+   * 2. Open Nimiq Pay through the proven wallet wrapper; the host confirms
+   *    the send in the wallet's native sheet.
+   * 3. Submit the returned hash: the server verifies it on-chain (exists,
+   *    network, host sender, winner recipient, exact amount, executed, not
+   *    already claimed) and marks the prize paid.
+   */
+  const sendPrizeFromWallet = async (targetPlayerId: string) => {
+    if (payoutBusy) return;
+    setPayoutBusy(`wallet:${targetPlayerId}`);
+    setActionError(null);
+    try {
+      const prep = (await tournamentApi.payoutAction(
+        id,
+        identity.playerId,
+        "wallet-prepare",
+        targetPlayerId,
+      )) as { intent: { recipientAddress: string; amountLuna: string; network: string } };
+      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
+      const { canonicalAddress } = await import("@/lib/nimiq/address");
+      const { parseNim } = await import("@/lib/nimiq/format");
+
+      const connected = await connectNimiq();
+      if (!connected.ok) throw new Error(connected.error.message);
+      const sent = await sendNimiqBasicTransaction(connected.value, {
+        recipient: canonicalAddress(prep.intent.recipientAddress),
+        value: BigInt(prep.intent.amountLuna),
+      });
+      if (!sent.ok) throw new Error(sent.error.message);
+
+      setPayoutBusy(`wallet-claim:${targetPlayerId}`);
+      try {
+        await tournamentApi.payoutAction(
+          id,
+          identity.playerId,
+          "wallet-claim",
+          targetPlayerId,
+          sent.value,
+        );
+        await load();
+      } catch (claimErr) {
+        // The money has MOVED at this point — the hash is shown so the host
+        // can retry the claim (Check status) without ever paying twice.
+        setActionError(
+          `Payment sent (tx ${sent.value.slice(0, 10)}…) but verification is not finished: ${
+            claimErr instanceof Error ? claimErr.message : "claim failed"
+          }. Press “Check status” on this prize in a moment — you will NOT pay again.`,
+        );
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Sending the prize failed");
     } finally {
       setPayoutBusy(null);
     }
@@ -899,20 +959,41 @@ export default function TournamentDetailPage() {
                     {displayNim(p.amountLuna)} NIM
                   </span>
                   <PayoutStatusPill status={p.status} />
-                  {isHost &&
-                    (p.status === "pending" || p.status === "failed" || p.status === "dispatching") && (
+                  {isHost && p.status === "dispatching" && (
                       <button
                         type="button"
                         disabled={payoutBusy !== null}
                         onClick={() => void runPayoutAction("dispatch", p.playerId)}
-                        title={
-                          p.status === "dispatching"
-                            ? "A send was attempted but its outcome is unknown. This re-checks the recorded broadcast on-chain and completes it as sent, or safely retries — it can never pay twice."
-                            : "Send this prize from the treasury wallet."
-                        }
+                        title="A send was attempted but its outcome is unknown. This re-checks the recorded broadcast on-chain and completes it as sent, or safely retries — it can never pay twice."
                         className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
                       >
-                        {p.status === "dispatching" ? "check status" : "send prize"}
+                        check status
+                      </button>
+                    )}
+                  {isHost && (p.status === "pending" || p.status === "failed") && (
+                      <button
+                        type="button"
+                        disabled={payoutBusy !== null}
+                        onClick={() => void sendPrizeFromWallet(p.playerId)}
+                        title="Open Nimiq Pay with the winner's address and the exact prize prefilled. ChainMate verifies your transaction on-chain and marks the prize paid."
+                        className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                      >
+                        {payoutBusy?.startsWith(`wallet:${p.playerId}`) || payoutBusy?.startsWith(`wallet-claim:${p.playerId}`)
+                          ? "confirm in wallet…"
+                          : p.status === "failed"
+                            ? "retry from wallet"
+                            : "send prize"}
+                      </button>
+                    )}
+                  {isHost && p.status === "sent" && (
+                      <button
+                        type="button"
+                        disabled={payoutBusy !== null}
+                        onClick={() => void runPayoutAction("wallet-confirm", p.playerId)}
+                        title="Re-check the prize transaction's confirmations on-chain. At 8 confirmations it becomes verified."
+                        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+                      >
+                        check status
                       </button>
                     )}
                   {isHost && p.status === "sent" && (
