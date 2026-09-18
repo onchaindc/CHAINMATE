@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { Chess, type Square } from "chess.js";
 import { PIECE_RENDERERS, pieceRenderer } from "@/components/game/piece-sets";
@@ -69,7 +69,15 @@ const PROMOTION_NAMES: Record<(typeof PROMOTION_PIECES)[number], string> = {
   n: "Knight",
 };
 
-export function ChessBoard({
+/**
+ * Memoized hard: a chess board's props change only when the position or the
+ * interaction state does. Without the memo, every parent state change (the
+ * clocks ticking each second, busy flags, banners) re-rendered the whole
+ * board tree, and drag interactions hitched on slower devices — the
+ * "laggy pieces" feedback. With it, a clock tick no longer touches the
+ * board at all.
+ */
+const ChessBoardMemo = memo(function ChessBoardInner({
   fen,
   orientation,
   interactive,
@@ -216,7 +224,7 @@ export function ChessBoard({
         options={{
           position: fen || START_FEN,
           boardOrientation: orientation,
-          animationDurationInMs: 180,
+          animationDurationInMs: 200,
           showNotation: true,
           allowDragging: interactive && !busy,
           squareStyles,
@@ -276,4 +284,6 @@ export function ChessBoard({
       )}
     </div>
   );
-}
+});
+
+export const ChessBoard = ChessBoardMemo;

@@ -147,7 +147,7 @@ export function PlayerMenu() {
               Games
             </Link>
             <Link
-              href="/profile#settings"
+              href="/settings"
               onClick={close}
               className="block px-4 py-2 text-sm text-foreground/85 transition-all hover:bg-secondary/50 active:scale-[0.98]"
             >

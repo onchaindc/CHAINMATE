@@ -100,14 +100,18 @@ alter table public.tournament_entries enable row level security;
 alter table public.tournament_matches enable row level security;
 alter table public.tournament_standings enable row level security;
 
+drop policy if exists "tournaments are publicly readable" on public.tournaments;
 create policy "tournaments are publicly readable"
   on public.tournaments for select using (true);
 
+drop policy if exists "tournament entries are publicly readable" on public.tournament_entries;
 create policy "tournament entries are publicly readable"
   on public.tournament_entries for select using (true);
 
+drop policy if exists "tournament matches are publicly readable" on public.tournament_matches;
 create policy "tournament matches are publicly readable"
   on public.tournament_matches for select using (true);
 
+drop policy if exists "tournament standings are publicly readable" on public.tournament_standings;
 create policy "tournament standings are publicly readable"
   on public.tournament_standings for select using (true);

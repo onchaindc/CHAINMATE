@@ -51,13 +51,16 @@ export function ConfirmDialog({
       aria-modal="true"
       aria-label={title}
       className={cn(
-        "fixed inset-0 z-50 flex items-end justify-center bg-scrim px-3 backdrop-blur-sm sm:items-center sm:px-4",
+        /* Centered on every screen. It used to slide up from the bottom edge
+           on phones (items-end + rounded-t), which read as a stray toast and
+           put the buttons where thumbs type, not where eyes look. */
+        "fixed inset-0 z-50 flex items-center justify-center bg-scrim px-4 backdrop-blur-sm",
         className,
       )}
       onClick={busy ? undefined : onCancel}
     >
       <div
-        className="animate-fade-in-up w-full rounded-t-xl border border-border/70 bg-card p-5 shadow-elevation-3 sm:max-w-sm sm:rounded-xl"
+        className="animate-fade-in-up w-full max-w-sm rounded-xl border border-border/70 bg-card p-5 shadow-elevation-3"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">

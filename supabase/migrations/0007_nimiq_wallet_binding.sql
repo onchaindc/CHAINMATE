@@ -58,7 +58,9 @@ alter table public.nimiq_wallet_challenges enable row level security;
 
 -- Bindings are public read (a wallet address is public chain data, and the
 -- app's profiles/leaderboard are public too); every write goes through the
--- authenticated API with the service-role key.
+-- authenticated API with the service-role key. Drop guard keeps RUN_ALL
+-- re-runnable.
+drop policy if exists "nimiq wallet bindings are publicly readable" on public.nimiq_wallet_bindings;
 create policy "nimiq wallet bindings are publicly readable"
   on public.nimiq_wallet_bindings for select using (true);
 

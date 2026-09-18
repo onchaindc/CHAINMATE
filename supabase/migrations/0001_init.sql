@@ -79,11 +79,16 @@ alter table public.player_achievements enable row level security;
 -- Public read: profiles (leaderboard, public profiles), games (watch /
 -- replay), achievements. No insert/update/delete policies exist — only the
 -- service-role key (which bypasses RLS) can write.
+-- Postgres has no CREATE POLICY IF NOT EXISTS, so every policy is preceded by
+-- a drop guard: re-running this file (via RUN_ALL.sql) stays idempotent.
+drop policy if exists "profiles are publicly readable" on public.profiles;
 create policy "profiles are publicly readable"
   on public.profiles for select using (true);
 
+drop policy if exists "games are publicly readable" on public.games;
 create policy "games are publicly readable"
   on public.games for select using (true);
 
+drop policy if exists "achievements are publicly readable" on public.player_achievements;
 create policy "achievements are publicly readable"
   on public.player_achievements for select using (true);

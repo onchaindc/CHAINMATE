@@ -89,12 +89,17 @@ alter table public.player_achievements enable row level security;
 -- Public read: profiles (leaderboard, public profiles), games (watch /
 -- replay), achievements. No insert/update/delete policies exist — only the
 -- service-role key (which bypasses RLS) can write.
+-- Postgres has no CREATE POLICY IF NOT EXISTS, so every policy is preceded by
+-- a drop guard: re-running this file (via RUN_ALL.sql) stays idempotent.
+drop policy if exists "profiles are publicly readable" on public.profiles;
 create policy "profiles are publicly readable"
   on public.profiles for select using (true);
 
+drop policy if exists "games are publicly readable" on public.games;
 create policy "games are publicly readable"
   on public.games for select using (true);
 
+drop policy if exists "achievements are publicly readable" on public.player_achievements;
 create policy "achievements are publicly readable"
   on public.player_achievements for select using (true);
 
@@ -161,7 +166,8 @@ create index if not exists friendships_requester_idx
 alter table public.friendships enable row level security;
 
 -- Public read so profiles can render friends lists (writes stay service-role
--- only, like every other trusted table).
+-- only, like every other trusted table). Drop guard keeps RUN_ALL re-runnable.
+drop policy if exists "friendships are publicly readable" on public.friendships;
 create policy "friendships are publicly readable"
   on public.friendships for select using (true);
 
@@ -534,15 +540,19 @@ alter table public.tournament_entries enable row level security;
 alter table public.tournament_matches enable row level security;
 alter table public.tournament_standings enable row level security;
 
+drop policy if exists "tournaments are publicly readable" on public.tournaments;
 create policy "tournaments are publicly readable"
   on public.tournaments for select using (true);
 
+drop policy if exists "tournament entries are publicly readable" on public.tournament_entries;
 create policy "tournament entries are publicly readable"
   on public.tournament_entries for select using (true);
 
+drop policy if exists "tournament matches are publicly readable" on public.tournament_matches;
 create policy "tournament matches are publicly readable"
   on public.tournament_matches for select using (true);
 
+drop policy if exists "tournament standings are publicly readable" on public.tournament_standings;
 create policy "tournament standings are publicly readable"
   on public.tournament_standings for select using (true);
 
@@ -609,7 +619,9 @@ alter table public.nimiq_wallet_challenges enable row level security;
 
 -- Bindings are public read (a wallet address is public chain data, and the
 -- app's profiles/leaderboard are public too); every write goes through the
--- authenticated API with the service-role key.
+-- authenticated API with the service-role key. Drop guard keeps RUN_ALL
+-- re-runnable.
+drop policy if exists "nimiq wallet bindings are publicly readable" on public.nimiq_wallet_bindings;
 create policy "nimiq wallet bindings are publicly readable"
   on public.nimiq_wallet_bindings for select using (true);
 

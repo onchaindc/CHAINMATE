@@ -39,6 +39,7 @@ create index if not exists friendships_requester_idx
 alter table public.friendships enable row level security;
 
 -- Public read so profiles can render friends lists (writes stay service-role
--- only, like every other trusted table).
+-- only, like every other trusted table). Drop guard keeps RUN_ALL re-runnable.
+drop policy if exists "friendships are publicly readable" on public.friendships;
 create policy "friendships are publicly readable"
   on public.friendships for select using (true);

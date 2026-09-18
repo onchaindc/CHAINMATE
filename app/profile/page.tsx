@@ -2,14 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Gamepad2, Globe } from "lucide-react";
+import Link from "next/link";
+import { UserRound, Gamepad2, Globe } from "lucide-react";
 import { RequireProfile } from "@/components/auth/require-profile";
 import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
-import { FriendsPanel } from "@/components/profile/friends-panel";
 import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
-import { ProfileSettingsSection } from "@/components/profile/profile-settings";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
 import { AvatarUploadCard } from "@/components/profile/avatar-upload-card";
 import { RecentForm } from "@/components/profile/recent-form";
@@ -312,17 +311,10 @@ function ProfileContent() {
       </div>
       </div>
 
-      {/* Friends + player search — full width beneath both columns, so the
-          search input gets the room it deserves and the right column doesn't
-          grow an endless tail. */}
-      <div id="friends" className="mt-10 scroll-mt-20">
-        <FriendsPanel store={hostedStore} />
-      </div>
-
-      {/* Settings: support, friends link, board theme, awards, stats,
-          membership — the rows that are managed, not displayed. */}
-      <div id="settings" className="mt-10 scroll-mt-20">
-        <ProfileSettingsSection stats={stats} />
+      {/* Friends + player search live on their own page now; this row is a
+          pointer so the profile stays a summary rather than a control room. */}
+      <div className="mt-10">
+        <FriendsLinkRow />
       </div>
 
       {/* Danger zone — delete account */}
@@ -332,6 +324,20 @@ function ProfileContent() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Pointer to the standalone Friends page: opens the full list, requests
+    and player search without duplicating them on the profile. */
+function FriendsLinkRow() {
+  return (
+    <Link
+      href="/friends"
+      className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-4 text-sm font-medium shadow-sm transition-all hover:bg-accent active:scale-[0.97]"
+    >
+      <UserRound className="h-4 w-4" aria-hidden />
+      Your friends
+    </Link>
   );
 }
 

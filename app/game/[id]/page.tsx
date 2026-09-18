@@ -367,9 +367,23 @@ export default function GamePage() {
       ? "black"
       : "white"
     : baseOrientation;
-  const lastMove = game.moves.length
-    ? { from: game.moves[game.moves.length - 1].from, to: game.moves[game.moves.length - 1].to }
-    : null;
+  /* Referentially stable per position: the memoized board compares props,
+     and a fresh object literal every render (clock ticks included) would
+     defeat the memo and bring the drag hitching back. */
+  const lastMove = useMemo(() => {
+    const last = game.moves[game.moves.length - 1];
+    return last ? { from: last.from, to: last.to } : null;
+  }, [game.moves]);
+
+  const handleBoardMove = useCallback(
+    (from: string, to: string, promotion?: string) => {
+      if (touchDeviceRef.current) {
+        pendingScrollRef.current = window.scrollY;
+      }
+      void submitMove(from, to, promotion);
+    },
+    [submitMove],
+  );
   const spectator = mySide === null && !waiting;
   const aiThinking = isAiGame && game.status === "active" && !myTurn;
   const moveNumber = Math.floor(game.moves.length / 2) + 1;
@@ -600,11 +614,13 @@ export default function GamePage() {
       <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-8">
         {/* The board column's WIDTH is the viewport-height budget on desktop:
             a square board can never be wider than the height it is allowed,
-            or it overflows the fold. It is also capped at 56rem so on very
-            tall monitors the match console keeps a readable column instead of
-            being squeezed to nothing. Mobile stays width-driven. */}
+            or it overflows the fold. The real chrome above/below the board
+            (player cards, controls, status lines) is MEASURED at runtime by
+            BoardChromeMeter below — the old hardcoded 14rem estimate was
+            ~3rem short of reality, which pushed the board's bottom rank
+            under the fold. Mobile stays width-driven. */}
         <div
-          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome)-var(--board-banner,0rem))))] lg:flex-none"
+          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome-dyn,14rem)-var(--board-banner,0rem))))] lg:flex-none"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
@@ -618,7 +634,7 @@ export default function GamePage() {
               top — the two halves of the screen disagreed about who was who,
               which reads as the whole board being the wrong way round. */}
           {playerCardFor(orientation === "white" ? "black" : "white")}
-          <div className="overflow-hidden rounded-md ring-1 ring-border/40">
+          <div data-board-root className="overflow-hidden rounded-md ring-1 ring-border/40">
             <ChessBoard
               fen={boardFen ?? game.fen}
               orientation={orientation}
@@ -626,12 +642,7 @@ export default function GamePage() {
               inCheck={inCheck}
               lastMove={replayMode ? replayLastMove : lastMove}
               pieceSet={pieceSet}
-              onMove={(from, to, promotion) => {
-                if (touchDeviceRef.current) {
-                  pendingScrollRef.current = window.scrollY;
-                }
-                void submitMove(from, to, promotion);
-              }}
+              onMove={handleBoardMove}
               busy={busy === "move"}
             />
           </div>
@@ -866,6 +877,8 @@ export default function GamePage() {
           )}
         </div>
 
+        <BoardChromeMeter columnRef={boardRef} />
+
         {/* Match console — beside the board on desktop, filling the leftover
             width; below the board on mobile. It scrolls inside itself so the
             page never scrolls a live game out from under the player. */}
@@ -1000,7 +1013,50 @@ function MeasuredBanners({ children }: { children: React.ReactNode }) {
       ro.disconnect();
       root.style.removeProperty("--board-banner");
     };
-  }, []);
+  }, []);    return <div ref={ref}>{children}</div>;
+  }
 
-  return <div ref={ref}>{children}</div>;
+/**
+ * Publishes the board column's real chrome (every row except the board
+ * itself: player cards, controls, status lines) as `--board-chrome-dyn` on
+ * the document root. The column's width formula reads that var, so the
+ * board is sized from what the chrome ACTUALLY occupies rather than an
+ * estimate: the static 14rem budget drifted several rem below reality as
+ * rows were added (spectate line, review controls), and a square 3rem too
+ * tall ends up under the fold. Re-measures whenever a row resizes.
+ *
+ * Takes the column ref rather than wrapping it: the column is a direct flex
+ * child, and a wrapper div would break that layout while measuring the
+ * wrong element. Renders nothing.
+ */
+function BoardChromeMeter({
+  columnRef,
+}: {
+  columnRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  useEffect(() => {
+    const el = columnRef.current;
+    if (!el) return;
+    const root = el.ownerDocument.documentElement;
+    const publish = () => {
+      let chrome = 0;
+      for (const child of Array.from(el.children)) {
+        if (child.hasAttribute("data-board-root")) continue;
+        chrome += child.getBoundingClientRect().height;
+      }
+      // Column gaps (gap-2 = 0.5rem) between every row, board included.
+      const gaps = Math.max(0, el.children.length - 1) * 8;
+      root.style.setProperty("--board-chrome-dyn", `${(chrome + gaps) / 16}rem`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--board-chrome-dyn");
+    };
+  }, [columnRef]);
+
+  return null;
 }
+
