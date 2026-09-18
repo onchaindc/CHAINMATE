@@ -620,7 +620,7 @@ export default function GamePage() {
             ~3rem short of reality, which pushed the board's bottom rank
             under the fold. Mobile stays width-driven. */}
         <div
-          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome-dyn,14rem)-var(--board-banner,0rem))))] lg:flex-none"
+          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,var(--board-w,22rem)))] lg:flex-none"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
@@ -1028,6 +1028,17 @@ function MeasuredBanners({ children }: { children: React.ReactNode }) {
  * Takes the column ref rather than wrapping it: the column is a direct flex
  * child, and a wrapper div would break that layout while measuring the
  * wrong element. Renders nothing.
+ *
+ * Also publishes the authoritative board width itself: the square is capped
+ * by the column's MEASURED height (its `lg:h-full` makes that the real
+ * viewport budget minus everything else in the page — header, banners, the
+ * column's own chrome). Sizing the square from a calc() ESTIMATE of that
+ * budget was always a few pixels short: page padding, the header row and
+ * the gap between columns were unaccounted, so the bottom rank (the white
+ * pieces) clipped under the fold on exactly the screens in the bug report.
+ * The loop is self-stabilising: a smaller board shrinks the chrome rows
+ * wrapped beside it, which re-measures to a slightly larger width, at most
+ * once or twice per layout change.
  */
 function BoardChromeMeter({
   columnRef,
@@ -1047,13 +1058,22 @@ function BoardChromeMeter({
       // Column gaps (gap-2 = 0.5rem) between every row, board included.
       const gaps = Math.max(0, el.children.length - 1) * 8;
       root.style.setProperty("--board-chrome-dyn", `${(chrome + gaps) / 16}rem`);
+      // The square's true budget: what the column actually is, less what the
+      // non-board rows actually occupy. Floor at the formula's 22rem minimum
+      // so a transient measure never collapses the board.
+      if (el.clientHeight > 0) {
+        const budget = Math.max(352, el.clientHeight - chrome - gaps);
+        root.style.setProperty("--board-w", `${budget}px`);
+      }
     };
     publish();
     const ro = new ResizeObserver(publish);
     for (const child of Array.from(el.children)) ro.observe(child);
+    ro.observe(el);
     return () => {
       ro.disconnect();
       root.style.removeProperty("--board-chrome-dyn");
+      root.style.removeProperty("--board-w");
     };
   }, [columnRef]);
 
