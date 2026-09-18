@@ -1911,7 +1911,13 @@ export async function getTournamentDetail(
       if (matches.length === 0) continue;
       rounds.push({
         index: r,
-        label: roundLabel(r, doc.totalRounds || r),
+        // Bracket vocabulary ("Semi-final") belongs to knockout brackets
+        // alone: in a Swiss every round carries equal weight, so "Round 2"
+        // is the honest label - the live-fire run surfaced this mislabel.
+        label:
+          doc.format === "knockout"
+            ? roundLabel(r, doc.totalRounds || r)
+            : `Round ${r}`,
         matches,
         open: matches.some((m) => m.status !== "complete"),
       });
