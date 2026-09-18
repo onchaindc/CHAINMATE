@@ -193,14 +193,20 @@ profiles, achievements, game history) and are fully optional:
 1. Create a project at [supabase.com](https://supabase.com), enable the Email
    provider
 2. Set the three variables above
-3. Run every SQL file in `supabase/migrations/` **in filename order** in the
-   SQL editor (see the next section)
+3. In the Supabase SQL editor, paste `supabase/RUN_ALL.sql` and click Run
+   (one file, everything included; see the next section)
 4. Redeploy. Until the keys exist the app stays in guest mode
 
 ## Database migrations
 
-`supabase/migrations/` is applied top to bottom; every file is idempotent and
-safe to re-run.
+The easy path: `supabase/RUN_ALL.sql` is every migration bundled into one
+file. Paste it into the Supabase SQL editor and Run. It is safe to run more
+than once: every migration is idempotent, so re-running the whole bundle
+never duplicates or destroys anything.
+
+The individual files in `supabase/migrations/` are applied top to bottom when
+run one at a time; regenerate the bundle after adding one with
+`npm run db:bundle`.
 
 | Migration | Creates |
 | --- | --- |

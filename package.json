@@ -4,6 +4,7 @@
   "private": true,
   "description": "ChainMate — a GenLayer-powered chess dApp with AI commentary and post-game analysis",
   "scripts": {
+    "db:bundle": "node scripts/bundle-migrations.mjs",
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
     "start": "next start -H 0.0.0.0",
