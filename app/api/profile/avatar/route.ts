@@ -14,8 +14,9 @@ export const runtime = "nodejs";
  * written onto the profile row. Requires a signed-in account — guests have
  * no profile row to attach it to.
  *
- * Storage setup (once, in the Supabase dashboard): a PUBLIC bucket named
- * `avatars`. See supabase/migrations/0011_avatars.sql for the SQL.
+ * The public `avatars` bucket is provisioned here on demand (and by
+ * supabase/migrations/0011_avatars.sql), so a fresh Supabase project works
+ * without a dashboard detour.
  */
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -71,9 +72,28 @@ export async function POST(req: NextRequest) {
       .from("avatars")
       .upload(path, buffer, { contentType: "image/webp", upsert: true });
     if (uploadError) {
-      // The bucket is missing: the operator's setup step, not the player's
-      // fault, so the message says the service is unavailable rather than
-      // surfacing migration instructions to the app.
+      // A brand-new Supabase project has no buckets yet. Create the public
+      // one and retry the upload once before giving up (migration 0011 does
+      // the same thing idempotently for SQL-driven setups).
+      if (/bucket/i.test(uploadError.message) && /not found/i.test(uploadError.message)) {
+        await admin.storage.createBucket("avatars", { public: true }).catch(() => {});
+        const retried = await admin.storage
+          .from("avatars")
+          .upload(path, buffer, { contentType: "image/webp", upsert: true });
+        if (!retried.error) {
+          const { data: retryUrl } = admin.storage.from("avatars").getPublicUrl(path);
+          const { error: retryUpdateError } = await admin
+            .from("profiles")
+            .update({ avatar_url: retryUrl.publicUrl })
+            .eq("player_id", acting.playerId);
+          if (retryUpdateError) {
+            return NextResponse.json({ error: retryUpdateError.message }, { status: 500 });
+          }
+          return NextResponse.json({ ok: true, avatarUrl: retryUrl.publicUrl });
+        }
+      }
+      // Still failing: the operator's setup, not the player's fault, so the
+      // message stays generic rather than surfacing migration instructions.
       console.error("avatar upload failed (missing avatars bucket?)", uploadError.message);
       return NextResponse.json(
         { error: "Profile pictures are unavailable right now. Please try again later." },

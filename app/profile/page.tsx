@@ -11,7 +11,6 @@ import { FriendsPanel } from "@/components/profile/friends-panel";
 import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
 import { AvatarUploadCard } from "@/components/profile/avatar-upload-card";
-import { MessagesPanel } from "@/components/profile/messages-panel";
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { GuestBanner } from "@/components/auth/guest-banner";
@@ -126,7 +125,7 @@ function ProfileContent() {
        drifted to a row of its own — a big hole under the name. Here the left
        column is the account stack and the right column holds friends,
        achievements and games from the same top line, so nothing floats. */
-    <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:py-12">
+    <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 lg:py-14">
       <ProfileHeader
         name={name}
         eyebrow="Your profile"
@@ -140,7 +139,7 @@ function ProfileContent() {
         description={
           identity.isGuest
             ? "Guest: casual play, nothing is saved. Sign up for a permanent record."
-            : "ChainMate player"
+            : "ChainMate player: signed in and synced across devices"
         }
       />
 
@@ -152,12 +151,9 @@ function ProfileContent() {
 
       {error && <ErrorNote message={error} className="mt-6" />}
 
-      {/* A tighter rhythm than other pages: this one is dense by nature
-          (account controls, stats, form, achievements, messages, games) and
-          the extra air pushed everything below the fold on phones. */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start lg:gap-8">
+      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
       {/* ============ LEFT COLUMN — the main contents ============ */}
-      <div className="min-w-0 space-y-5">
+      <div className="min-w-0 space-y-6">
       {/* Optional country — editable, shown as a flag next to the name */}
       <Panel className="flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms]">
         <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -229,7 +225,7 @@ function ProfileContent() {
       {/* Stats */}
       <StatTiles
         layout="five"
-        className="mt-6 animate-fade-in-up [animation-delay:80ms]"
+        className="mt-8 animate-fade-in-up [animation-delay:80ms]"
         tiles={[
           { label: "Games", value: stats ? String(stats.games) : "—" },
           { label: "Wins", value: stats ? String(stats.wins) : "—" },
@@ -268,33 +264,14 @@ function ProfileContent() {
       </div>
 
       {/* ============ RIGHT COLUMN ============ */}
-      <div className="min-w-0 space-y-8">
-        {/* Achievements — up beside the stats instead of a full screen down */}
+      <div className="min-w-0 space-y-10">
+        {/* Achievements: a compact trophy card, expandable to the full shelf. */}
         <div className="animate-fade-in-up [animation-delay:140ms]">
-          <SectionLabel
-            aside={
-              stats && stats.achievements.length > 0
-                ? `${stats.achievements.length}/10 unlocked`
-                : undefined
-            }
-          >
-            Achievements
-          </SectionLabel>
-          <div className="mt-3">
-            {stats ? (
-              <AchievementGrid stats={stats} />
+          {stats ? (
+            <AchievementGrid stats={stats} />
             ) : (
-              <LoadingRows className="px-0 py-0" rowClassName="h-16 rounded-lg" />
+              <LoadingRows className="px-0" rowClassName="h-12 rounded-lg" />
             )}
-          </div>
-        </div>
-
-        {/* Messages — DMs, official announcements, and the support thread. */}
-        <div className="animate-fade-in-up [animation-delay:150ms]">
-          <SectionLabel>Messages</SectionLabel>
-          <div className="mt-3">
-            <MessagesPanel />
-          </div>
         </div>
 
         {/* Recent games — below achievements, with the friends panel between
@@ -337,13 +314,13 @@ function ProfileContent() {
       {/* Friends + player search — full width beneath both columns, so the
           search input gets the room it deserves and the right column doesn't
           grow an endless tail. */}
-      <div className="mt-8 animate-fade-in-up [animation-delay:160ms]">
+      <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
         <FriendsPanel store={hostedStore} />
       </div>
 
       {/* Danger zone — delete account */}
       {!identity.isGuest && (
-        <div className="mt-8 animate-fade-in-up [animation-delay:200ms]">
+        <div className="mt-10 animate-fade-in-up [animation-delay:200ms]">
           <DeleteAccountSection />
         </div>
       )}

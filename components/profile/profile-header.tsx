@@ -60,10 +60,6 @@ export function ProfileHeader({
           month: "long",
         })
       : null;
-  /* Mobile: the rating reads as a fourth line under the identity block —
-     aligned with the text, not floating off to the right, which is what made
-     the header look like the number was "just sitting there". Desktop keeps
-     the single-row layout with the rating on the right. */
   return (
     <div
       className={cn(
@@ -73,7 +69,7 @@ export function ProfileHeader({
     >
       <PlayerAvatar name={name} avatarUrl={avatarUrl} size="lg" />
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         {eyebrow && (
           <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             {eyebrow}
@@ -81,7 +77,7 @@ export function ProfileHeader({
         )}
         <div className={cn("flex flex-wrap items-center gap-x-2.5 gap-y-1.5", eyebrow && "mt-1.5")}>
           <CountryFlag code={country ?? undefined} className="h-4 w-6" />
-          <h1 className="font-display truncate text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="font-display truncate text-3xl font-bold tracking-tight">
             {name}
           </h1>
           <ProfileBadge tone={isGuest ? "muted" : "primary"}>
@@ -97,37 +93,15 @@ export function ProfileHeader({
         {joined && (
           <p className="mt-1 text-2xs text-muted-foreground">Joined {joined}</p>
         )}
-        {/* Phone-only rating line, tucked under the identity block. */}
-        {rating !== null && rating !== undefined && (
-          <div className="mt-2 flex items-baseline gap-2 sm:hidden">
-            <p className="font-mono text-xl font-bold tabular-nums text-primary">{rating}</p>
-            {ratingDelta !== null && ratingDelta !== undefined && ratingDelta !== 0 && (
-              <p
-                className={cn(
-                  "font-mono text-xs font-semibold tabular-nums",
-                  ratingDelta > 0 ? "text-positive" : "text-negative",
-                )}
-              >
-                {ratingDelta > 0 ? `+${ratingDelta}` : ratingDelta}
-              </p>
-            )}
-            <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-              ELO rating
-            </p>
-          </div>
-        )}
       </div>
 
-      {/* Desktop: actions and the rating block keep the right-hand cluster.
-          `ml-auto` on the cluster rather than on the rating block, so a page
-          with actions keeps them beside the rating instead of pushing it off
-          the row. The rating itself is hidden here on phones (it renders in
-          the mobile line above). */}
+      {/* `ml-auto` on the cluster rather than on the rating block, so a page with
+          actions keeps them beside the rating instead of pushing it off the row. */}
       {(actions || rating !== null) && (
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {actions}
           {rating !== null && rating !== undefined && (
-            <div className="hidden text-right sm:block">
+            <div className="text-right">
               <div className="flex items-baseline justify-end gap-1.5">
                 <p className="font-mono text-2xl font-bold tabular-nums text-primary">
                   {rating}

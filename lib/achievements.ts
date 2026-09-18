@@ -11,11 +11,16 @@ import type { PlayerStats } from "@/lib/types";
  * desktop while looking fine on phones. Emoji ship with the OS everywhere.
  */
 
+/** Trophy tier. The badge renders as a trophy tinted by tier colour. */
+export type AchievementTier = "bronze" | "silver" | "gold" | "diamond";
+
 export interface AchievementDef {
   code: string;
   name: string;
   description: string;
   icon: string;
+  /** Visual prestige, shown on the profile card from bronze up to diamond. */
+  tier: AchievementTier;
 }
 
 export const ACHIEVEMENTS: AchievementDef[] = [
@@ -24,60 +29,70 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     name: "First Game",
     description: "Complete your first match.",
     icon: "🌱",
+    tier: "bronze",
   },
   {
     code: "FIRST_VICTORY",
     name: "First Victory",
     description: "Win your first game.",
     icon: "🏆",
+    tier: "bronze",
   },
   {
     code: "TEN_GAMES",
     name: "10 Games",
     description: "Complete ten matches.",
     icon: "🧩",
+    tier: "silver",
   },
   {
     code: "TEN_WINS",
     name: "Ten Wins",
     description: "Win ten games.",
     icon: "🎯",
+    tier: "silver",
   },
   {
     code: "HUNDRED_GAMES",
     name: "100 Games",
     description: "Complete one hundred matches.",
     icon: "💯",
+    tier: "gold",
   },
   {
     code: "FIVE_WIN_STREAK",
     name: "Five Win Streak",
     description: "Win five games in a row.",
     icon: "🔥",
+    tier: "gold",
   },
   {
     code: "REACH_1200",
     name: "Club Standard",
     description: "Reach a 1200 rating.",
     icon: "🛡️",
+    tier: "bronze",
   },
   {
     code: "REACH_1400",
     name: "Class A",
     description: "Reach a 1400 rating.",
     icon: "⭐",
+    tier: "silver",
   },
   {
     code: "REACH_1600",
     name: "Candidate Master",
     description: "Reach a 1600 rating.",
     icon: "👑",
+    tier: "gold",
   },
   {
     code: "WIN_AGAINST_HIGHER_RATED",
     name: "Upset",
     description: "Defeat an opponent rated above you.",
     icon: "⚔️",
+    tier: "diamond",
   },
 ];
 
