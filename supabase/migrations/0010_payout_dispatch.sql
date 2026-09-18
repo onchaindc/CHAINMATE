@@ -66,6 +66,10 @@ begin
   end if;
 end $$;
 
+-- Drop guards: the two checks below REPLACE the intent with stricter forms,
+-- and RUN_ALL re-runs must converge (no ADD CONSTRAINT IF NOT EXISTS in PG).
+alter table public.tournament_payouts
+  drop constraint if exists tournament_payouts_status_check;
 alter table public.tournament_payouts
   add constraint tournament_payouts_status_check
   check (status in
@@ -73,6 +77,8 @@ alter table public.tournament_payouts
 
 -- A 'dispatching' row is a broadcast INTENT: it must already know exactly what
 -- it intends to send — destination, amount, sender, validity start height.
+alter table public.tournament_payouts
+  drop constraint if exists payout_dispatching_is_complete_intent;
 alter table public.tournament_payouts
   add constraint payout_dispatching_is_complete_intent
   check (

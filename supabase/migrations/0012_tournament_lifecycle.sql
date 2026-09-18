@@ -57,6 +57,10 @@ begin
   end if;
 end $$;
 
+-- Drop guard: no ADD CONSTRAINT IF NOT EXISTS in Postgres, and RUN_ALL
+-- re-runs must converge instead of failing with 42710.
+alter table public.tournaments
+  drop constraint if exists tournaments_payout_status_check;
 alter table public.tournaments
   add constraint tournaments_payout_status_check
   check (payout_status in

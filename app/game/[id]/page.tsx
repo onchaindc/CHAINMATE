@@ -289,6 +289,28 @@ export default function GamePage() {
   const flagFallen =
     game?.status === "active" && Boolean(game?.timeControl) && flagMs === 0;
   const timeoutTriggered = useRef(false);
+
+  /* Referentially stable per position: the memoized board compares props,
+     and a fresh object literal every render (clock ticks included) would
+     defeat the memo and bring the drag hitching back. These two hooks sit
+     ABOVE the loading/not-found early returns: a hook after a conditional
+     return breaks React's hook ordering on the loading→loaded transition
+     and fails the production build outright. */
+  const lastMove = useMemo(() => {
+    const last = game?.moves[game.moves.length - 1];
+    return last ? { from: last.from, to: last.to } : null;
+  }, [game]);
+
+  const handleBoardMove = useCallback(
+    (from: string, to: string, promotion?: string) => {
+      if (touchDeviceRef.current) {
+        pendingScrollRef.current = window.scrollY;
+      }
+      void submitMove(from, to, promotion);
+    },
+    [submitMove],
+  );
+
   useEffect(() => {
     if (!flagFallen) {
       timeoutTriggered.current = false;
@@ -367,23 +389,6 @@ export default function GamePage() {
       ? "black"
       : "white"
     : baseOrientation;
-  /* Referentially stable per position: the memoized board compares props,
-     and a fresh object literal every render (clock ticks included) would
-     defeat the memo and bring the drag hitching back. */
-  const lastMove = useMemo(() => {
-    const last = game.moves[game.moves.length - 1];
-    return last ? { from: last.from, to: last.to } : null;
-  }, [game.moves]);
-
-  const handleBoardMove = useCallback(
-    (from: string, to: string, promotion?: string) => {
-      if (touchDeviceRef.current) {
-        pendingScrollRef.current = window.scrollY;
-      }
-      void submitMove(from, to, promotion);
-    },
-    [submitMove],
-  );
   const spectator = mySide === null && !waiting;
   const aiThinking = isAiGame && game.status === "active" && !myTurn;
   const moveNumber = Math.floor(game.moves.length / 2) + 1;

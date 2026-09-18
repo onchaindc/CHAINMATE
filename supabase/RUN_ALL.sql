@@ -799,6 +799,10 @@ alter table public.tournament_payouts enable row level security;
 
 -- Guard: a payout row can never be marked sent/verified without a real tx
 -- hash. (Application code also enforces this; the check is the durable net.)
+-- Drop guard first: Postgres has no ADD CONSTRAINT IF NOT EXISTS, and RUN_ALL
+-- re-runs must converge instead of failing with 42710.
+alter table public.tournament_payouts
+  drop constraint if exists payout_sent_requires_hash;
 alter table public.tournament_payouts
   add constraint payout_sent_requires_hash
   check (
@@ -876,6 +880,10 @@ begin
   end if;
 end $$;
 
+-- Drop guards: the two checks below REPLACE the intent with stricter forms,
+-- and RUN_ALL re-runs must converge (no ADD CONSTRAINT IF NOT EXISTS in PG).
+alter table public.tournament_payouts
+  drop constraint if exists tournament_payouts_status_check;
 alter table public.tournament_payouts
   add constraint tournament_payouts_status_check
   check (status in
@@ -883,6 +891,8 @@ alter table public.tournament_payouts
 
 -- A 'dispatching' row is a broadcast INTENT: it must already know exactly what
 -- it intends to send — destination, amount, sender, validity start height.
+alter table public.tournament_payouts
+  drop constraint if exists payout_dispatching_is_complete_intent;
 alter table public.tournament_payouts
   add constraint payout_dispatching_is_complete_intent
   check (
@@ -1004,6 +1014,10 @@ begin
   end if;
 end $$;
 
+-- Drop guard: no ADD CONSTRAINT IF NOT EXISTS in Postgres, and RUN_ALL
+-- re-runs must converge instead of failing with 42710.
+alter table public.tournaments
+  drop constraint if exists tournaments_payout_status_check;
 alter table public.tournaments
   add constraint tournaments_payout_status_check
   check (payout_status in

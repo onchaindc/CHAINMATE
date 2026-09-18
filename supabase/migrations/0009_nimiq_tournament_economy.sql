@@ -103,6 +103,10 @@ alter table public.tournament_payouts enable row level security;
 
 -- Guard: a payout row can never be marked sent/verified without a real tx
 -- hash. (Application code also enforces this; the check is the durable net.)
+-- Drop guard first: Postgres has no ADD CONSTRAINT IF NOT EXISTS, and RUN_ALL
+-- re-runs must converge instead of failing with 42710.
+alter table public.tournament_payouts
+  drop constraint if exists payout_sent_requires_hash;
 alter table public.tournament_payouts
   add constraint payout_sent_requires_hash
   check (
