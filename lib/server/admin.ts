@@ -177,8 +177,12 @@ export async function claimOperatorSeat(playerId: string): Promise<boolean> {
 /** True when this playerId belongs to a configured admin account. */
 export async function isAdminPlayer(playerId: string): Promise<boolean> {
   const username = await usernameForPlayer(playerId);
-  if (!username) return false;
-  if (adminUsernames().includes(username.toLowerCase())) return true;
+  if (adminUsernames().includes((username ?? "").toLowerCase())) return true;
+  // The operator seat outranks the username check: it IS the durable
+  // self-bootstrap path (the seat is claimed by the first signed-in account
+  // through passcode setup, precisely because the env var can be unset), and
+  // usernameForPlayer returns null whenever Supabase is unreachable — which
+  // would otherwise silently strip the operator's own powers.
   return (await operatorPlayerId()) === playerId;
 }
 
