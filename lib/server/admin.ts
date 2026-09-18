@@ -144,7 +144,10 @@ export async function usernameForPlayer(playerId: string): Promise<string | null
   if (!playerId) return null;
   try {
     const profile = await profileForPlayerId(playerId);
-    if (!profile || profile.is_guest) return null;
+    // Definitional account predicate (acct_… = account, 0x… = guest): the
+    // is_guest flag has drifted before and must not hide real usernames.
+    if (!profile) return null;
+    if (!playerId.startsWith("acct_") && profile.is_guest) return null;
     return profile.username ?? null;
   } catch {
     return null;

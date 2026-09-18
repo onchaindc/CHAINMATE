@@ -35,7 +35,10 @@ export async function POST(req: NextRequest) {
   }
 
   const profile = await profileForPlayerId(acting.playerId);
-  if (!profile || profile.is_guest) {
+  // Definitional account predicate (acct_… = account): a drifted is_guest
+  // flag must not block a real account's picture.
+  const isAccount = acting.playerId.startsWith("acct_");
+  if (!profile || (!isAccount && profile.is_guest)) {
     return NextResponse.json(
       { error: "Sign in to set a profile picture: guests have no account to attach one to." },
       { status: 403 },
@@ -133,7 +136,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: acting.error }, { status: acting.status });
   }
   const profile = await profileForPlayerId(acting.playerId);
-  if (!profile || profile.is_guest) {
+  if (!profile || (!acting.playerId.startsWith("acct_") && profile.is_guest)) {
     return NextResponse.json({ error: "Sign in first." }, { status: 403 });
   }
   const admin = getSupabaseAdmin();

@@ -13,6 +13,7 @@ import {
   deleteAccountByPlayerId,
   listRegisteredPlayerIds,
   playerProfileByUsername,
+  repairGuestFlaggedAccounts,
 } from "@/lib/supabase/db";
 import { getPlayerStats } from "@/lib/server/hosted";
 
@@ -57,6 +58,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: guardRes.error }, { status: guardRes.status });
   }
   try {
+    // Self-heal BEFORE listing: if any acct_… row still carries the drifted
+    // is_guest=true flag (the old stats-mirror bug's residue — the 0015 SQL
+    // repair never ran because the RUN_ALL script aborted partway), every
+    // flag-based check breaks for that real player. The repair is definitional
+    // (guest ids are 0x…, never acct_…), idempotent, and costs nothing when
+    // nothing is drifted.
+    await repairGuestFlaggedAccounts().catch(() => 0);
     const ids = await listRegisteredPlayerIds();
     const accounts = [];
     for (const id of ids.slice(0, 200)) {

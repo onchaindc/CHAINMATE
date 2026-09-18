@@ -205,7 +205,9 @@ export async function leaderboardProfiles(limit: number): Promise<PlayerStats[]>
   const { data, error } = await admin
     .from("profiles")
     .select("*")
-    .eq("is_guest", false)
+    // Definitional account predicate (see listRegisteredPlayerIds) — the
+    // is_guest flag has drifted before and must not empty the leaderboard.
+    .like("player_id", "acct_%")
     .gt("games", 0)
     .order("rating", { ascending: false })
     .order("games", { ascending: false })
@@ -831,10 +833,16 @@ export async function deleteAccountByPlayerId(
 export async function listRegisteredPlayerIds(): Promise<string[]> {
   const admin = getSupabaseAdmin();
   if (!admin) return [];
+  // Account-hood is read from the DEFINITIONAL predicate (the acct_ prefix
+  // minted only by the account-creation flow), not the is_guest flag: the
+  // flag has drifted in the past (the old stats-mirror bug flipped real
+  // accounts to guests) and any future drift must not silently empty the
+  // admin dashboard or the broadcast audience. Guest ids are 0x… device
+  // ids and can never collide with the prefix.
   const { data, error } = await admin
     .from("profiles")
     .select("player_id")
-    .eq("is_guest", false);
+    .like("player_id", "acct_%");
   if (error || !data) return [];
   return (data as unknown as { player_id: string }[]).map((r) => r.player_id);
 }
@@ -843,12 +851,35 @@ export async function listRegisteredPlayerIds(): Promise<string[]> {
 export async function countRegisteredPlayers(): Promise<number> {
   const admin = getSupabaseAdmin();
   if (!admin) return 0;
+  // Same definitional predicate as listRegisteredPlayerIds — see there.
   const { count, error } = await admin
     .from("profiles")
     .select("player_id", { count: "exact", head: true })
-    .eq("is_guest", false);
+    .like("player_id", "acct_%");
   if (error) return 0;
   return count ?? 0;
+}
+
+/**
+ * Repair account rows whose is_guest flag drifted to true. The flag has a
+ * history of drifting (the old stats-mirror bug), and every flag-based
+ * check — avatar upload, paid-tournament entry, admin identity — breaks
+ * for a real player while their row is flipped. The acct_ prefix is
+ * definitional (minted only by the account-creation flow; guests are 0x…
+ * and never collide), so flipping by prefix can never promote a real
+ * guest. Idempotent; returns the number of rows repaired.
+ */
+export async function repairGuestFlaggedAccounts(): Promise<number> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return 0;
+  const { data, error } = await admin
+    .from("profiles")
+    .update({ is_guest: false })
+    .like("player_id", "acct_%")
+    .eq("is_guest", true)
+    .select("player_id");
+  if (error || !data) return 0;
+  return (data as unknown as unknown[]).length;
 }
 
 /** Look up a profile by exact username (case-insensitive). */

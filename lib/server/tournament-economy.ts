@@ -170,7 +170,13 @@ async function withPaidJoinLock<T>(key: string, fn: () => Promise<T>): Promise<T
 export async function isGuestAccount(playerId: string): Promise<boolean> {
   const { profileForPlayerId } = await import("@/lib/supabase/db");
   const profile = await profileForPlayerId(playerId).catch(() => null);
-  return profile?.is_guest !== false;
+  if (!profile) return true; // fail-closed: no profile row → treated as guest
+  // Definitional predicate first (acct_… ids are minted only by the
+  // account-creation flow; guests are 0x… device ids): the is_guest flag has
+  // drifted in the past and a drifted flag must never lock a real account
+  // out of a paid tournament.
+  if (playerId.startsWith("acct_")) return false;
+  return profile.is_guest !== false;
 }
 
 /**

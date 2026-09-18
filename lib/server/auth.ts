@@ -62,6 +62,16 @@ export async function resolveActingPlayer(
   if (authed) return { ok: true, playerId: authed };
 
   // No session. The claim is only acceptable if no account owns that identity.
+  // Account-hood is DEFINITIONAL (acct_… ids are minted only by the
+  // account-creation flow) — never trust the is_guest flag here: a drifted
+  // flag would let an unauthenticated visitor hijack a real account's id.
+  if (claimed.startsWith("acct_")) {
+    return {
+      ok: false,
+      error: "Sign in to play as this account.",
+      status: 401,
+    };
+  }
   const owner = await profileForPlayerId(claimed);
   if (owner && owner.is_guest === false) {
     return {

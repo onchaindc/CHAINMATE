@@ -306,7 +306,10 @@ export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
         const stats: PlayerStats = {
           playerId,
           username: row.username,
-          isGuest: row.is_guest,
+          // Definitional account predicate (acct_… = account, 0x… = guest):
+          // a drifted is_guest flag in the row must not re-mark a real
+          // account as a guest in the stats blob.
+          isGuest: !playerId.startsWith("acct_") && row.is_guest,
           country: row.country ?? undefined,
           /* A stored ?v= stamp survives here: profile merge helpers must not
              strip it, or a re-upload becomes indistinguishable from the old
