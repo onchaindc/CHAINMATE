@@ -26,6 +26,10 @@ import {
   type WalletLinkPhase,
 } from "@/hooks/use-nimiq-wallet";
 import { NIMIQ_ENABLED, NIMIQ_NETWORK } from "@/lib/nimiq/config";
+import {
+  NimiqPaymentDiagnostic,
+  isNimiqDiagnosticVisible,
+} from "@/components/profile/nimiq-payment-diagnostic";
 
 const BUSY_PHASES: ReadonlySet<WalletLinkPhase> = new Set([
   "awaiting-wallet",
@@ -216,6 +220,11 @@ export function NimiqWalletCard({ playerId }: { playerId: string }) {
           </button>
         </div>
       )}
+
+      {/* TEMPORARY developer diagnostic (capability test only) — mounted at the
+          bottom of the card; the component hides itself outside a Nimiq host
+          or developer mode. Not a production payment action. */}
+      {NIMIQ_ENABLED && isNimiqDiagnosticVisible() && <NimiqPaymentDiagnostic />}
     </Panel>
   );
 }
