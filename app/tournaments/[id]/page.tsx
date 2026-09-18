@@ -402,6 +402,28 @@ export default function TournamentDetailPage() {
         }
       />
 
+      {/* ---------- YOUR MATCH IS LIVE — play now ---------- */}
+      {detail.myActiveGameId && s.status === "in_progress" && (
+        <Link
+          href={`/game/${detail.myActiveGameId}`}
+          className="animate-fade-in-up group mt-4 flex items-center gap-3 rounded-lg border border-primary/50 bg-primary/10 px-4 py-3.5 transition-colors hover:bg-primary/15"
+        >
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" aria-hidden />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-primary">Your match is live — play now</p>
+            <p className="text-xs text-muted-foreground">
+              Round {s.currentRound ?? "—"} is underway. Your opponent is waiting at the board.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-transform group-hover:translate-x-0.5">
+            Go to board →
+          </span>
+        </Link>
+      )}
+
       {/* ---------- Facts strip ---------- */}
       <div className="animate-fade-in-up mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border/70 bg-card/40 px-4 py-3 font-mono text-xs tabular-nums text-muted-foreground [animation-delay:40ms]">
         <span
@@ -433,10 +455,10 @@ export default function TournamentDetailPage() {
             Round {s.currentRound ?? 0}/{s.totalRounds}
           </span>
         ) : null}
-        {scheduledFuture && s.status === "draft" && (
+        {scheduledFuture && (s.status === "draft" || s.status === "registration") && (
           <span className="inline-flex items-center gap-1 font-sans text-2xs font-semibold uppercase tracking-wider text-primary">
             <CalendarClock className="h-3.5 w-3.5" aria-hidden />
-            Opens {new Date(scheduled).toLocaleString()}
+            {s.status === "draft" ? "Opens" : "Starts"} {new Date(scheduled).toLocaleString()}
           </span>
         )}
         {s.registrationClosesAt && s.status === "registration" && (
@@ -883,9 +905,14 @@ export default function TournamentDetailPage() {
                         type="button"
                         disabled={payoutBusy !== null}
                         onClick={() => void runPayoutAction("dispatch", p.playerId)}
+                        title={
+                          p.status === "dispatching"
+                            ? "A send was attempted but its outcome is unknown. This re-checks the recorded broadcast on-chain and completes it as sent, or safely retries — it can never pay twice."
+                            : "Send this prize from the treasury wallet."
+                        }
                         className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
                       >
-                        {p.status === "dispatching" ? "reconcile" : "dispatch"}
+                        {p.status === "dispatching" ? "check status" : "send prize"}
                       </button>
                     )}
                   {isHost && p.status === "sent" && (
@@ -904,8 +931,10 @@ export default function TournamentDetailPage() {
           </Panel>
           <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
             Prize amounts are calculated from verified payments. &quot;Pending&quot;
-            means recorded and owed. Payout dispatch requires the treasury
-            signer and is shown separately from the prize itself.
+            means recorded and owed — sending moves the NIM from the treasury
+            wallet to the winner&apos;s linked address. If a send was interrupted,
+            &quot;Check status&quot; resolves it safely: it looks the recorded
+            broadcast up on-chain and can never pay twice.
           </p>
         </section>
       )}
@@ -1210,6 +1239,8 @@ function LeaveWhilePending({ onLeave }: { onLeave: (() => void) | undefined }) {
 function PayoutStatusPill({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     pending: { label: "prize pending", cls: "border-warning/40 text-warning" },
+    // "Dispatching" reads as a stuck mystery — say what it actually is.
+    dispatching: { label: "send in progress", cls: "border-warning/40 text-warning" },
     sent: { label: "payout sent", cls: "border-primary/40 text-primary" },
     verified: { label: "paid ✓", cls: "border-primary/40 text-primary bg-primary/5" },
     failed: { label: "failed, retrying", cls: "border-destructive/40 text-destructive" },

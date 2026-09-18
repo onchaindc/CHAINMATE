@@ -537,15 +537,22 @@ export default function GamePage() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
           {spectator && <Badge variant="secondary">spectating</Badge>}
-          {/* Escape hatch: the game fills the viewport, so a stuck player
-              needs an explicit way out that doesn't depend on browser chrome. */}
-          <Link
-            href="/"
+          {/* Escape hatch — but BACK, never Home: a mis-click mid-game must
+              not eject a player to the landing page and cost them their
+              navigation trail. This returns to wherever they came from
+              (tournament page, play list, create form…). router.back() needs
+              history to exist, so it falls back to the play hub. */}
+          <button
+            type="button"
+            onClick={() => {
+              if (window.history.length > 1) router.back();
+              else router.push("/play");
+            }}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
           >
             <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-            Home
-          </Link>
+            Back
+          </button>
         </div>
       </div>
 
@@ -958,23 +965,29 @@ export default function GamePage() {
           mySide={mySide}
           analyzing={false}
           onRematch={
-            isAiGame
-              ? async () => {
-                  // Fresh game against the same computer opponent, same level
-                  // and clock. The colour draw is random again, exactly like
-                  // starting from the AI page.
-                  const next = await getStore("local").createAiGame(
-                    game.aiDifficulty ?? "casual",
-                    game.timeControl ? { timeControl: game.timeControl } : undefined,
-                  );
-                  router.push(`/game/${next.id}`);
-                }
-              : game.backend === "hosted"
+            // TOURNAMENT GAMES NEVER OFFER A REMATCH: the event's bracket
+            // decides what happens next (next round, or the event is over
+            // for you) — a casual re-match would be meaningless and confusing
+            // right where the result just landed.
+            game.tournamentId
+              ? undefined
+              : isAiGame
                 ? async () => {
-                    const next = await rematch();
+                    // Fresh game against the same computer opponent, same level
+                    // and clock. The colour draw is random again, exactly like
+                    // starting from the AI page.
+                    const next = await getStore("local").createAiGame(
+                      game.aiDifficulty ?? "casual",
+                      game.timeControl ? { timeControl: game.timeControl } : undefined,
+                    );
                     router.push(`/game/${next.id}`);
                   }
-                : undefined
+                : game.backend === "hosted"
+                  ? async () => {
+                      const next = await rematch();
+                      router.push(`/game/${next.id}`);
+                    }
+                  : undefined
           }
           onReplay={() => {
             setResultOpen(false);

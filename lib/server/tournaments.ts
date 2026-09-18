@@ -36,7 +36,7 @@ import { isPaidTournamentDoc, markEntryPaid as markEntryPaidOnDoc } from "@/lib/
 import { listPaidEntries } from "@/lib/server/tournament-economy";
 import type { TournamentRefundLine } from "@/lib/tournament-types";
 import { isPaidEntryFee, lunaFromStored, presetRankCount, validateEntryFee } from "@/lib/tournament-economy";
-import { getHostedGame } from "@/lib/server/hosted";
+import { getHostedGame, writeGame } from "@/lib/server/hosted";
 import { isGameOver, type GameStatus, type GameState } from "@/lib/types";
 import {
   requireNotBanned,
@@ -366,6 +366,44 @@ const LEGAL: Record<TournamentStatus, TournamentStatus[]> = {
  * on different instances produce exactly one IN_PROGRESS; the in-process
  * document lock serialises read-validate-write against joins and results.
  */
+/**
+ * HOST FINALIZE — terminate every unfinished match's live game.
+ *
+ * For each non-complete match with a real gameId, the underlying hosted game
+ * is force-ended in the game store (status "resigned", no winner attributed
+ * beyond the board position — the MATCH itself is voided, not decided). Both
+ * players' game pages poll the store, so the board ends for them within one
+ * poll of the host clicking "End & finalise" — no phantom "live" rounds, no
+ * "Resume game" into a dead event. Ingestion is NOT triggered: a finalized
+ * tournament must not re-enter the round machine. Failures are per-game
+ * best-effort: one broken store write must not stop the sweep.
+ */
+async function voidLiveMatchesOnCompletion(doc: TournamentDocument): Promise<void> {
+  const unfinished = doc.matches.filter((m) => m.status !== "complete" && m.gameId);
+  if (unfinished.length === 0) return;
+  const now = Date.now();
+  for (const match of unfinished) {
+    try {
+      const game = await getHostedGame(match.gameId);
+      if (game && !isGameOver(game.status)) {
+        await writeGame({
+          ...game,
+          status: "resigned",
+          winner: "",
+          endedAt: now,
+          updatedAt: now,
+          summary: game.summary || "Tournament finalized by the host — the game was closed without a result.",
+        });
+      }
+    } catch {
+      // best-effort: the match is voided below regardless
+    }
+    match.status = "complete";
+    match.resultReason = "aborted"; // voided: no standings impact, no payout effect
+    match.completedAt = now;
+  }
+}
+
 export async function transitionTournament(
   tournamentId: string,
   actorId: string,
@@ -408,6 +446,14 @@ async function transitionTournamentInner(
     doc.status = "completed";
     doc.completedAt = Date.now();
     await writeTournamentDoc(doc);
+    // HOST FINALIZE TERMINATES EVERY LIVE GAME — immediately, before anything
+    // else. The old order completed the tournament first and left the round
+    // games running in the game store, so the page kept showing "live" and
+    // "Resume game" for rounds that no longer existed. Unfinished matches are
+    // voided (aborted — no standings impact), each live game is terminated in
+    // the real game store, and BOTH players' clients see the game end on
+    // their next poll.
+    await voidLiveMatchesOnCompletion(doc);
     // Same completion body as the engine's own path (below): trophies and
     // the payout plan. completeTournamentInner is the single door for engine
     // completions; this one serves the host clicking Complete.

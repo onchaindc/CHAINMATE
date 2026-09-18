@@ -188,10 +188,21 @@ export function buildRpcTreasurySigner(
           let isUnlocked: boolean;
           try {
             isUnlocked = await unlocked(config.treasuryAddress, overrides);
-          } catch {
+          } catch (unlockErr) {
+            // Distinguish "node unreachable" from "node cannot answer a
+            // keystore method": public gateways (e.g. api.nimiqscan.com)
+            // are read-only proxies — isAccountUnlocked is a node-keystore
+            // method they never implement. The operator must point
+            // NIMIQ_PAYOUT_RPC_URL at a node holding the treasury key in
+            // its keystore; no retry can fix a read-only endpoint.
+            const methodShaped =
+              unlockErr instanceof NimiqRpcError &&
+              (String(unlockErr.code) === "-32601" || /method not/i.test(unlockErr.message));
             throw new PayoutDispatchError(
               "rpc-unavailable",
-              "Could not reach the payout node to check the treasury wallet",
+              methodShaped
+                ? "The configured payout endpoint cannot sign transactions (it is a read-only gateway). Payouts need NIMIQ_PAYOUT_RPC_URL pointing at a node whose keystore holds the treasury key, unlocked."
+                : "Could not reach the payout node to check the treasury wallet",
             );
           }
           if (typeof isUnlocked !== "boolean") {

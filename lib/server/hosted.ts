@@ -678,7 +678,13 @@ export async function updatePlayerCountry(
 /* Game operations                                                     */
 /* ------------------------------------------------------------------ */
 
-async function writeGame(game: GameState): Promise<void> {
+/**
+ * Persist a hosted game. Exported for the tournament engine: the host's
+ * "End & finalise" force-ends every live round game in the REAL game store
+ * (same terminal-state hygiene as any other end path — including erasing
+ * the ephemeral chat).
+ */
+export async function writeGame(game: GameState): Promise<void> {
   // In-game chat is ephemeral by contract: it exists only in the fast store
   // while the game is running. The moment the game reaches a terminal state
   // the conversation is erased here, and it is never written to the durable

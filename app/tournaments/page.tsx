@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Coins, Plus, Swords, Trophy, Users } from "lucide-react";
+import { CalendarClock, ChevronRight, Coins, Plus, Swords, Trophy, Users } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader, SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -216,6 +216,15 @@ function TournamentCard({
               </span>
             )}
             {hostName && <span className="truncate">Host: {hostName}</span>}
+            {/* Scheduled start: the whole point is that players show up on
+                time — so the list advertises it on every pre-start card. */}
+            {t.scheduledStartAt != null && t.scheduledStartAt > Date.now() &&
+              (t.status === "registration" || t.status === "draft" || t.status === "locked") && (
+              <span className="inline-flex items-center gap-1 text-primary">
+                <CalendarClock className="h-3 w-3" aria-hidden />
+                {t.status === "draft" ? "Opens" : "Starts"} {new Date(t.scheduledStartAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
             {t.status === "in_progress" && t.totalRounds ? (
               <span>
                 Round {t.currentRound ?? "—"}/{t.totalRounds}
