@@ -42,6 +42,22 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  /* Self-heal: the old stats-mirror bug flipped real account rows to
+     is_guest = true (fixed in code, but flipped rows stayed flipped and the
+     admin registered count read 0 forever after). A row bound to an auth
+     user is by definition a registered account, so any authenticated player
+     with a guest-flagged row gets it corrected here, once, on sign-in. The
+     durable bulk heal is migration 0014. */
+  try {
+    await admin!
+      .from("profiles")
+      .update({ is_guest: false })
+      .eq("user_id", data.user.id)
+      .eq("is_guest", true);
+  } catch {
+    // Non-fatal: the read below reflects the healed state on the next load.
+  }
+
   const profile = await profileForUserId(data.user.id);
   if (!profile) {
     // Authenticated but never linked (e.g. the OTP was verified and the

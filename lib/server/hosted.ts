@@ -307,6 +307,9 @@ export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
           username: row.username,
           isGuest: row.is_guest,
           country: row.country ?? undefined,
+          /* A stored ?v= stamp survives here: profile merge helpers must not
+             strip it, or a re-upload becomes indistinguishable from the old
+             cached URL and viewers keep the stale picture. */
           avatarUrl: row.avatar_url ?? null,
           createdAt: row.created_at,
           rating: row.rating,

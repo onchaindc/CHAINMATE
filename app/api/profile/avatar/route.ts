@@ -68,6 +68,11 @@ export async function POST(req: NextRequest) {
       .toBuffer();
 
     const path = `${acting.playerId}.webp`;
+    // Cache version: the storage path never changes across re-uploads, so a
+    // bare URL would keep serving the cached previous picture forever (the
+    // reported "can't change my pfp" bug). Every upload bumps ?v=, which
+    // busts both browser and CDN caches for every viewer at once.
+    const cacheVersion = String(Date.now());
     const { error: uploadError } = await admin.storage
       .from("avatars")
       .upload(path, buffer, { contentType: "image/webp", upsert: true });
@@ -82,14 +87,15 @@ export async function POST(req: NextRequest) {
           .upload(path, buffer, { contentType: "image/webp", upsert: true });
         if (!retried.error) {
           const { data: retryUrl } = admin.storage.from("avatars").getPublicUrl(path);
+          const versioned = `${retryUrl.publicUrl}?v=${cacheVersion}`;
           const { error: retryUpdateError } = await admin
             .from("profiles")
-            .update({ avatar_url: retryUrl.publicUrl })
+            .update({ avatar_url: versioned })
             .eq("player_id", acting.playerId);
           if (retryUpdateError) {
             return NextResponse.json({ error: retryUpdateError.message }, { status: 500 });
           }
-          return NextResponse.json({ ok: true, avatarUrl: retryUrl.publicUrl });
+          return NextResponse.json({ ok: true, avatarUrl: versioned });
         }
       }
       // Still failing: the operator's setup, not the player's fault, so the
@@ -101,14 +107,15 @@ export async function POST(req: NextRequest) {
       );
     }
     const { data } = admin.storage.from("avatars").getPublicUrl(path);
+    const versioned = `${data.publicUrl}?v=${cacheVersion}`;
     const { error: updateError } = await admin
       .from("profiles")
-      .update({ avatar_url: data.publicUrl })
+      .update({ avatar_url: versioned })
       .eq("player_id", acting.playerId);
     if (updateError) {
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
-    return NextResponse.json({ ok: true, avatarUrl: data.publicUrl });
+    return NextResponse.json({ ok: true, avatarUrl: versioned });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Upload failed";
     return NextResponse.json({ error: message }, { status: 500 });
