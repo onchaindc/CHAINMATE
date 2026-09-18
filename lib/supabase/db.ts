@@ -216,6 +216,7 @@ export async function leaderboardProfiles(limit: number): Promise<PlayerStats[]>
     username: row.username,
     isGuest: row.is_guest,
     country: row.country ?? undefined,
+    avatarUrl: row.avatar_url ?? null,
     rating: row.rating,
     rd: row.rd ?? undefined,
     lastPlayedAt: row.last_played_at ?? null,
@@ -788,6 +789,8 @@ export interface PlayerSearchResult {
   rating: number;
   country: string | null;
   games: number;
+  /** Public URL of the uploaded picture, so search rows can show the real face. */
+  avatar_url?: string | null;
 }
 
 /** Search ChainMate accounts by username fragment (case-insensitive). */
@@ -799,7 +802,7 @@ export async function searchPlayersByUsername(
   if (!admin || query.trim().length < 1) return [];
   const { data, error } = await admin
     .from("profiles")
-    .select("player_id, username, is_guest, rating, country, games")
+    .select("player_id, username, is_guest, rating, country, games, avatar_url")
     .ilike("username", `%${query.trim()}%`)
     .order("rating", { ascending: false })
     .limit(limit);
@@ -945,6 +948,10 @@ export async function requestFriend(
       .eq("requester_player_id", addresseeId)
       .eq("addressee_player_id", requesterId);
     if (error) return { ok: false, error: error.message };
+    // Symmetry with the accept button: the original requester still learns
+    // their request landed, even though the accept happened as a side effect.
+    const { notifyFriendAccepted } = await import("@/lib/server/notify");
+    await notifyFriendAccepted(requesterId, addresseeId).catch(() => undefined);
     return { ok: true };
   }
 
@@ -967,6 +974,10 @@ export async function requestFriend(
     created_at: Date.now(),
   });
   if (error) return { ok: false, error: error.message };
+  // Bell event for the addressee — the request must announce itself even when
+  // the addressee is on another page (or offline) when it lands.
+  const { notifyFriendRequest } = await import("@/lib/server/notify");
+  await notifyFriendRequest(requesterId, addresseeId).catch(() => undefined);
   return { ok: true };
 }
 
@@ -985,6 +996,11 @@ export async function respondFriend(
     .eq("addressee_player_id", playerId)
     .eq("status", "pending");
   if (error) return { ok: false, error: error.message };
+  if (accept) {
+    // The requester learns they were accepted right away (bell + live page).
+    const { notifyFriendAccepted } = await import("@/lib/server/notify");
+    await notifyFriendAccepted(playerId, otherId).catch(() => undefined);
+  }
   return { ok: true };
 }
 

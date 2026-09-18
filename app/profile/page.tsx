@@ -9,6 +9,7 @@ import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { FriendsPanel } from "@/components/profile/friends-panel";
 import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
+import { ProfileSettingsSection } from "@/components/profile/profile-settings";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
 import { AvatarUploadCard } from "@/components/profile/avatar-upload-card";
 import { RecentForm } from "@/components/profile/recent-form";
@@ -266,7 +267,7 @@ function ProfileContent() {
       {/* ============ RIGHT COLUMN ============ */}
       <div className="min-w-0 space-y-10">
         {/* Achievements: a compact trophy card, expandable to the full shelf. */}
-        <div className="animate-fade-in-up [animation-delay:140ms]">
+        <div id="awards" className="animate-fade-in-up scroll-mt-20 [animation-delay:140ms]">
           {stats ? (
             <AchievementGrid stats={stats} />
             ) : (
@@ -314,8 +315,14 @@ function ProfileContent() {
       {/* Friends + player search — full width beneath both columns, so the
           search input gets the room it deserves and the right column doesn't
           grow an endless tail. */}
-      <div className="mt-10 animate-fade-in-up [animation-delay:160ms]">
+      <div id="friends" className="mt-10 scroll-mt-20">
         <FriendsPanel store={hostedStore} />
+      </div>
+
+      {/* Settings: support, friends link, board theme, awards, stats,
+          membership — the rows that are managed, not displayed. */}
+      <div id="settings" className="mt-10 scroll-mt-20">
+        <ProfileSettingsSection stats={stats} />
       </div>
 
       {/* Danger zone — delete account */}

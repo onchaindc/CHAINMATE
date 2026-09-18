@@ -18,7 +18,7 @@
 
 import { getGameStorage } from "@/lib/server/storage";
 import { usernameForPlayer } from "@/lib/server/admin";
-import { listFriendIds } from "@/lib/supabase/db";
+import { listFriendIds, profileForPlayerId } from "@/lib/supabase/db";
 
 const MESSAGES_KEY = "chainmate:messages:inboxes";
 const BROADCAST_FEED_KEY = "chainmate:messages:broadcasts";
@@ -112,19 +112,35 @@ export interface InboxMessage extends MessageEnvelope {
   counterpartName: string;
   /** The other side's player id, for grouping threads. */
   counterpartId: string;
+  /** The other side's uploaded picture, for chat-list and bubble avatars. */
+  counterpartAvatar?: string | null;
 }
 
 export async function inboxForDisplay(playerId: string): Promise<InboxMessage[]> {
   const inbox = await inboxFor(playerId);
-  // Resolve each distinct peer username once; Supabase lookups are not free
-  // and a busy inbox repeats the same handful of players.
+  // Resolve each distinct peer once; Supabase lookups are not free and a busy
+  // inbox repeats the same handful of players.
   const nameCache = new Map<string, string>();
+  const avatarCache = new Map<string, string | null>();
   const peerName = async (peerId: string): Promise<string> => {
     const cached = nameCache.get(peerId);
     if (cached !== undefined) return cached;
     const resolved = (await usernameForPlayer(peerId)) ?? "Player";
     nameCache.set(peerId, resolved);
     return resolved;
+  };
+  const peerAvatar = async (peerId: string): Promise<string | null> => {
+    const cached = avatarCache.get(peerId);
+    if (cached !== undefined) return cached;
+    let url: string | null = null;
+    try {
+      const profile = await profileForPlayerId(peerId);
+      url = profile?.avatar_url ?? null;
+    } catch {
+      url = null;
+    }
+    avatarCache.set(peerId, url);
+    return url;
   };
   const out: InboxMessage[] = [];
   for (const m of inbox) {
@@ -139,6 +155,8 @@ export async function inboxForDisplay(playerId: string): Promise<InboxMessage[]>
         // chat whose newest message was the reader's own showed "You".
         counterpartName:
           peerId === CHAINMATE_ID ? "ChainMate" : await peerName(peerId),
+        counterpartAvatar:
+          peerId === CHAINMATE_ID ? null : await peerAvatar(peerId),
       });
       continue;
     }
@@ -147,6 +165,7 @@ export async function inboxForDisplay(playerId: string): Promise<InboxMessage[]>
       ...m,
       counterpartId: m.fromPlayerId,
       counterpartName: m.fromPlayerId === CHAINMATE_ID ? "ChainMate" : await peerName(m.fromPlayerId),
+      counterpartAvatar: m.fromPlayerId === CHAINMATE_ID ? null : await peerAvatar(m.fromPlayerId),
     });
   }
   return out;

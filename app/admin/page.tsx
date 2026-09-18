@@ -40,6 +40,33 @@ import { getIdentityToken } from "@/lib/identity";
  * broadcast to every player at once.
  */
 
+/**
+ * One-click moderation warnings, sent from the per-account Message composer.
+ * Placeholders: {name} (username or id). Ordered softest first.
+ */
+const WARNING_TEMPLATES: { label: string; text: string }[] = [
+  {
+    label: "Fair-play reminder",
+    text: "Hi {name}. We received a report about possible engine assistance in one of your recent games. Please keep play fair; repeated violations lead to a restriction.",
+  },
+  {
+    label: "Chat conduct warning",
+    text: "Hi {name}. Your recent chat messages broke our community rules. This is a warning: further reports may lead to chat restrictions.",
+  },
+  {
+    label: "Tournament conduct warning",
+    text: "Hi {name}. Your conduct in a recent tournament drew complaints (stalling or premature exits). Please play your scheduled matches; repeated no-shows lead to removal from events.",
+  },
+  {
+    label: "Final warning before restriction",
+    text: "Hi {name}. This is a final warning. One more violation of the ChainMate rules and your account will be restricted. Reply here if you believe this was sent in error.",
+  },
+  {
+    label: "Restriction notice",
+    text: "Hi {name}. Your account has been restricted by the ChainMate team for breaking our rules. Restrictions are reviewed; reply here to appeal.",
+  },
+];
+
 interface BanRecord {
   playerId: string;
   reason: string;
@@ -724,26 +751,58 @@ function Dashboard({
                       </Button>
                     </div>
                     {messagingTarget === a.playerId && (
-                      <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
-                        <input
-                          type="text"
-                          value={replyDrafts[a.playerId] ?? ""}
-                          onChange={(e) =>
-                            setReplyDrafts((prev) => ({ ...prev, [a.playerId]: e.target.value }))
-                          }
-                          maxLength={2000}
-                          placeholder={`Message ${a.username ?? a.playerId} as ChainMate…`}
-                          className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
-                        />
-                        <Button
-                          size="sm"
-                          className="w-full sm:w-auto"
-                          disabled={busy || !(replyDrafts[a.playerId] ?? "").trim()}
-                          onClick={() => void sendReply(a.playerId)}
-                        >
-                          {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
-                          Send
-                        </Button>
+                      <div className="flex w-full flex-col gap-2">
+                        {/* One-click warnings: pick one, it fills the composer
+                            (editable before sending), so moderation is two
+                            clicks instead of typing the same paragraphs. */}
+                        <label className="flex items-center gap-2 text-2xs text-muted-foreground">
+                          <span className="shrink-0 font-semibold uppercase tracking-wider">
+                            Warnings
+                          </span>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const t = WARNING_TEMPLATES.find((w) => w.label === e.target.value);
+                              if (!t) return;
+                              setReplyDrafts((prev) => ({
+                                ...prev,
+                                [a.playerId]: t.text.replaceAll(
+                                  "{name}",
+                                  a.username ?? a.playerId,
+                                ),
+                              }));
+                            }}
+                            className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs outline-none"
+                          >
+                            <option value="">Choose a warning template…</option>
+                            {WARNING_TEMPLATES.map((w) => (
+                              <option key={w.label} value={w.label}>
+                                {w.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <input
+                            type="text"
+                            value={replyDrafts[a.playerId] ?? ""}
+                            onChange={(e) =>
+                              setReplyDrafts((prev) => ({ ...prev, [a.playerId]: e.target.value }))
+                            }
+                            maxLength={2000}
+                            placeholder={`Message ${a.username ?? a.playerId} as ChainMate…`}
+                            className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
+                          />
+                          <Button
+                            size="sm"
+                            className="w-full sm:w-auto"
+                            disabled={busy || !(replyDrafts[a.playerId] ?? "").trim()}
+                            onClick={() => void sendReply(a.playerId)}
+                          >
+                            {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
+                            Send
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </li>

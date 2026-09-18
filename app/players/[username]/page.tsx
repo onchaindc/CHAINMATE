@@ -13,6 +13,7 @@ import {
   UserX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { GameRow } from "@/components/game/game-row";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
@@ -66,6 +67,8 @@ export default function PublicPlayerPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [challenging, setChallenging] = useState(false);
+  /** Removing a friend is destructive: the dialog names them first. */
+  const [removing, setRemoving] = useState(false);
 
   const store = useMemo(() => getStore("hosted") as HostedGameStore, []);
   const viewerId = identity.playerId;
@@ -115,6 +118,16 @@ export default function PublicPlayerPage() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  /* Liveliness: while this page is open the friendship state re-checks every
+     5s, so "they accepted my request" flips from "Requested" to "Friends"
+     without a manual refresh. Cheap read; skips itself when hidden. */
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 5_000);
+    return () => clearInterval(t);
   }, [load]);
 
   const act = async (
@@ -234,7 +247,7 @@ export default function PublicPlayerPage() {
                   variant="outline"
                   size="sm"
                   disabled={busy}
-                  onClick={() => void act("remove", player.playerId)}
+                  onClick={() => setRemoving(true)}
                 >
                   <UserMinus className="h-3.5 w-3.5" aria-hidden />
                   Request sent
@@ -261,7 +274,7 @@ export default function PublicPlayerPage() {
                   variant="outline"
                   size="sm"
                   disabled={busy}
-                  onClick={() => void act("remove", player.playerId)}
+                  onClick={() => setRemoving(true)}
                 >
                   <UserCheck className="h-3.5 w-3.5" aria-hidden />
                   Friends
@@ -331,7 +344,7 @@ export default function PublicPlayerPage() {
                 key={f.playerId}
                 className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/50 py-1 pl-1.5 pr-3 text-xs"
               >
-                <PlayerAvatar name={f.username ?? "?"} size="xs" />
+                <PlayerAvatar name={f.username ?? "?"} avatarUrl={f.avatarUrl} size="xs" />
                 <CountryFlag code={f.country} />
                 {!f.isGuest && f.username ? (
                   /* `next/link`, not a bare anchor: this is an internal route,
@@ -380,6 +393,24 @@ export default function PublicPlayerPage() {
           )}
         </Panel>
       </div>
+
+      {/* Un-friending (or taking back a request) is destructive and deserves
+          a named confirmation, same as the friends panel's own Remove. */}
+      <ConfirmDialog
+        open={removing}
+        title={`Remove ${player.username}?`}
+        confirmLabel="Remove friend"
+        destructive
+        busy={busy}
+        onCancel={() => setRemoving(false)}
+        onConfirm={() => {
+          setRemoving(false);
+          void act("remove", player.playerId);
+        }}
+      >
+        You will no longer be friends, and you will not be able to message each
+        other. You can always add them again later.
+      </ConfirmDialog>
     </div>
   );
 }

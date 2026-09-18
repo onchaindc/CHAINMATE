@@ -12,7 +12,7 @@ import type { PlayerStats } from "@/lib/types";
  */
 
 /** Trophy tier. The badge renders as a trophy tinted by tier colour. */
-export type AchievementTier = "bronze" | "silver" | "gold" | "diamond";
+export type AchievementTier = "bronze" | "silver" | "gold" | "diamond" | "legendary";
 
 export interface AchievementDef {
   code: string;
@@ -94,6 +94,55 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     icon: "⚔️",
     tier: "diamond",
   },
+  {
+    code: "FIFTY_GAMES",
+    name: "Regular",
+    description: "Complete fifty matches.",
+    icon: "⏳",
+    tier: "silver",
+  },
+  {
+    code: "TWENTY_WINS",
+    name: "Twenty Wins",
+    description: "Win twenty games.",
+    icon: "🎖️",
+    tier: "silver",
+  },
+  {
+    code: "FIFTY_WINS",
+    name: "Fifty Wins",
+    description: "Win fifty games.",
+    icon: "🏅",
+    tier: "gold",
+  },
+  {
+    code: "TEN_WIN_STREAK",
+    name: "Ten Win Streak",
+    description: "Win ten games in a row.",
+    icon: "☄️",
+    tier: "diamond",
+  },
+  {
+    code: "REACH_1800",
+    name: "Master",
+    description: "Reach a 1800 rating.",
+    icon: "💠",
+    tier: "diamond",
+  },
+  {
+    code: "FIRST_TOURNAMENT",
+    name: "Debutant",
+    description: "Play your first tournament match.",
+    icon: "🎪",
+    tier: "bronze",
+  },
+  {
+    code: "TOURNEY_CHAMPION",
+    name: "Champion",
+    description: "Win a ChainMate tournament.",
+    icon: "👑",
+    tier: "legendary",
+  },
 ];
 
 export const achievementByCode = new Map(ACHIEVEMENTS.map((a) => [a.code, a]));
@@ -111,6 +160,10 @@ export interface AchievementContext {
   currentStreak: number;
   /** True when this game was won against a higher-rated opponent. */
   beatHigherRated: boolean;
+  /** True once the player has completed a tournament match. */
+  hasTournamentGame?: boolean;
+  /** True when the player won a tournament (final standing 1). */
+  hasTournamentTitle?: boolean;
 }
 
 /**
@@ -133,6 +186,16 @@ export function earnedAchievements(ctx: AchievementContext): string[] {
   add("REACH_1400", ctx.rating >= 1400);
   add("REACH_1600", ctx.rating >= 1600);
   add("WIN_AGAINST_HIGHER_RATED", ctx.beatHigherRated);
+  add("FIFTY_GAMES", ctx.games >= 50);
+  add("TWENTY_WINS", ctx.wins >= 20);
+  add("FIFTY_WINS", ctx.wins >= 50);
+  add("TEN_WIN_STREAK", ctx.currentStreak >= 10);
+  add("REACH_1800", ctx.rating >= 1800);
+  // Tournament achievements arrive out-of-band (the tournament engine writes
+  // them on match completion / tournament win); they are listed here so the
+  // profile shelf can render them like any other trophy.
+  add("FIRST_TOURNAMENT", ctx.hasTournamentGame === true);
+  add("TOURNEY_CHAMPION", ctx.hasTournamentTitle === true);
   return earned;
 }
 

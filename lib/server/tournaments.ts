@@ -408,6 +408,16 @@ async function transitionTournamentInner(
     doc.status = "completed";
     doc.completedAt = Date.now();
     await writeTournamentDoc(doc);
+    // Same completion body as the engine's own path (below): trophies and
+    // the payout plan. completeTournamentInner is the single door for engine
+    // completions; this one serves the host clicking Complete.
+    doc.winnerId = null;
+    const standings = recomputeStandings(doc);
+    const top = standings.find((x) => x.played > 0 || x.points > 0);
+    doc.winnerId = top?.playerId ?? null;
+    doc.standings = standings;
+    await writeTournamentDoc(doc);
+    await awardTournamentTrophies(doc).catch(() => undefined);
     await planPayoutsIfPaid(doc).catch(() => undefined);
     return { ok: true, doc };
   }
@@ -1172,11 +1182,17 @@ async function createHostedGameForTournament(
   white: string,
   black: string,
 ): Promise<GameState> {
-  const { createHostedGame, joinHostedGame } = await import("@/lib/server/hosted");
+  const { createHostedGame, joinHostedGame, writeHostedGameWithChat } = await import(
+    "@/lib/server/hosted",
+  );
   const game = await createHostedGame(white, {
     timeControl: doc.timeControl,
     visibility: "public",
   });
+  // Tag the match with its tournament BEFORE Black joins, so the tag is on
+  // the game before it can ever end and the achievement engine can see it.
+  game.tournamentId = doc.id;
+  await writeHostedGameWithChat(game);
   // A tournament match starts immediately — Black joins, game goes active.
   // (joinHostedGame(id, playerId) — the game id comes first.)
   await joinHostedGame(game.id, black);
@@ -1768,6 +1784,23 @@ async function checkArenaCompletion(tournamentId: string): Promise<void> {
  * client-supplied id — only from the engine's own progression logic or the
  * host's explicit complete action (which still goes through validation).
  */
+/**
+ * Trophies for a finished tournament, idempotent: the champion gets the
+ * legendary trophy, and every player who played at least one match gets the
+ * bronze debutant. Runs on every completion path (host click, engine).
+ */
+async function awardTournamentTrophies(doc: TournamentDocument): Promise<void> {
+  const { awardAchievementCode } = await import("@/lib/server/hosted");
+  if (doc.winnerId) {
+    await awardAchievementCode(doc.winnerId, "TOURNEY_CHAMPION").catch(() => undefined);
+  }
+  for (const s of doc.standings) {
+    if (s.played > 0) {
+      await awardAchievementCode(s.playerId, "FIRST_TOURNAMENT").catch(() => undefined);
+    }
+  }
+}
+
 export async function completeTournament(
   tournamentId: string,
   winnerId: string | null,
@@ -1806,6 +1839,7 @@ async function completeTournamentInner(
   doc.winnerId = winner;
   doc.standings = recomputeStandings(doc);
   await writeTournamentDoc(doc);
+  await awardTournamentTrophies(doc).catch(() => undefined);
   // Engine completions plan the purse too - the host transition is not the
   // only door to COMPLETED (Swiss final round, knockout final, arena window
   // close all arrive here). planTournamentPayouts is idempotent, so the two

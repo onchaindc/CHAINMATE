@@ -105,7 +105,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
         key={p.playerId}
         className="flex items-center gap-3 px-3 py-2"
       >
-        <PlayerAvatar name={name} size="sm" />
+        <PlayerAvatar name={name} avatarUrl={p.avatarUrl} size="sm" />
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
             <CountryFlag code={p.country} />
@@ -179,7 +179,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
           <div className="mt-2 divide-y divide-border/50 rounded-md border border-border/60">
             {results.map((r) => (
               <div key={r.player_id} className="flex items-center gap-3 px-3 py-2">
-                <PlayerAvatar name={r.username} size="sm" />
+                <PlayerAvatar name={r.username} avatarUrl={r.avatar_url} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                     <CountryFlag code={r.country} />

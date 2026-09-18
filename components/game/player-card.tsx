@@ -2,6 +2,7 @@
 
 import { Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
 import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
@@ -15,6 +16,8 @@ interface PlayerCardProps {
   waiting?: boolean;
   /** Display name (username when known, otherwise the short player id). */
   name?: string;
+  /** Uploaded profile picture, when the player has one (else the initial). */
+  avatarUrl?: string | null;
   /** ISO country code — renders the player's flag next to their name. */
   country?: string;
   /** Current ELO rating when known (real server data). */
@@ -36,6 +39,7 @@ export function PlayerCard({
   isTurn,
   waiting,
   name,
+  avatarUrl,
   country,
   rating,
   clock,
@@ -73,24 +77,30 @@ export function PlayerCard({
              loud for anyone not looking at the layout. */
           <span className="sr-only">{side === "white" ? "White" : "Black"} to move</span>
         )}
-        <span
-          className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
-            /* The side's own colours, taken from the piece tokens so the disc
-               matches the pieces on the board in either UI theme. These were
-               hardcoded zinc, which turned both discs into grey blobs on a
-               light background. */
-            side === "white"
-              ? "border-piece-outline/25 bg-piece-light text-piece-dark"
-              : "border-piece-light/25 bg-piece-dark text-piece-light",
-          )}
-          aria-hidden
-        >
-          {/* A lucide crown, not a Unicode king (♔/♚): the chess glyphs are
-              absent from the default Windows UI fonts, so this disc rendered
-              an empty box on desktop. The disc colour carries the side. */}
-          <Crown className="h-4 w-4" aria-hidden />
-        </span>
+        {/* The player's real face when they uploaded one; the side-coloured
+            crown disc otherwise. Guests keep the disc — that is their look. */}
+        {avatarUrl && !isAi ? (
+          <PlayerAvatar name={displayName} avatarUrl={avatarUrl} size="md" />
+        ) : (
+          <span
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+              /* The side's own colours, taken from the piece tokens so the disc
+                 matches the pieces on the board in either UI theme. These were
+                 hardcoded zinc, which turned both discs into grey blobs on a
+                 light background. */
+              side === "white"
+                ? "border-piece-outline/25 bg-piece-light text-piece-dark"
+                : "border-piece-light/25 bg-piece-dark text-piece-light",
+            )}
+            aria-hidden
+          >
+            {/* A lucide crown, not a Unicode king (♔/♚): the chess glyphs are
+                absent from the default Windows UI fonts, so this disc rendered
+                an empty box on desktop. The disc colour carries the side. */}
+            <Crown className="h-4 w-4" aria-hidden />
+          </span>
+        )}
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
             <CountryFlag code={country} />

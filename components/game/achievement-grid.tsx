@@ -19,6 +19,11 @@ const TIER_STYLES: Record<string, { earned: string; locked: string; label: strin
   silver: { earned: "text-[#c0c0c0]", locked: "text-muted-foreground/40", label: "Silver" },
   gold: { earned: "text-[#f5b81d]", locked: "text-muted-foreground/40", label: "Gold" },
   diamond: { earned: "text-[#7dd3fc]", locked: "text-muted-foreground/40", label: "Diamond" },
+  legendary: {
+    earned: "text-primary drop-shadow-[0_0_6px_hsl(var(--primary)/0.55)]",
+    locked: "text-muted-foreground/40",
+    label: "Legendary",
+  },
 };
 
 function tierOf(code: string) {

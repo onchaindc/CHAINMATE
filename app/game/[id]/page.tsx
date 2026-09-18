@@ -417,6 +417,7 @@ export default function GamePage() {
         side={side}
         playerId={playerId}
         name={playerName(playerId)}
+        avatarUrl={profiles[playerId]?.avatarUrl}
         country={profiles[playerId]?.country}
         rating={playerRating(playerId)}
         clock={isWhite ? whiteClock : blackClock}

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Trophy } from "lucide-react";
+import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -135,6 +136,12 @@ export default function LeaderboardPage() {
                             `truncate` on a long name pushed them onto a second
                             line, so a guest's pill could land under their name. */}
                         <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground/90">
+                          <PlayerAvatar
+                            name={p.username ?? "?"}
+                            avatarUrl={p.avatarUrl}
+                            size="xs"
+                            className="shrink-0"
+                          />
                           <CountryFlag code={p.country} className="shrink-0" />
                           {!p.isGuest && p.username ? (
                             <Link

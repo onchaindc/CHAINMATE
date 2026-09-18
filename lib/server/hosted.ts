@@ -237,6 +237,7 @@ async function livePlayerInfo(playerId: string): Promise<LivePlayerInfo> {
     name: stats.username,
     rating: stats.rating,
     country: stats.country,
+    avatarUrl: stats.avatarUrl ?? null,
   };
 }
 
@@ -362,6 +363,30 @@ async function writeStats(stats: PlayerStats): Promise<void> {
     JSON.stringify(list.slice(0, LEADERBOARD_MAX)),
   );
 }
+/**
+ * Award an achievement by code to a player (no-op when already held), from
+ * server-authoritative tournament outcomes. The one sanctioned way for code
+ * OUTSIDE the game loop to add a trophy; it reuses the same durable write
+ * path as rated games so the shelf and the profile stay in sync.
+ */
+export async function awardAchievementCode(
+  playerId: string,
+  code: string,
+): Promise<void> {
+  if (!code) return;
+  const current = await getPlayerStats(playerId);
+  if (current.isGuest) return;
+  if (earnedCodes(current).has(code)) return;
+  await writeStats({
+    ...current,
+    achievements: [
+      ...current.achievements,
+      { code, earnedAt: Date.now() },
+    ],
+    updatedAt: Date.now(),
+  });
+}
+
 export async function getLeaderboard(): Promise<PlayerStats[]> {
   // Prefer the durable ranking; the local blob is only as complete as this
   // instance's history (see leaderboardProfiles).
@@ -509,6 +534,9 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
   const rd1 = result.a.rd;
   const rd2 = result.b.rd;
 
+  // A tournament match earns its own bronze trophy the first time one ends.
+  const tournamentGame = next.tournamentId !== undefined;
+
   const applyStats = (
     s: PlayerStats,
     score: number,
@@ -547,6 +575,7 @@ async function applyRatingsIfFinished(prev: GameState, next: GameState): Promise
       rating: s.rating,
       currentStreak: Math.max(0, s.currentStreak),
       beatHigherRated: score === 1 && oppBefore > before,
+      hasTournamentGame: Boolean(tournamentGame),
     };
     const have = earnedCodes(s);
     const fresh = earnedAchievements(ctx).filter((code) => !have.has(code));

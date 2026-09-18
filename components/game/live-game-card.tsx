@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Crown } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
@@ -47,18 +48,21 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <span className="flex min-w-0 items-center gap-2 text-sm">
-            {/* The piece tokens, not zinc: these discs stand in for the white
-                and black pieces, and a chess piece is the same colour in either
-                UI theme — which is exactly what `--piece-*` is defined for. A
-                fixed zinc disc read as light-on-light in the light theme. */}
-            <span
-              aria-hidden
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/25 bg-piece-light text-piece-dark"
-            >
-              {/* Lucide crown, not ♔ — the Unicode chess glyphs have no font
-                  on Windows and rendered as an empty box. */}
-              <Crown className="h-3 w-3" aria-hidden />
-            </span>
+            {/* The player's real face when they uploaded one, the white-side
+                crown disc otherwise (the piece tokens, not zinc — see the
+                colour note on the disc below). */}
+            {white.avatarUrl ? (
+              <PlayerAvatar name={whiteName} avatarUrl={white.avatarUrl} size="xs" className="shrink-0" />
+            ) : (
+              <span
+                aria-hidden
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/25 bg-piece-light text-piece-dark"
+              >
+                {/* Lucide crown, not ♔ — the Unicode chess glyphs have no font
+                    on Windows and rendered as an empty box. */}
+                <Crown className="h-3 w-3" aria-hidden />
+              </span>
+            )}
             <CountryFlag code={white.country} />
             <span className="truncate font-medium text-foreground/90">{whiteName}</span>
             {typeof white.rating === "number" && (
@@ -71,12 +75,16 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
             vs
           </span>
           <span className="flex min-w-0 items-center gap-2 text-sm">
-            <span
-              aria-hidden
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/40 bg-piece-dark text-piece-light"
-            >
-              <Crown className="h-3 w-3" aria-hidden />
-            </span>
+            {black.avatarUrl ? (
+              <PlayerAvatar name={blackName} avatarUrl={black.avatarUrl} size="xs" className="shrink-0" />
+            ) : (
+              <span
+                aria-hidden
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/40 bg-piece-dark text-piece-light"
+              >
+                <Crown className="h-3 w-3" aria-hidden />
+              </span>
+            )}
             <CountryFlag code={black.country} />
             <span className="truncate font-medium text-foreground/90">{blackName}</span>
             {typeof black.rating === "number" && (

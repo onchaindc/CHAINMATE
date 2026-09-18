@@ -62,6 +62,13 @@ export async function POST(req: NextRequest) {
           );
         }
         const game = await createChallenge(playerId, opponentId, body.timeControl);
+        // Bell event: a challenge that never announces itself is a dead link.
+        // createChallenge dedupes (an existing pending challenge is returned
+        // as-is), so only a freshly created one rings the bell — no stacking.
+        if (Date.now() - (game.createdAt ?? 0) < 5_000) {
+          const { notifyChallenge } = await import("@/lib/server/notify");
+          await notifyChallenge(playerId, opponentId, game.id).catch(() => undefined);
+        }
         return NextResponse.json({ game });
       }
       case "accept": {

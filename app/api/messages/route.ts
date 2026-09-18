@@ -10,6 +10,11 @@ import {
   sendSupportMessage,
   unseenFeedFor,
 } from "@/lib/server/messages";
+import {
+  eventsFor,
+  markEventsRead,
+  unreadEventCount,
+} from "@/lib/server/notify";
 
 export const runtime = "nodejs";
 
@@ -27,7 +32,7 @@ export const runtime = "nodejs";
 
 interface MessageBody {
   playerId?: string;
-  action?: "send" | "read" | "read-feed" | "read-dm";
+  action?: "send" | "read" | "read-feed" | "read-dm" | "read-events";
   toPlayerId?: string;
   body?: string;
 }
@@ -61,10 +66,16 @@ export async function GET(req: NextRequest) {
       )
       .sort((a, b) => b.sentAt - a.sentAt);
     const unread = merged.filter((m) => m.readAt === null).length;
+    // Notification events (friend requests, accepted requests, challenges):
+    // the bell badge counts them; the bell body lists them.
+    const [events, eventUnread] = await Promise.all([
+      threadWith ? Promise.resolve([]) : eventsFor(acting.playerId),
+      unreadEventCount(acting.playerId),
+    ]);
     // The friends this account may chat with. The UI filters search results
     // and the chat list through it; the SEND path enforces it independently.
     const allowedPeers = threadWith ? [] : [...(await dmAllowedPeers(acting.playerId))];
-    return NextResponse.json({ messages: merged, unread, allowedPeers });
+    return NextResponse.json({ messages: merged, unread, allowedPeers, events, eventUnread });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load messages";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -100,6 +111,11 @@ export async function POST(req: NextRequest) {
 
   if (body.action === "read-dm") {
     await markInboxRead(acting.playerId);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "read-events") {
+    await markEventsRead(acting.playerId);
     return NextResponse.json({ ok: true });
   }
 

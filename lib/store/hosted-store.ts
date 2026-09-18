@@ -83,6 +83,8 @@ export interface SearchPlayerResult {
   rating: number;
   country: string | null;
   games: number;
+  /** Uploaded profile picture, when the player set one. */
+  avatar_url?: string | null;
   /** The VIEWER's friendship state with this player ("self" = it's me). */
   friendship?: "none" | "requested" | "incoming" | "friends" | "self";
 }
