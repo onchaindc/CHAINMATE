@@ -27,6 +27,14 @@ interface NewsItem {
 }
 
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Readers want the whole story in the app, so feed-provided full text is kept
+ * whole: FIDE's content:encoded carries complete articles (8k+ characters)
+ * and truncating it to a teaser made every in-app read cut off mid-sentence.
+ * The cap is a payload guard against pathological feeds, not an editorial
+ * cut: 20k characters is roughly ten normal-length articles.
+ */
+const MAX_BODY_CHARS = 20_000;
 const UA = "ChainMate/1.0 (chess app news reader)";
 
 /** Decode XML entities and strip tags for plain-text excerpts. */
@@ -82,12 +90,16 @@ async function chessComNews(): Promise<NewsItem[]> {
       .map((item): NewsItem => {
         const title = clean(tagText(item, "title") ?? "");
         const link = clean(tagText(item, "link") ?? "");
-        const excerpt = clean(tagText(item, "description") ?? "");
+        // Prefer full content when the feed offers it (some feeds do); the
+        // description is the ~250-char summary fallback.
+        const bodySource =
+          tagText(item, "content:encoded") ?? tagText(item, "description") ?? "";
+        const excerpt = clean(bodySource).slice(0, MAX_BODY_CHARS);
         return {
           title,
           excerpt: excerpt || null,
           url: link,
-          imageUrl: firstImage(tagText(item, "description") ?? ""),
+          imageUrl: firstImage(bodySource),
           publishedAt: parseDate(tagText(item, "pubDate")),
           author: "Chess.com",
           tags: [],
@@ -114,7 +126,9 @@ async function fideNews(): Promise<NewsItem[]> {
         const link = clean(tagText(item, "link") ?? "");
         const contentEncoded =
           tagText(item, "content:encoded") ?? tagText(item, "description") ?? "";
-        const excerpt = clean(contentEncoded).slice(0, 400);
+        // Full article text, not a teaser. FIDE embeds complete stories here;
+        // slicing it at 400 chars was what made in-app reads feel cut off.
+        const excerpt = clean(contentEncoded).slice(0, MAX_BODY_CHARS);
         return {
           title,
           excerpt: excerpt || null,

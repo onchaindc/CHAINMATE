@@ -111,9 +111,11 @@ export default function NewsPage() {
               {openItem.excerpt
                 .split(/(?<=[.!?])\s+(?=[A-Z“"])/)
                 .reduce<string[]>((paras, sentence) => {
-                  // Group sentences into readable paragraphs of ~3.
+                  // Group sentences into readable paragraphs of ~4: at full
+                  // article length, tighter paragraphs are what keeps a long
+                  // read comfortable instead of a wall of text.
                   const last = paras[paras.length - 1];
-                  if (last && last.split(" ").length < 60) {
+                  if (last && last.split(" ").length < 80) {
                     paras[paras.length - 1] = `${last} ${sentence}`;
                   } else {
                     paras.push(sentence);
@@ -121,7 +123,10 @@ export default function NewsPage() {
                   return paras;
                 }, [])
                 .map((p, i) => (
-                  <p key={i} className="text-[0.95rem] leading-relaxed text-foreground/90">
+                  <p
+                    key={i}
+                    className="text-[0.975rem] leading-[1.75] text-foreground/90"
+                  >
                     {p}
                   </p>
                 ))}
