@@ -605,14 +605,59 @@ test("getBlockNumber sends positional empty params and returns the number", asyn
   assert.deepEqual(lastBody?.params, []);
 });
 
-test("getAccountByAddress sends [address] positionally and maps the account", async () => {
+test("getAccountByAddress sends the v2 named-struct form and maps the account", async () => {
   const account = await getAccountByAddress("NQ07 0000 0000 0000 0000 0000 0000 0000 0000", {
     url: serverUrl,
     timeoutMs: 2_000,
   });
   assert.ok(account);
   assert.equal(account.balance, "1500000"); // string luna passed through for exact bigint handling
-  assert.deepEqual(lastBody?.params, ["NQ07 0000 0000 0000 0000 0000 0000 0000 0000"]);
+  // v2 dispatchers expect a named struct ({ address }) — verified live;
+  // the positional array is only the fallback for older nodes.
+  assert.deepEqual(lastBody?.params, { address: "NQ07 0000 0000 0000 0000 0000 0000 0000 0000" });
+});
+
+test("getAccountByAddress falls back to positional when the struct form is rejected", async () => {
+  // Dedicated server: rejects the named-struct form with -32602, answers the
+  // positional retry with a valid account — mimicking a legacy dispatcher.
+  const calls: unknown[] = [];
+  const fallback = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      const parsed = JSON.parse(raw) as { method: string; params: unknown };
+      calls.push(parsed.params);
+      const positional = Array.isArray(parsed.params);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (!positional) {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "Invalid params" } }));
+        return;
+      }
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { data: { address: "NQ07 0000 0000 0000 0000 0000 0000 0000 0000", balance: "1500000" }, metadata: null },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => fallback.listen(0, "127.0.0.1", resolve));
+  const addr = fallback.address();
+  assert.ok(addr && typeof addr === "object");
+  const url = `http://127.0.0.1:${addr.port}/`;
+  try {
+    const account = await getAccountByAddress("NQ07 0000 0000 0000 0000 0000 0000 0000 0000", {
+      url,
+      timeoutMs: 2_000,
+    });
+    assert.ok(account, "the positional fallback should still return the account");
+    assert.equal(calls.length, 2, "exactly two attempts: named form, then positional");
+    assert.deepEqual(calls[0], { address: "NQ07 0000 0000 0000 0000 0000 0000 0000 0000" });
+    assert.deepEqual(calls[1], ["NQ07 0000 0000 0000 0000 0000 0000 0000 0000"]);
+  } finally {
+    fallback.close();
+  }
 });
 
 test("getTransactionByHash sends [hash] positionally and maps the transaction", async () => {

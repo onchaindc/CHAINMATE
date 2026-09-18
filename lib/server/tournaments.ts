@@ -197,9 +197,14 @@ function isTournamentFormat(v: unknown): v is TournamentFormat {
 
 
 /**
- * Minimum LINKED-wallet balance to HOST any tournament (free or paid).
+ * Minimum LINKED-wallet holdings to HOST any tournament (free or paid).
  * Cheap enough to never block a genuine player; high enough that a
  * drive-by spammer burns 50 real NIM of wallet to flood the list.
+ *
+ * "Holdings" = the basic account PLUS every active wrapper contract
+ * (HTLC/vesting) the wallet created — Nimiq Pay keeps user funds in such
+ * wrappers and pays from them, so a basic-account-only read reports zero
+ * for a funded wallet (the operator's 2453 NIM sat in an HTLC wrapper).
  */
 export const CREATOR_MIN_NIM = 50;
 
@@ -243,17 +248,12 @@ async function gateTournamentCreation(creatorId: string): Promise<{ ok: true } |
     if (creationGateDeps?.getAccountBalanceLuna) {
       balance = await creationGateDeps.getAccountBalanceLuna(linked.address);
     } else {
-      const account = await getAccountByAddress(linked.address, { timeoutMs: 10_000 });
-      if (!account) {
-        return {
-          ok: false,
-          error: "We could not read your wallet balance from the Nimiq node right now. Try again in a moment.",
-        };
-      }
-      balance =
-        typeof account.balance === "string"
-          ? BigInt(account.balance)
-          : BigInt(Math.trunc(Number(account.balance)));
+      // TRUE holdings: basic account + wallet-created wrapper contracts
+      // (Nimiq Pay sweeps balances into HTLC/vesting wrappers it later pays
+      // from — a basic-only read says zero for a funded wallet).
+      const { getTotalHoldingsLuna } = await import("@/lib/server/nimiq/rpc");
+      const holdings = await getTotalHoldingsLuna(linked.address, { timeoutMs: 10_000 });
+      balance = holdings.totalLuna;
     }
     if (balance < BigInt(CREATOR_MIN_NIM) * LUNA_PER_NIM) {
       // Name the exact wallet that was checked and what it holds. The most

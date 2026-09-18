@@ -37,7 +37,7 @@ interface JsonRpcRequest {
   jsonrpc: "2.0";
   id: number;
   method: string;
-  params: unknown[];
+  params: unknown[] | object;
 }
 
 interface JsonRpcResponse<T> {
@@ -56,7 +56,24 @@ export interface NimiqRpcAccount {
   sender?: string;
   /** Vesting owner address (v2 field) — present on vesting accounts. */
   owner?: string;
+  /** HTLC timeout, unix ms (v2 field) — after it the creator reclaims. */
+  timeout?: number;
 }
+
+/**
+ * A Nimiq v2 node accepts BOTH positional arrays and named objects for
+ * dispatcher methods — verified live against a MainAlbatross node:
+ *   getAccountByAddress ["NQxx …"]  → -32602 invalid type: string, expected
+ *                                     struct ServiceArgs_…_get_account_by_address
+ *   getAccountByAddress {address}   → 200 OK
+ * The struct field name is the snake_case of the method's argument name
+ * (address, max, offset…), so a named object with an `address` field is the
+ * portable wire form. The legacy positional path is kept for nodes running
+ * the older dispatcher.
+ */
+export type NimiqAccountParams =
+  | { address: string }
+  | [address: string];
 
 export interface NimiqRpcTransaction {
   hash: string;
@@ -85,7 +102,7 @@ interface RpcOverrides {
 /** Minimal JSON-RPC POST with timeout + optional Basic auth. */
 async function rpcCall<T>(
   method: string,
-  params: unknown[],
+  params: unknown[] | object,
   overrides?: RpcOverrides,
 ): Promise<T> {
   const config = getServerNimiqRpcConfig();
@@ -188,12 +205,67 @@ export async function getAccountByAddress(
   address: string,
   overrides?: RpcOverrides,
 ): Promise<NimiqRpcAccount | null> {
-  const account = await rpcCall<NimiqRpcAccount | null>(
-    "getAccountByAddress",
-    [address],
-    overrides,
-  );
-  return account ?? null;
+  // Named-object params are the v2 struct form; the positional array is the
+  // legacy form. The named form is preferred for v2 (struct-expecting)
+  // dispatchers; a node that still wants positional keeps working because we
+  // retry positional when the struct form is rejected with -32602.
+  const named: NimiqAccountParams = { address };
+  try {
+    const account = await rpcCall<NimiqRpcAccount | null>(
+      "getAccountByAddress",
+      named,
+      overrides,
+    );
+    return account ?? null;
+  } catch (err) {
+    // A -32602 (invalid params) on the named form: retry the positional
+    // legacy wire form once, so an older node keeps working.
+    if (err instanceof NimiqRpcError && String(err.code) === "-32602") {
+      const account = await rpcCall<NimiqRpcAccount | null>(
+        "getAccountByAddress",
+        [address],
+        overrides,
+      );
+      return account ?? null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Transactions touching an address (in or out), newest first. v2 struct
+ * form: { address, max?, offset? } — verified live; a -32602 falls back to
+ * the legacy positional array [address, max] for older dispatchers.
+ */
+export interface NimiqAddressTransaction extends NimiqRpcTransaction {
+  fromType?: number | string;
+  toType?: number | string;
+}
+
+export async function getTransactionsByAddress(
+  address: string,
+  max = 25,
+  overrides?: RpcOverrides,
+): Promise<NimiqAddressTransaction[]> {
+  const named = { address, max };
+  try {
+    const txs = await rpcCall<NimiqAddressTransaction[] | null>(
+      "getTransactionsByAddress",
+      named,
+      overrides,
+    );
+    return Array.isArray(txs) ? txs : [];
+  } catch (err) {
+    if (err instanceof NimiqRpcError && String(err.code) === "-32602") {
+      const txs = await rpcCall<NimiqAddressTransaction[] | null>(
+        "getTransactionsByAddress",
+        [address, max],
+        overrides,
+      );
+      return Array.isArray(txs) ? txs : [];
+    }
+    throw err;
+  }
 }
 
 /** Transaction lookup by hash. Returns null while unknown to the node. */
@@ -208,6 +280,129 @@ export async function getTransactionByHash(
 /** Current chain height (blocks). */
 export async function getBlockNumber(overrides?: RpcOverrides): Promise<number> {
   return rpcCall<number>("getBlockNumber", [], overrides);
+}
+
+/* ------------------------------------------------------------------ */
+/* Total-holdings read (basic + wallet-created wrapper contracts)       */
+/* ------------------------------------------------------------------ */
+/*
+ * Nimiq Pay does not keep a user's balance only in the basic account: it
+ * sweeps funds into HTLC/vesting wrapper contracts CREATED by the user's
+ * address and pays from those wrappers (the wallet's transfers leave from
+ * fromType=2 contract accounts). A balance check that reads only the basic
+ * account therefore reports ZERO for a wallet whose visible balance is
+ * actually large — the exact "my account has zero NIM" report from an
+ * operator whose 2453 NIM sat in an HTLC wrapper their address created.
+ *
+ * True spendable-control = basic balance + the balance of every
+ * active wrapper contract the address created:
+ *   - HTLC (type 2 / "htlc"): creator = account.sender; funds are
+ *     reclaimable by the creator once the timeout passes, and the wallet
+ *     spends from the wrapper while it is live.
+ *   - Vesting (type 1 / "vesting"): owner = account.owner.
+ *
+ * Only FUTURE-timeout contracts count: an expired HTLC has effectively
+ * returned to the creator's basic account (or is reclaimable there), and
+ * counting it too would double-count.
+ */
+
+/** Number of recent transactions scanned for wrapper-contract discovery. */
+export const WRAPPER_SCAN_TX_COUNT = 50;
+
+/**
+ * Pure classification: does this raw account object represent a
+ * wallet-created wrapper contract (HTLC or vesting)? Exported for tests.
+ * `nowMs` is injectable so the timeout logic is deterministic.
+ */
+export function isOwnedWrapperContract(
+  account: {
+    type?: number | string;
+    sender?: unknown;
+    owner?: unknown;
+    timeout?: unknown;
+  },
+  creatorAddress: string,
+  nowMs: number,
+): boolean {
+  const type = typeof account.type === "number" ? account.type : String(account.type ?? "").toLowerCase();
+  const isHtlc = type === 2 || type === "htlc";
+  const isVesting = type === 1 || type === "vesting";
+  if (!isHtlc && !isVesting) return false;
+
+  const creator = account.sender ?? account.owner;
+  if (typeof creator !== "string" || !creator) return false;
+  if (creator.replace(/\s/g, "").toLowerCase() !== creatorAddress.replace(/\s/g, "").toLowerCase()) {
+    return false;
+  }
+
+  // An HTLC whose timeout has passed no longer holds spendable wrapper
+  // funds (the creator reclaims them into their basic account).
+  if (isHtlc && typeof account.timeout === "number" && account.timeout <= nowMs) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The wallet's TRUE controllable balance in luna: basic account plus every
+ * active wrapper contract the address created (discovered from recent tx
+ * history — a wrapper only matters if a transaction touched the address).
+ * Never throws for individual counterparty lookups: a contract account that
+ * fails to resolve contributes 0 rather than failing the whole read.
+ */
+export async function getTotalHoldingsLuna(
+  address: string,
+  overrides?: RpcOverrides,
+): Promise<{ totalLuna: bigint; basicLuna: bigint; wrapperLuna: bigint; wrappers: number }> {
+  const nowMs = Date.now();
+  const canonical = address.replace(/\s/g, "");
+
+  const basic = await getAccountByAddress(address, overrides);
+  let basicLuna = 0n;
+  if (basic) {
+    basicLuna =
+      typeof basic.balance === "string" ? BigInt(basic.balance) : BigInt(Math.trunc(Number(basic.balance)));
+  }
+
+  // Discover wrapper contracts from recent history: any contract-typed
+  // counterparty is a candidate. Lookups are best-effort — one broken
+  // account must not fail the whole balance read.
+  const candidates = new Set<string>();
+  let txs: NimiqAddressTransaction[] = [];
+  try {
+    txs = await getTransactionsByAddress(address, WRAPPER_SCAN_TX_COUNT, overrides);
+  } catch {
+    txs = [];
+  }
+  for (const tx of txs) {
+    for (const [addr, type] of [
+      [String(tx.from ?? ""), tx.fromType],
+      [String(tx.to ?? ""), tx.toType],
+    ] as const) {
+      const a = addr.replace(/\s/g, "");
+      if (!a || a === canonical) continue;
+      if (type !== undefined && String(type) !== "0" && String(type) !== "basic") {
+        candidates.add(a);
+      }
+    }
+  }
+
+  let wrapperLuna = 0n;
+  let wrappers = 0;
+  for (const candidate of candidates) {
+    try {
+      const acct = await getAccountByAddress(candidate, overrides);
+      if (!acct) continue;
+      if (!isOwnedWrapperContract(acct, canonical, nowMs)) continue;
+      wrapperLuna +=
+        typeof acct.balance === "string" ? BigInt(acct.balance) : BigInt(Math.trunc(Number(acct.balance)));
+      wrappers += 1;
+    } catch {
+      // best-effort: an unresolvable contract contributes 0
+    }
+  }
+
+  return { totalLuna: basicLuna + wrapperLuna, basicLuna, wrapperLuna, wrappers };
 }
 
 /* ------------------------------------------------------------------ */
