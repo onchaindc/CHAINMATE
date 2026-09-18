@@ -182,7 +182,15 @@ export default function MessagesPage() {
       }
       map.set(peerId, {
         peerId,
-        peerName: m.counterpartName ?? m.fromName ?? peerId,
+        // The thread title is the peer's name. "You" and raw acct_… ids are
+        // equally wrong here, so both fall through to the peer id never being
+        // shown: the server resolves real names (see lib/server/messages.ts).
+        peerName:
+          m.counterpartName && m.counterpartName !== "You"
+            ? m.counterpartName
+            : m.fromName && m.fromName !== "You"
+              ? m.fromName
+              : peerId,
         lastBody: preview(m.body),
         lastAt: m.sentAt,
         unread: unread ? 1 : 0,

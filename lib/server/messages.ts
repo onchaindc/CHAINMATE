@@ -99,12 +99,16 @@ export async function inboxFor(playerId: string): Promise<MessageEnvelope[]> {
  * The player's inbox with the RAW player id never exposed: every envelope
  * carries a resolved display name for the OTHER side of the exchange, so a
  * client rendering a chat list or thread can never leak an acct_… string
- * (the exact leak the operator reported). The sender's own copies keep
- * "You"; a recipient peer gets the username resolved at read time, which
- * also heals envelopes that were stored before a player picked a name.
+ * (the exact leak the operator reported). The counterpart name is ALWAYS the
+ * other side's username, including on the reader's own sent copies: the chat
+ * list labels a thread with this name, so "You" here made every conversation
+ * the player had initiated render as "You" instead of the friend's username.
+ * Which bubbles are the reader's own is already decided by fromPlayerId.
+ * Names resolve at read time, which also heals envelopes stored before a
+ * player picked a name.
  */
 export interface InboxMessage extends MessageEnvelope {
-  /** Display name for whoever is NOT the reader ("You" for own copies). */
+  /** Display name for whoever is NOT the reader (always their username). */
   counterpartName: string;
   /** The other side's player id, for grouping threads. */
   counterpartId: string;
@@ -130,7 +134,11 @@ export async function inboxForDisplay(playerId: string): Promise<InboxMessage[]>
       out.push({
         ...m,
         counterpartId: peerId,
-        counterpartName: mine ? "You" : await peerName(peerId),
+        // Always the peer's real name, own copies included. "You" on this
+        // field was the bug: the chat list titles each thread with it, so a
+        // chat whose newest message was the reader's own showed "You".
+        counterpartName:
+          peerId === CHAINMATE_ID ? "ChainMate" : await peerName(peerId),
       });
       continue;
     }
