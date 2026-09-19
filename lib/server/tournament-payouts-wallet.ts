@@ -39,6 +39,7 @@ import {
 import {
   getLinkedWallet,
 } from "@/lib/server/nimiq/service";
+import { isAdminPlayer } from "@/lib/server/admin";
 import {
   fastStorePayoutStore,
   withPayoutLock,
@@ -82,8 +83,10 @@ export async function preparePayoutClaim(
 ): Promise<PayoutClaimIntent> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) throw new PayoutClaimError("not-found", "Tournament not found", 404);
-  if (doc.creatorId !== hostId) {
-    throw new PayoutClaimError("not-host", "Only the host can send prizes", 403);
+  if (doc.creatorId !== hostId && !(await isAdminPlayer(hostId))) {
+    // ChainMate (the platform admin) is the sole prize distributor and may
+    // act on any event; a host may still act on their own.
+    throw new PayoutClaimError("not-host", "Only ChainMate or the host can send prizes", 403);
   }
   if (doc.status !== "completed") {
     throw new PayoutClaimError("not-completed", "Prizes can be sent only after the tournament completes", 409);
@@ -577,8 +580,8 @@ export async function confirmSentWalletPayout(
 ): Promise<PayoutClaimResult> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) throw new PayoutClaimError("not-found", "Tournament not found", 404);
-  if (doc.creatorId !== hostId) {
-    throw new PayoutClaimError("not-host", "Only the host can manage prizes", 403);
+  if (doc.creatorId !== hostId && !(await isAdminPlayer(hostId))) {
+    throw new PayoutClaimError("not-host", "Only ChainMate or the host can manage prizes", 403);
   }
   const store = deps.store ?? fastStorePayoutStore;
   const payout = await store.get(tournamentId, targetPlayerId);

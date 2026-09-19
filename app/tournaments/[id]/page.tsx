@@ -417,11 +417,17 @@ export default function TournamentDetailPage() {
    * full on-chain identity gates, or advances confirmations. Runs once per
    * load while something is still owed; never sends, never pays twice.
    */
+  /** Quiet status refresh for ADMIN viewers: for every unsettled prize,
+      ask the server to resolve the row to its true state — it discovers a
+      payment the operator already sent and settles it with full on-chain
+      identity gates, or advances confirmations. Admin-only now (ChainMate
+      disburses); a host viewer simply skips this. Runs once per load while
+      something is still owed; never sends, never pays twice. */
   const prizeHealRef = useRef<string | null>(null);
   useEffect(() => {
     if (
       !detail ||
-      detail.myRole !== "host" ||
+      !isAdmin ||
       !detail.payouts?.length ||
       !identity.playerId
     ) {
@@ -442,7 +448,7 @@ export default function TournamentDetailPage() {
       }
       await load();
     })();
-  }, [detail, identity.playerId, id, load]);
+  }, [detail, isAdmin, identity.playerId, id, load]);
 
   if (notFound) {
     return (
@@ -472,9 +478,11 @@ export default function TournamentDetailPage() {
 
   const s = detail.summary;
   const isHost = detail.myRole === "host";
-  /** ChainMate (the admin) is the sole prize distributor — settlement
-      buttons exist for the host AND the platform admin. */
-  const canSettle = isHost || isAdmin;
+  /** ChainMate (the platform admin) is the SOLE prize distributor: money
+      moves only from the admin console, where the operator's wallet and
+      accountability live. Hosts and players see statuses here — never
+      payment buttons. */
+  const canSettle = isAdmin;
 
   const isEntrant = detail.myRole === "entrant";
   // Membership, not role: a HOST WHO JOINED (the common paid-event case —

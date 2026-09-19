@@ -46,6 +46,7 @@ import {
   type NimiqTxStore,
 } from "@/lib/server/nimiq/transactions";
 import { getLinkedWallet } from "@/lib/server/nimiq/service";
+import { isAdminPlayer } from "@/lib/server/admin";
 import { withPayoutLock } from "@/lib/server/tournament-payouts";
 
 /** How many confirmations before a host-paid refund counts as verified. */
@@ -88,8 +89,8 @@ export async function prepareRefundReturn(
 ): Promise<RefundReturnIntent> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) throw new RefundClaimError("not-found", "Tournament not found", 404);
-  if (doc.creatorId !== hostId) {
-    throw new RefundClaimError("not-host", "Only the host can return entry fees", 403);
+  if (doc.creatorId !== hostId && !(await isAdminPlayer(hostId))) {
+    throw new RefundClaimError("not-host", "Only ChainMate or the host can return entry fees", 403);
   }
 
   let refund = doc.refunds?.[targetPlayerId];
@@ -396,8 +397,9 @@ export async function confirmDispatchedRefund(
 ): Promise<RefundClaimResult> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) throw new RefundClaimError("not-found", "Tournament not found", 404);
-  if (doc.creatorId !== hostId) {
-    throw new RefundClaimError("not-host", "Only the host can manage refunds", 403);
+  if (doc.creatorId !== hostId && !(await isAdminPlayer(hostId))) {
+    // Same rule as prizes: ChainMate settles refunds from the admin console.
+    throw new RefundClaimError("not-host", "Only ChainMate or the host can manage refunds", 403);
   }
   const refund = doc.refunds?.[targetPlayerId];
   if (!refund) throw new RefundClaimError("no-refund", "No refund obligation for that player", 404);

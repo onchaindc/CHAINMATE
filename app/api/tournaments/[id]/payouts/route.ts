@@ -82,19 +82,18 @@ interface PayoutActionBody {
 }
 
 /**
- * POST /api/tournaments/[id]/payouts — HOST or ADMIN payout actions.
+ * POST /api/tournaments/[id]/payouts — CHAINMATE-ONLY payout actions.
  *
- * ChainMate (the operator, via the admin dashboard) is the sole prize
- * distributor, so every settlement action accepts the platform admin in
- * addition to the event's host. An admin acts ON this tournament only —
- * there is no cross-tournament power and nothing else changes.
- *   plan:  (re)create the payout records after completion (idempotent)
- *   send:  attempt dispatch through the configured treasury signer —
- *          typed 503 when none is configured (the 2B default)
- *   retry: return a failed/blocked payout to pending
- *   wallet-destination: admin-only — set the payout address for a winner
- *          whose wallet binding is unreachable, from an address typed in
- *          the admin console
+ * ChainMate (the platform admin, operating from the admin dashboard) is the
+ * SOLE distributor of prizes and refunds. A host can see statuses on their
+ * tournament page, but money moves only from the admin console — one
+ * accountable payer, one audit trail. Every action here therefore requires
+ * the admin identity; there is no host bypass.
+ *   plan:  (re)create the payout records after completion (idempotent;
+ *          also runs automatically on completion — this endpoint is the
+ *          console's manual re-run)
+ *   wallet-destination: set where a blocked prize pays, from an address
+ *          typed in the admin console
  */
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params;
@@ -116,11 +115,10 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (!doc) {
       return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
     }
-    const isHost = doc.creatorId === acting.playerId;
-    const isAdmin = isHost ? false : await isAdminPlayer(acting.playerId);
-    if (!isHost && !isAdmin) {
+    const isAdmin = await isAdminPlayer(acting.playerId);
+    if (!isAdmin) {
       return NextResponse.json(
-        { error: "Only the host or a ChainMate admin can manage payouts" },
+        { error: "Only ChainMate can disburse prizes and refunds" },
         { status: 403 },
       );
     }
