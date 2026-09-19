@@ -173,19 +173,25 @@ export async function inboxForDisplay(playerId: string): Promise<InboxMessage[]>
 
 /**
  * Friends-only DMs. Returns the ids this player may open a conversation
- * with: mutual accepted friendships (either direction of the request).
+ * with: mutual accepted friendships (either direction of the request),
+ * plus the official ChainMate account — a moderation reply or announcement
+ * that lands in your inbox must be visible in your thread list, or the
+ * player can never answer it (the exact mobile bug: the send gate allows
+ * the official account, but this allowlist hid its thread from the list).
  * Guests have no friendships, so they naturally cannot DM until they make
  * an account and add someone.
  */
 export async function dmAllowedPeers(playerId: string): Promise<Set<string>> {
+  const peers = new Set<string>([CHAINMATE_ID]);
   try {
     const ids = await listFriendIds(playerId);
-    return new Set(ids);
+    for (const id of ids) peers.add(id);
+    return peers;
   } catch {
     // Friends are unavailable (accounts not configured): fail CLOSED for the
-    // gate so a messaging outage never opens DMs to strangers. The inbox
-    // itself stays readable.
-    return new Set();
+    // friend gate so a messaging outage never opens DMs to strangers. The
+    // official account stays allowed regardless — it is not a stranger.
+    return peers;
   }
 }
 

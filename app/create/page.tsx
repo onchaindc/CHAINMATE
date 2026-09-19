@@ -172,7 +172,8 @@ export default function CreateGamePage() {
             </div>
             <p className="mt-1.5 text-xs text-muted-foreground">
               Bullet, blitz, rapid and daily — minutes per side + increment per
-              move. "1d" gives each player a full day.
+              move. <span className="font-mono">1d</span> gives each player a
+              full day.
             </p>
           </div>
 

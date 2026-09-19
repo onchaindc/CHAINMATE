@@ -67,13 +67,17 @@ function newId(): string {
   return `evt_${Date.now().toString(36)}_${seq.toString(36)}`;
 }
 
-/** Best display name for the actor (falls back without leaking raw ids). */
+/**
+ * Best display name for the actor (falls back without leaking raw ids).
+ * The app has exactly three names for unresolvable players: "ChainMate"
+ * (the official account — it has no profile row by design), "Computer"
+ * (the engine), and "Guest" (everywhere else). Nothing invented: a
+ * notification that says "Someone sent you a friend request" reads like
+ * a security breach.
+ */
 async function actorDisplayName(playerId: string): Promise<string> {
-  // The official account writes moderation replies and outreach; it has no
-  // profile row, so it must resolve by identity, not fall through to a
-  // placeholder ("A player" confused everyone).
   if (playerId === "chainmate") return "ChainMate";
-  return (await usernameForPlayer(playerId)) ?? "Someone";
+  return (await usernameForPlayer(playerId)) ?? "Guest";
 }
 
 async function pushEvent(
