@@ -426,11 +426,34 @@ export function Lobby() {
                     const name = guestDisplayName(f.username);
                     return (
                       <li key={f.playerId} className="flex items-center gap-2.5 px-3 py-2">
-                        <PlayerAvatar name={name} size="sm" />
+                        {/* The real picture when one exists — the friends list
+                            is where faces are expected. */}
+                        {!f.isGuest && f.username ? (
+                          <Link
+                            href={`/players/${encodeURIComponent(f.username)}`}
+                            className="shrink-0"
+                            aria-label={`${name}'s profile`}
+                          >
+                            <PlayerAvatar name={name} avatarUrl={f.avatarUrl} size="sm" />
+                          </Link>
+                        ) : (
+                          <PlayerAvatar name={name} avatarUrl={f.avatarUrl} size="sm" />
+                        )}
                         <div className="min-w-0 flex-1">
                           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                             <CountryFlag code={f.country} />
-                            <span className="truncate">{name}</span>
+                            {!f.isGuest && f.username ? (
+                              /* The name IS the profile link — clicking a
+                                 friend's name goes to their profile. */
+                              <Link
+                                href={`/players/${encodeURIComponent(f.username)}`}
+                                className="truncate underline-offset-2 hover:underline"
+                              >
+                                {name}
+                              </Link>
+                            ) : (
+                              <span className="truncate">{name}</span>
+                            )}
                           </p>
                           <p className="font-mono text-2xs tabular-nums text-muted-foreground">
                             {f.rating}

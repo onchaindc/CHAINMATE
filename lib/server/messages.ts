@@ -273,6 +273,13 @@ export async function sendDirectMessage(
       return { ok: false, error: "You can only message players you are friends with. Add them first, then chat." };
     }
   }
+  // The recipient's block shield outranks everything else (official account
+  // included): a block exists precisely to stop unwanted messages, so the
+  // moderation gate is the LAST authority before delivery.
+  const { actorIsBlockedBy } = await import("@/lib/server/blocks");
+  if (await actorIsBlockedBy(fromPlayerId, toPlayerId)) {
+    return { ok: false, error: "You can't message this player." };
+  }
   const fromName = await displayNameFor(fromPlayerId);
   const sentAt = Date.now();
   await push(toPlayerId, {

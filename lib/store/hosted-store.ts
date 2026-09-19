@@ -37,6 +37,8 @@ interface ApiResponse {
   error?: string;
   status?: "matched" | "waiting";
   player?: PublicPlayer;
+  /** The viewer's blocked player ids (/api/blocks). */
+  blocked?: string[];
   friendship?: "none" | "requested" | "incoming" | "friends";
   friends?: PlayerStats[];
   incoming?: PlayerStats[];
@@ -548,6 +550,20 @@ export class HostedGameStore implements GameStore {
   /** Send / accept / decline / remove a friendship with another player. */
   async friendAction(action: FriendshipAction, otherId: string): Promise<void> {
     await api("/api/friends", {
+      method: "POST",
+      body: JSON.stringify({ playerId: getMyPlayerId(), otherId, action }),
+    });
+  }
+
+  /** The ids this player has blocked (the moderation shield's own list). */
+  async blocked(): Promise<string[]> {
+    const data = await api(`/api/blocks?playerId=${encodeURIComponent(getMyPlayerId())}`);
+    return data.blocked ?? [];
+  }
+
+  /** Block or unblock a player (server-enforced shield on DMs/requests/challenges). */
+  async blockAction(action: "block" | "unblock", otherId: string): Promise<void> {
+    await api("/api/blocks", {
       method: "POST",
       body: JSON.stringify({ playerId: getMyPlayerId(), otherId, action }),
     });

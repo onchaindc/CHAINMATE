@@ -1,8 +1,9 @@
 "use client";
 
-import { Crown } from "lucide-react";
+import { Bot, Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
 import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
@@ -83,25 +84,24 @@ export function PlayerCard({
             crown disc otherwise. Guests keep the disc — that is their look. */}
         {avatarUrl && !isAi ? (
           <PlayerAvatar name={displayName} avatarUrl={avatarUrl} size="md" />
-        ) : (
+        ) : isAi ? (
+          /* The computer keeps its own mark — a bot, not a person. */
           <span
             className={cn(
               "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
-              /* The side's own colours, taken from the piece tokens so the disc
-                 matches the pieces on the board in either UI theme. These were
-                 hardcoded zinc, which turned both discs into grey blobs on a
-                 light background. */
               side === "white"
                 ? "border-piece-outline/25 bg-piece-light text-piece-dark"
                 : "border-piece-light/25 bg-piece-dark text-piece-light",
             )}
             aria-hidden
           >
-            {/* A lucide crown, not a Unicode king (♔/♚): the chess glyphs are
-                absent from the default Windows UI fonts, so this disc rendered
-                an empty box on desktop. The disc colour carries the side. */}
-            <Crown className="h-4 w-4" aria-hidden />
+            <Bot className="h-4 w-4" />
           </span>
+        ) : (
+          /* Default player avatar: a user silhouette on the side-coloured
+             disc. The old crown read as a rank badge ("why do they have a
+             crown?") — a person silhouette says "a player". */
+          <SideAvatar side={side} className="h-8 w-8" />
         )}
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">

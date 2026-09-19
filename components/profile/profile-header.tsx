@@ -109,9 +109,16 @@ export function ProfileHeader({
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {actions}
           {rating !== null && rating !== undefined && (
-            <div className="text-right">
-              <div className="flex items-baseline justify-end gap-1.5">
-                <p className="font-mono text-2xl font-bold tabular-nums text-primary">
+            /* The rating as a small anchored chip: label on top, number and
+               delta centred beneath. The old floating text block had the
+               number left of its caption's edge and read as misaligned — a
+               bordered chip with internal centre alignment can't drift. */
+            <div className="rounded-xl border border-border/60 bg-card/60 px-3.5 py-2 text-center shadow-elevation-1">
+              <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Rating
+              </p>
+              <div className="mt-0.5 flex items-baseline justify-center gap-1.5">
+                <p className="font-mono text-2xl font-bold leading-none tabular-nums text-primary">
                   {rating}
                 </p>
                 {ratingDelta !== null && ratingDelta !== undefined && ratingDelta !== 0 && (
@@ -125,9 +132,6 @@ export function ProfileHeader({
                   </p>
                 )}
               </div>
-              <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                ELO rating
-              </p>
             </div>
           )}
         </div>

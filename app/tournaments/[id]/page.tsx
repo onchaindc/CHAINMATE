@@ -772,7 +772,7 @@ export default function TournamentDetailPage() {
           role="status"
           className={cn(
             "animate-fade-in-up mt-3 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-semibold tracking-tight",
-            pendingRejoin ? "bg-warning/10 text-warning" : "bg-primary/10 text-primary",
+            pendingRejoin ? "bg-warning/10 text-warning"            : "bg-destructive/10 text-destructive",
           )}
         >
           {pendingRejoin ? (
@@ -1586,16 +1586,23 @@ function MatchRow({
       </div>
       <span
         className={cn(
-          "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs tabular-nums",
+          "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs uppercase tracking-wider tabular-nums",
           m.status === "complete"
             ? "bg-secondary/50 text-muted-foreground"
-            : "bg-primary/10 text-primary",
+            : "bg-destructive/10 text-destructive",
         )}
       >
-        {m.status !== "complete" && (
-          <Radio className="mr-1 inline h-2.5 w-2.5 animate-pulse-soft" aria-hidden />
+        {m.status !== "complete" ? (
+          <span className="inline-flex items-center">
+            <span
+              className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse-soft rounded-full bg-destructive align-middle"
+              aria-hidden
+            />
+            live
+          </span>
+        ) : (
+          resultLabel
         )}
-        {resultLabel}
       </span>
     </Link>
   );

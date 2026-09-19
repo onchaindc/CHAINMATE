@@ -963,6 +963,14 @@ export async function requestFriend(
   if (existing?.status === "accepted") {
     return { ok: false, error: "You're already friends." };
   }
+  // The addressee's block shield: a blocked player's request dies here,
+  // before any friendship row is touched.
+  {
+    const { actorIsBlockedBy } = await import("@/lib/server/blocks");
+    if (await actorIsBlockedBy(requesterId, addresseeId)) {
+      return { ok: false, error: "You can't add this player right now." };
+    }
+  }
   if (existing?.requester_player_id === requesterId && existing.status === "pending") {
     return { ok: false, error: "Request already sent, waiting for a reply." };
   }
