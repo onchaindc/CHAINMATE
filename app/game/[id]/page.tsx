@@ -41,13 +41,6 @@ import { describeResult } from "@/lib/game-result";
 import { AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type MobileTab = "moves" | "info";
-
-const MOBILE_TABS: { id: MobileTab; label: string }[] = [
-  { id: "moves", label: "Move history" },
-  { id: "info", label: "Match info" },
-];
-
 export default function GamePage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -211,14 +204,6 @@ export default function GamePage() {
     };
   }, [game?.id, game?.status, gameOver]); // eslint-disable-line react-hooks/exhaustive-deps -- key narrows the trigger
 
-  /* ------------------------------------------------------------------ */
-  /* Mobile: the match console shows one section at a time.              */
-  /* ------------------------------------------------------------------ */
-  const [mobileTab, setMobileTab] = useState<MobileTab>("moves");
-  useEffect(() => {
-    setMobileTab("moves");
-  }, [id]);
-
   /* Board control: flip the board (useful for spectators and for reviewing
      the game from the opponent's point of view). Local view state only. */
   const [flipped, setFlipped] = useState(false);
@@ -363,9 +348,9 @@ export default function GamePage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 lg:py-5">
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
+      <div className="shell flex flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="mx-auto w-full space-y-2.5">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="aspect-square w-full" />
             <Skeleton className="h-14 w-full" />
@@ -423,6 +408,14 @@ export default function GamePage() {
      older one. Follow the moves back to live to keep playing. */
   const interactive =
     !waiting && !gameOver && !reviewing && mySide !== null && myTurn && busy !== "move";
+  /**
+   * Premoves: while it is the opponent's move, own-piece clicks and drops
+   * queue a move that plays the instant the turn arrives. Live two-player
+   * games only — a spectator has no pieces, and replay/waiting have no
+   * next turn to queue into.
+   */
+  const allowPremove =
+    !waiting && !gameOver && !reviewing && mySide !== null && !myTurn && busy !== "move";
   const baseOrientation: "white" | "black" = mySide === "black" ? "black" : "white";
   const orientation: "white" | "black" = flipped
     ? baseOrientation === "white"
@@ -561,7 +554,7 @@ export default function GamePage() {
        itself — so a live game never scrolls the page out from under a player
        mid-move. Below `lg` it falls back to normal document flow, because a
        phone cannot fit a usable board and a readable console at once. */
-    <div className="mx-auto flex w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
+    <div className="shell flex flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
       {/* Header */}
       <div className="mb-2 flex shrink-0 flex-wrap items-center gap-3">
         <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
@@ -596,11 +589,10 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* Action error banner + result strip. Their combined height is measured
-          (MeasuredBanners below) and subtracted from the board column's width
-          formula — without it an over-tall square clips the bottom rank (the
-          white pieces) in exactly the match-report view. */}
-      <MeasuredBanners>
+      {/* Action error banner + result strip. They sit above the board column;
+          the board meter measures the column's viewport position directly, so
+          everything above it (nav, header, these banners) is budgeted without
+          a separate measurement pass. */}
       {error && (
         <div className="mb-2 flex shrink-0 items-start gap-2.5 rounded-md bg-destructive/10 px-3 py-2">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
@@ -657,42 +649,34 @@ export default function GamePage() {
           )}
         </div>
       )}
-      </MeasuredBanners>
-
-      {/* Board and match console share one row on desktop: the board is a
-          square, so its size is capped by the space left over VERTICALLY (nav,
-          header, player cards, controls — see --board-chrome in globals.css).
-          Banners rendered above the board (result strip, error banner) eat
-          height the formula cannot see, which previously clipped the bottom
-          rank exactly in the match-report view — so the board column
-          measures them at runtime and publishes --board-banner, which the
-          width calc subtracts. The leftover width goes to the match console,
-          which scrolls inside itself. Below `lg` it stacks: a phone cannot
-          fit a usable board and a readable console at once. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-8">
-        {/* The board column's WIDTH is the viewport-height budget on desktop:
-            a square board can never be wider than the height it is allowed,
-            or it overflows the fold. The real chrome above/below the board
-            (player cards, controls, status lines) is MEASURED at runtime by
-            BoardChromeMeter below — the old hardcoded 14rem estimate was
-            ~3rem short of reality, which pushed the board's bottom rank
-            under the fold. Mobile stays width-driven. */}
+      {/* Board and match console share one row on desktop. The board column
+          takes the shell's full width; the SQUARE is capped by the height the
+          column's non-board chrome (player cards, controls, banners) leaves —
+          measured at runtime, never estimated. The console fills what's left
+          and scrolls inside itself. Below `lg` it stacks: moves live directly
+          under the board, full width, at every breakpoint. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-6">
+        {/* The board column is width-driven at every breakpoint. Its height
+            budget (viewport − header − banners − its own chrome) is measured
+            by BoardChromeMeter and published as --board-w, which the square
+            reads — so the board is as big as the screen allows and never a
+            pixel taller than the fold. */}
         <div
-          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,var(--board-w,22rem)))] lg:flex-none"
+          className="flex w-full min-w-0 flex-col items-center gap-2"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
               BOTTOM of the board is `orientation` (react-chessboard puts that
               colour's home rank nearest the viewer), so its card belongs
-              below the board and the opponent's above.
-
-              These used to be hardcoded black-on-top / white-on-bottom. The
-              board itself flipped correctly for Black, so a Black player saw
-              their own pieces at the bottom but their own name card at the
-              top — the two halves of the screen disagreed about who was who,
-              which reads as the whole board being the wrong way round. */}
-          {playerCardFor(orientation === "white" ? "black" : "white")}
-          <div data-board-root className="overflow-hidden rounded-md ring-1 ring-border/40">
+              below the board and the opponent's above. */}
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+            {playerCardFor(orientation === "white" ? "black" : "white")}
+          </div>
+          <div
+            data-board-root
+            className="w-full overflow-hidden rounded-md ring-1 ring-border/40"
+            style={{ maxWidth: "var(--board-w, 36rem)" }}
+          >
             <ChessBoard
               fen={boardFen ?? game.fen}
               orientation={orientation}
@@ -700,11 +684,20 @@ export default function GamePage() {
               inCheck={inCheck}
               lastMove={shownLastMove}
               pieceSet={pieceSet}
+              allowPremove={allowPremove}
               onMove={handleBoardMove}
               busy={busy === "move"}
             />
           </div>
-          {playerCardFor(orientation)}
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+            {playerCardFor(orientation)}
+          </div>
+
+          {/* The move strip: directly under the board, full width of the board
+              container so its edges line up with it at every breakpoint. */}
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+            {movesSection}
+          </div>
 
           {/* Board controls / replay controls — flip the board anytime */}
           {replayMode && game && (
@@ -943,7 +936,7 @@ export default function GamePage() {
         {/* Match console — beside the board on desktop, filling the leftover
             width; below the board on mobile. It scrolls inside itself so the
             page never scrolls a live game out from under the player. */}
-        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[60rem] lg:flex-1 lg:overflow-y-auto lg:pb-1">
+        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[44rem] lg:flex-1 lg:overflow-y-auto lg:pb-1">
           {waiting && mySide === "white" && (
             <WaitingPanel
               gameId={game.id}
@@ -973,26 +966,8 @@ export default function GamePage() {
               </span>
             </div>
 
-            {/* Mobile: one section at a time */}
-            <div className="flex gap-1 border-b border-border/60 px-2 py-1.5 lg:hidden">
-              {MOBILE_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setMobileTab(tab.id)}
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    mobileTab === tab.id
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {movesSection}
+            {/* The move history lives under the board (see the board column);
+                this console carries the info and chat. */}
             {gameInfo}
 
             {/* Two humans talking while they play — spectators and AI games
@@ -1054,62 +1029,19 @@ export default function GamePage() {
 }
 
 /**
- * Wraps the banners that render between the page header and the board and
- * publishes their combined height as the `--board-banner` custom property on
- * the document root. The board column's width formula subtracts it, so an
- * over-tall square can never clip the bottom rank (the white pieces) in the
- * match-report view — the exact bug that showed up only after a game ended.
+ * Publishes the board square's true budget as `--board-w` (px) on the
+ * document root — the column and board read it as their max width.
  *
- * A small separate component rather than an effect in the page body: the page
- * has early returns (loading / game-missing), and an effect there would run
- * conditionally — a rules-of-hooks violation. Placed here it always runs.
- */
-function MeasuredBanners({ children }: { children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    /* On the document root, not on this element: the board column is a
-       SIBLING of these banners, and custom properties only inherit downward —
-       a var set here would read as its 0rem fallback where it is consumed. */
-    const root = el.ownerDocument.documentElement;
-    const publish = () => {
-      root.style.setProperty("--board-banner", `${el.scrollHeight / 16}rem`);
-    };
-    publish();
-    const ro = new ResizeObserver(publish);
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      root.style.removeProperty("--board-banner");
-    };
-  }, []);    return <div ref={ref}>{children}</div>;
-  }
-
-/**
- * Publishes the board column's real chrome (every row except the board
- * itself: player cards, controls, status lines) as `--board-chrome-dyn` on
- * the document root. The column's width formula reads that var, so the
- * board is sized from what the chrome ACTUALLY occupies rather than an
- * estimate: the static 14rem budget drifted several rem below reality as
- * rows were added (spectate line, review controls), and a square 3rem too
- * tall ends up under the fold. Re-measures whenever a row resizes.
- *
- * Takes the column ref rather than wrapping it: the column is a direct flex
- * child, and a wrapper div would break that layout while measuring the
- * wrong element. Renders nothing.
- *
- * Also publishes the authoritative board width itself: the square is capped
- * by the column's MEASURED height (its `lg:h-full` makes that the real
- * viewport budget minus everything else in the page — header, banners, the
- * column's own chrome). Sizing the square from a calc() ESTIMATE of that
- * budget was always a few pixels short: page padding, the header row and
- * the gap between columns were unaccounted, so the bottom rank (the white
- * pieces) clipped under the fold on exactly the screens in the bug report.
- * The loop is self-stabilising: a smaller board shrinks the chrome rows
- * wrapped beside it, which re-measures to a slightly larger width, at most
- * once or twice per layout change.
+ * The budget is min(66vw, the column's available HEIGHT for the board):
+ * a square can never be wider than the height the screen gives it, or the
+ * bottom rank clips under the fold. The height side is measured from the
+ * live DOM (the column's bounding top → the flex row's bottom edge), so
+ * everything above and below the board — nav, header, banners, both player
+ * cards, controls, the status line — is budgeted by reality, not by an
+ * estimate that drifted as rows were added. On mobile the column is NOT
+ * height-constrained, so the available height reads as ~unbounded and the
+ * 66vw cap wins; the board then fills the full width exactly as a phone
+ * expects. Re-measures on resize and on any content change; renders null.
  */
 function BoardChromeMeter({
   columnRef,
@@ -1121,29 +1053,41 @@ function BoardChromeMeter({
     if (!el) return;
     const root = el.ownerDocument.documentElement;
     const publish = () => {
-      let chrome = 0;
-      for (const child of Array.from(el.children)) {
-        if (child.hasAttribute("data-board-root")) continue;
-        chrome += child.getBoundingClientRect().height;
+      const vw = root.clientWidth;
+      const widthCap = Math.round(vw * 0.66);
+
+      // Height the column can hand to the board: from the column's top to
+      // the bottom of its flex-row parent, minus the column's non-board
+      // children (player cards, controls, status line) and the gaps.
+      const row = el.parentElement;
+      let heightCap = Number.POSITIVE_INFINITY;
+      const rowRect = row?.getBoundingClientRect();
+      const colRect = el.getBoundingClientRect();
+      if (rowRect && colRect.height > 0 && rowRect.height > colRect.height + 1) {
+        // The row is taller than the column → the column is height-limited
+        // (lg:flex-row with h-full). Budget = row bottom − column top −
+        // non-board chrome.
+        let chrome = 0;
+        for (const child of Array.from(el.children)) {
+          if (child.hasAttribute("data-board-root")) continue;
+          chrome += child.getBoundingClientRect().height;
+        }
+        const gaps = Math.max(0, el.children.length - 1) * 8;
+        heightCap = Math.max(352, rowRect.bottom - colRect.top - chrome - gaps);
       }
-      // Column gaps (gap-2 = 0.5rem) between every row, board included.
-      const gaps = Math.max(0, el.children.length - 1) * 8;
-      root.style.setProperty("--board-chrome-dyn", `${(chrome + gaps) / 16}rem`);
-      // The square's true budget: what the column actually is, less what the
-      // non-board rows actually occupy. Floor at the formula's 22rem minimum
-      // so a transient measure never collapses the board.
-      if (el.clientHeight > 0) {
-        const budget = Math.max(352, el.clientHeight - chrome - gaps);
-        root.style.setProperty("--board-w", `${budget}px`);
+      const budget = Math.min(widthCap, heightCap);
+      if (Number.isFinite(budget) && budget > 0) {
+        root.style.setProperty("--board-w", `${Math.round(budget)}px`);
       }
     };
     publish();
     const ro = new ResizeObserver(publish);
     for (const child of Array.from(el.children)) ro.observe(child);
     ro.observe(el);
+    window.addEventListener("resize", publish);
     return () => {
       ro.disconnect();
-      root.style.removeProperty("--board-chrome-dyn");
+      window.removeEventListener("resize", publish);
       root.style.removeProperty("--board-w");
     };
   }, [columnRef]);

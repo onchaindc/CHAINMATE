@@ -28,6 +28,7 @@ import {
   getTransactionByHash,
   getBlockNumber,
   getAccountByAddress,
+  getTransactionsByAddress,
   NimiqRpcError,
 } from "@/lib/server/nimiq/rpc";
 import { canonicalAddress } from "@/lib/nimiq/address";
@@ -144,6 +145,136 @@ export async function preparePayoutClaim(
     amountLuna: payout.amountLuna,
     network: NIMIQ_NETWORK,
   };
+}
+
+/**
+ * Discover a prize payment the host ALREADY SENT, from their wallet's
+ * transaction history, and settle the row with it.
+ *
+ * Why this exists: legacy tournaments from before the host-wallet path
+ * released their rows carry a payout the host may have paid out-of-band —
+ * pressing Nimiq Pay and sending 20 NIM directly — with no hash ever
+ * recorded server-side. The row sat at 'sending…' forever even though the
+ * money had long landed. Wallet history lists the host's real outgoing
+ * transactions, so a Check-status that scans it turns "stuck forever" into
+ * "settled in one click" — with every identity gate of a manual claim
+ * (network, sender, recipient, exact amount, executed, replay guard)
+ * enforced by the same claim this calls. Nothing is trusted from the
+ * history entry itself except the hash to look up.
+ *
+ * Returns null when no matching payment exists (NOT an error — the host
+ * may simply not have paid yet).
+ */
+export async function discoverWalletPayout(
+  tournamentId: string,
+  hostId: string,
+  targetPlayerId: string,
+  deps: { store?: PayoutStore; txStore?: NimiqTxStore; max?: number } = {},
+): Promise<PayoutClaimResult | null> {
+  const store = deps.store ?? fastStorePayoutStore;
+  const payout = await store.get(tournamentId, targetPlayerId);
+  if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
+  if (payout.status === "sent" || payout.status === "verified") {
+    return confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store });
+  }
+
+  // The wire facts a real payment must match (this also runs the usual
+  // prepare gates and releases a dead 'dispatching' row).
+  const intent = await preparePayoutClaim(tournamentId, hostId, targetPlayerId);
+  const txStore = deps.txStore ?? fastStoreTxStore;
+
+  const hostWallet = await getLinkedWallet(hostId).catch(() => null);
+  if (!hostWallet) return null;
+
+  let history: Awaited<ReturnType<typeof getTransactionsByAddress>> = [];
+  try {
+    history = await getTransactionsByAddress(hostWallet.address, deps.max ?? 40, {
+      timeoutMs: 10_000,
+    });
+  } catch {
+    return null; // history is an optimisation, never a hard gate
+  }
+
+  const hostCanonical = canonicalAddress(hostWallet.address);
+  const winnerCanonical = canonicalAddress(intent.recipientAddress);
+  const expected = BigInt(intent.amountLuna);
+  const { nimiqNetworkId } = await import("@/lib/nimiq/config");
+  const wantNetwork = nimiqNetworkId(intent.network);
+
+  // Newest first; the first EXACT match (recipient + exact amount, from the
+  // host's own wallet) is the prize. Each candidate is re-verified by the
+  // claim itself — the history entry contributes nothing but the hash.
+  for (const entry of history) {
+    const hash = String(entry.hash ?? "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) continue;
+    if (Number(entry.confirmations ?? 0) < 1) continue;
+    if (canonicalAddress(String(entry.from ?? "")) !== hostCanonical) continue;
+    if (canonicalAddress(String(entry.to ?? "")) !== winnerCanonical) continue;
+    let value: bigint;
+    try {
+      value = BigInt(entry.value);
+    } catch {
+      continue;
+    }
+    if (value !== expected) continue;
+
+    try {
+      return await claimPayoutWithWalletTransaction(tournamentId, hostId, targetPlayerId, hash, {
+        store,
+        txStore,
+      });
+    } catch (err) {
+      // A hash already consumed by ANOTHER settlement (the duplicate-send
+      // case) is not this prize — keep scanning older sends.
+      if (err instanceof PayoutClaimError && err.kind === "already-claimed") continue;
+      throw err;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a prize row to its true state — the ONE action behind every
+ * "Check status" button:
+ *   sent/verified      → refresh confirmations toward verified
+ *   dispatching w/hash → verify the recorded broadcast on-chain
+ *   anything else      → scan the host's wallet history for an unrecorded
+ *                        payment (discover) and settle it if found
+ * Never broadcasts, never pays twice: the replay guard holds for every
+ * path. Returns null only when the row is genuinely still owed.
+ */
+export async function resolvePayoutRow(
+  tournamentId: string,
+  hostId: string,
+  targetPlayerId: string,
+  deps: { store?: PayoutStore; txStore?: NimiqTxStore } = {},
+): Promise<PayoutClaimResult | null> {
+  const store = deps.store ?? fastStorePayoutStore;
+  const payout = await store.get(tournamentId, targetPlayerId);
+  if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
+  if (payout.status === "sent" || payout.status === "verified") {
+    return confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store });
+  }
+  if (payout.status === "dispatching" && payout.payoutTxHash) {
+    const { verifyOutgoingPayout } = await import("@/lib/server/tournament-payouts-dispatch");
+    const verified = await verifyOutgoingPayout(tournamentId, targetPlayerId, { store });
+    return { payout: verified, confirmations: 0 };
+  }
+  const found = await discoverWalletPayout(tournamentId, hostId, targetPlayerId, deps);
+  if (found) return found;
+  // Still owed — surface WHY the row cannot settle, so the host knows the
+  // next action instead of re-pressing the same button.
+  if (payout.status === "dispatching") {
+    const { payoutEndpointCannotSign } = await import("@/lib/server/tournament-payouts-dispatch");
+    if (!(await payoutEndpointCannotSign())) {
+      throw new PayoutClaimError(
+        "dispatch-in-flight",
+        "The automatic payout is still in flight on the signing node — try again in a moment",
+        409,
+      );
+    }
+  }
+  return null;
 }
 
 export interface PayoutClaimResult {

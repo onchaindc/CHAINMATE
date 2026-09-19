@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Coins,
   Crown,
+  Info,
   Loader2,
   Radio,
   RefreshCw,
@@ -409,6 +410,40 @@ export default function TournamentDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, resumeChecked, identity.playerId]);
 
+  /**
+   * One quiet host-side heal: for every unfinished prize, ask the server to
+   * resolve the row to its true state — it discovers a payment the host
+   * already sent (the legacy "sending… forever" rows) and settles it with
+   * full on-chain identity gates, or advances confirmations. Runs once per
+   * load while something is still owed; never sends, never pays twice.
+   */
+  const prizeHealRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !detail ||
+      detail.myRole !== "host" ||
+      !detail.payouts?.length ||
+      !identity.playerId
+    ) {
+      return;
+    }
+    const owed = detail.payouts.filter((p) => p.status !== "verified");
+    if (owed.length === 0) return;
+    const key = `${id}:${owed.map((p) => p.playerId + p.status).join("|")}`;
+    if (prizeHealRef.current === key) return;
+    prizeHealRef.current = key;
+    void (async () => {
+      for (const p of owed) {
+        try {
+          await tournamentApi.payoutAction(id, identity.playerId, "wallet-confirm", p.playerId);
+        } catch {
+          /* nothing to settle yet; the buttons and the next load still cover it */
+        }
+      }
+      await load();
+    })();
+  }, [detail, identity.playerId, id, load]);
+
   if (notFound) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
@@ -437,6 +472,7 @@ export default function TournamentDetailPage() {
 
   const s = detail.summary;
   const isHost = detail.myRole === "host";
+
   const isEntrant = detail.myRole === "entrant";
   // Membership, not role: a HOST WHO JOINED (the common paid-event case —
   // hosts must pay like everyone else) used to see the Pay button forever
@@ -716,7 +752,18 @@ export default function TournamentDetailPage() {
         </div>
       )}
 
-      {actionError && <ErrorNote message={actionError} className="mt-4" />}
+      {/* An auto-dispatch note is guidance, not a failure: this deployment
+          pays prizes from the host wallet by design, so it gets a quiet
+          one-liner in the notice tone instead of a red alarm box. */}
+      {actionError &&
+        (actionError.includes("can't sign transactions") ? (
+          <p className="mt-4 flex items-center gap-2 rounded-md bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            This deployment pays prizes from the host wallet — use the buttons under each prize.
+          </p>
+        ) : (
+          <ErrorNote message={actionError} className="mt-4" />
+        ))}
 
       {/* ---------- Payment confirmation (the receipt). One line, said once:
           the headline and the amount. No repeated sentence under it. ---------- */}
@@ -1091,12 +1138,12 @@ export default function TournamentDetailPage() {
                     {displayNim(p.amountLuna)} NIM
                   </span>
                   <PayoutStatusPill status={p.status} />
-                  {isHost && p.status === "dispatching" && (
+                  {isHost && (p.status === "dispatching" || p.status === "sent") && (
                       <button
                         type="button"
                         disabled={payoutBusy !== null}
-                        onClick={() => void runPayoutAction("dispatch", p.playerId)}
-                        title="A send was attempted but its outcome is unknown. This re-checks the recorded broadcast on-chain and completes it as sent, or safely retries — it can never pay twice."
+                        onClick={() => void runPayoutAction("wallet-confirm", p.playerId)}
+                        title="Resolve this prize to its true state: refresh an in-flight payment's confirmations, or find a payment you already sent from your wallet history and settle it. It can never pay twice."
                         className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
                       >
                         check status
@@ -1131,16 +1178,6 @@ export default function TournamentDetailPage() {
                         check status
                       </button>
                     )}
-                  {isHost && p.status === "sent" && (
-                    <button
-                      type="button"
-                      disabled={payoutBusy !== null}
-                      onClick={() => void runPayoutAction("verify", p.playerId)}
-                      className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                    >
-                      verify
-                    </button>
-                  )}
                 </li>
               ))}
             </ul>

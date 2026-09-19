@@ -20,6 +20,7 @@ import {
   claimPayoutWithWalletTransaction,
   confirmSentWalletPayout,
   preparePayoutClaim,
+  resolvePayoutRow,
 } from "@/lib/server/tournament-payouts-wallet";
 import {
   RefundClaimError,
@@ -260,11 +261,21 @@ export async function POST(req: NextRequest, { params }: Params) {
         });
       }
       case "wallet-confirm": {
-        // Refresh confirmations for an already-claimed prize → 'verified'.
+        // Check status: whatever the row's state, resolve it to the truth —
+        // refresh a sent/verified prize's confirmations, verify a recorded
+        // dispatch, or DISCOVER a payment the host already sent from their
+        // wallet history and settle it with full identity gates. The legacy
+        // "sending… forever" rows settle here in one click.
         if (!body.targetPlayerId) {
           return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
         }
-        const result = await confirmSentWalletPayout(id, acting.playerId, body.targetPlayerId);
+        const result = await resolvePayoutRow(id, acting.playerId, body.targetPlayerId);
+        if (!result) {
+          return NextResponse.json(
+            { error: "No payment found for this prize yet — send it from your wallet, then check status again" },
+            { status: 404 },
+          );
+        }
         return NextResponse.json({
           payout: {
             playerId: result.payout.playerId,
