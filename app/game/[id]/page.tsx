@@ -794,44 +794,49 @@ export default function GamePage() {
        mid-move. Below `lg` it falls back to normal document flow, because a
        phone cannot fit a usable board and a readable console at once. */
     <div className="shell flex flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
-      {/* Header */}
+      {/* Header — deliberately bare: no logo, no title. The board IS the
+          page; everything else was noise. The right cluster keeps the live
+          status, the spectator badge and (only after the game ends) Back. */}
       <div className="mb-2 flex shrink-0 flex-wrap items-center gap-3">
-        <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
-        <div>
-          <h1 className="font-display text-lg font-bold tracking-tight">
-            {gameOver ? "Match report" : "Chess match"}
-          </h1>
-          <p className="text-2xs text-muted-foreground">
-            {isAiGame ? "vs Computer" : "Online match"}
-            {game.timeControl ? ` · ${game.timeControl}` : ""}
-          </p>
+        <div className="min-h-8 min-w-0 flex-1">
+          {!gameOver && (
+            <p className="truncate text-2xs text-muted-foreground">
+              {isAiGame ? "vs Computer" : "Online match"}
+              {game.timeControl ? ` · ${game.timeControl}` : ""}
+            </p>
+          )}
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
           {spectator && <Badge variant="secondary">spectating</Badge>}
-          {/* Escape hatch — but BACK, never Home: a mis-click mid-game must
-              not eject a player to the landing page and cost them their
-              navigation trail. This returns to wherever they came from
-              (tournament page, play list, create form…). router.back() needs
-              history to exist, so it falls back to the play hub. */}
-          <button
-            type="button"
-            onClick={() => {
-              if (window.history.length > 1) router.back();
-              else router.push("/play");
-            }}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-            Back
-          </button>
+          {/* Escape hatch — only once the game is OVER. A live Back button
+              invites rage-quitting by accident mid-game; after the result it
+              is the natural way out. BACK, never Home, and it returns to
+              wherever they came from (tournament page, play list, create
+              form…). router.back() needs history to exist, so it falls back
+              to the play hub. */}
+          {gameOver && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.history.length > 1) router.back();
+                else router.push("/play");
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              Back
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Action error banner + result strip. They sit above the board column;
-          the board meter measures the column's viewport position directly, so
-          everything above it (nav, header, these banners) is budgeted without
-          a separate measurement pass. */}
+      {/* Action error banner. Reserved above the board; the board meter
+          measures the column's viewport position directly, so everything
+          above it (nav, header, this banner) is budgeted without a separate
+          measurement pass. The banner slot keeps a min height so an error
+          appearing or clearing never shifts the board (the "page jumps"
+          complaint). */}
       {error && (
         <div className="mb-2 flex shrink-0 items-start gap-2.5 rounded-md bg-destructive/10 px-3 py-2">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
@@ -842,52 +847,10 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Persistent result — the modal is dismissible, this is not. It is the
-          page's own record of how the match ended, and it can bring the full
-          report back at any time. Kept to a single quiet line: the verdict
-          carries the emphasis, everything else is secondary text on the page
-          background rather than another heavy bordered box. */}
-      {result && (
-        <div
-          className={cn(
-            "animate-fade-in-up mb-2 flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md px-3 py-2",
-            result.won
-              ? "bg-primary/[0.07]"
-              : result.lost
-                ? "bg-negative/[0.07]"
-                : "bg-secondary/30",
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              "h-1.5 w-1.5 shrink-0 rounded-full",
-              result.won
-                ? "bg-primary"
-                : result.lost
-                  ? "bg-negative"
-                  : "bg-muted-foreground",
-            )}
-          />
-          <p className="text-sm font-semibold tracking-tight">
-            {result.verdict}
-            <span className="ml-1.5 font-normal text-muted-foreground">{result.reason}</span>
-          </p>
-          <p className="hidden min-w-0 truncate text-xs text-muted-foreground md:block">
-            {result.detail}
-          </p>
-          {!resultOpen && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="ml-auto shrink-0 text-xs"
-              onClick={() => setResultOpen(true)}
-            >
-              Full report
-            </Button>
-          )}
-        </div>
-      )}
+      {/* Persistent result lives INSIDE the end-game popup only — the old
+          always-on strip was a second, redundant report box. Its slot keeps a
+          min height so the layout is identical live vs finished. */}
+      <div className="min-h-0.5 shrink-0" aria-hidden />
       {/* Board and match console share one row on desktop. The board column
           takes the shell's full width; the SQUARE is capped by the height the
           column's non-board chrome (player cards, controls, banners) leaves —
@@ -910,11 +873,11 @@ export default function GamePage() {
           className="flex w-full min-w-0 flex-col items-center gap-2 lg:w-auto"
           ref={boardRef}
         >
-          {/* Player cards follow the board, always. The side shown at the
-              BOTTOM of the board is `orientation` (react-chessboard puts that
-              colour's home rank nearest the viewer), so its card belongs
-              below the board and the opponent's above. */}
-          <div className="w-full lg:hidden" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+          {/* Player cards sit at both ends of the board, like every chess
+              site: the opponent above the square, you below it. The side at
+              the BOTTOM is `orientation` (react-chessboard puts that colour's
+              home rank nearest the viewer), so its card belongs below. */}
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
             {playerCardFor(orientation === "white" ? "black" : "white")}
           </div>
           <div
@@ -934,7 +897,7 @@ export default function GamePage() {
               busy={busy === "move"}
             />
           </div>
-          <div className="w-full lg:hidden" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
             {playerCardFor(orientation)}
           </div>
 
@@ -961,8 +924,6 @@ export default function GamePage() {
               the bottom, mirroring the board. This is what buys the square
               its full viewport-height budget. */}
           <div className="hidden w-full min-w-0 flex-col gap-3 lg:flex">
-            {playerCardFor(orientation === "white" ? "black" : "white")}
-            {playerCardFor(orientation)}
             {boardControls}
             {movesSection}
           </div>
@@ -979,33 +940,35 @@ export default function GamePage() {
             </div>
           )}
 
-          <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
-            <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
-              <span className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {!gameOver && game.status === "active" && (
+          {/* A quiet container only while playing — after the game the moves
+              + summary ARE the report, so the extra box header went away. */}
+          {!gameOver && (
+            <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
+              <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+                <span className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   <span className="relative flex h-1.5 w-1.5" aria-hidden>
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
                   </span>
-                )}
-                {gameOver ? "Match report" : "Match"}
-              </span>
-              <span className="font-mono text-xs tabular-nums text-foreground/80">
-                {replayMode ? `Move ${Math.min(ply ?? 0, game.moves.length)}` : `Move ${moveNumber}`}
-              </span>
+                  Match
+                </span>
+                <span className="font-mono text-xs tabular-nums text-foreground/80">
+                  Move {moveNumber}
+                </span>
+              </div>
             </div>
+          )}
 
-            {/* The move history lives under the board (see the board column);
-                this console carries the info and chat. */}
-            {gameInfo}
+          {/* The move history lives under the board (see the board column);
+              this console carries the info and chat. */}
+          {gameInfo}
 
-            {/* Two humans talking while they play — spectators and AI games
-                never see this (the component renders null). */}
-            <GameChat
-              gameId={game.id}
-              enabled={!isAiGame && !spectator && !canJoinAsBlack && game.opponent !== ""}
-            />
-          </div>
+          {/* Two humans talking while they play — spectators and AI games
+              never see this (the component renders null). */}
+          <GameChat
+            gameId={game.id}
+            enabled={!isAiGame && !spectator && !canJoinAsBlack && game.opponent !== ""}
+          />
         </div>
       </div>
 
