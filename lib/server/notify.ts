@@ -20,7 +20,8 @@ const EVENT_LIMIT = 40;
 export type NotifyEventType =
   | "friend-request"
   | "friend-accepted"
-  | "challenge";
+  | "challenge"
+  | "message";
 
 export interface NotifyEvent {
   id: string;
@@ -117,6 +118,32 @@ export async function notifyFriendAccepted(
     actorName: name,
     body: `${name} accepted your friend request. You can chat now.`,
     href: "/messages",
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * A direct message arrived — the bell's bridge to the inbox.
+ *
+ * Player-to-player DMs deliberately do NOT ring the bell (they count in the
+ * Messages badge only); this producer exists for senders whose message would
+ * otherwise be invisible until the player happens to open /messages — the
+ * official account's moderation replies and admin outreach above all. The
+ * event body carries the message preview; tapping it opens the thread.
+ */
+export async function notifyDirectMessage(
+  fromPlayerId: string,
+  toPlayerId: string,
+  preview: string,
+): Promise<void> {
+  const name = await actorDisplayName(fromPlayerId);
+  await pushEvent({
+    toPlayerId,
+    type: "message",
+    actorPlayerId: fromPlayerId,
+    actorName: name,
+    body: `${name}: ${preview}`,
+    href: `/messages?with=${encodeURIComponent(toPlayerId === fromPlayerId ? "" : fromPlayerId)}`,
     createdAt: Date.now(),
   });
 }

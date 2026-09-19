@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Swords, UserCheck, UserPlus, Volume2 } from "lucide-react";
+import { Bell, Mail, Swords, UserCheck, UserPlus, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 
 interface EventEnvelope {
   id: string;
-  type: "friend-request" | "friend-accepted" | "challenge";
+  type: "friend-request" | "friend-accepted" | "challenge" | "message";
   actorPlayerId: string;
   actorName: string;
   body: string;
@@ -57,6 +57,7 @@ const EVENT_ICON = {
   "friend-request": UserPlus,
   "friend-accepted": UserCheck,
   challenge: Swords,
+  message: Mail,
 } as const;
 
 export function NotificationBell() {
@@ -155,8 +156,11 @@ export function NotificationBell() {
       >
         <Bell aria-hidden />
         {unread > 0 && (
+          /* Readable at a glance: h-5 with 10px text (the old h-4/9px was
+             functionally invisible on desktop), a ring so it never blends
+             into whatever sits behind it, and high-contrast red. */
           <span
-            className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 font-mono text-[9px] font-bold text-white"
+            className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1 font-mono text-[10px] font-bold text-white ring-2 ring-background"
             aria-hidden
           >
             {unread > 9 ? "9+" : unread}

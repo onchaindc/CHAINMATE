@@ -298,6 +298,19 @@ export async function sendDirectMessage(
     sentAt,
     readAt: sentAt,
   });
+
+  // Official/admin outreach rings the bell. A moderation reply that only
+  // exists inside /messages is invisible — the player has no reason to open
+  // a thread they do not know exists. Ordinary player-to-player DMs stay
+  // bell-silent: their badge lives on the Messages entry alone.
+  if (fromPlayerId === CHAINMATE_ID) {
+    const { notifyDirectMessage } = await import("@/lib/server/notify");
+    await notifyDirectMessage(
+      fromPlayerId,
+      toPlayerId,
+      text.length > 80 ? `${text.slice(0, 80)}…` : text,
+    ).catch(() => undefined);
+  }
   return { ok: true };
 }
 

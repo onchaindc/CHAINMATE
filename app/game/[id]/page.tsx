@@ -900,8 +900,14 @@ export default function GamePage() {
             by BoardChromeMeter and published as --board-w, which the square
             reads — so the board is as big as the screen allows and never a
             pixel taller than the fold. */}
+        {/* The board column hugs its square: w-full only while stacked (the
+            column IS the width below lg). At lg, w-full claimed a flex basis
+            of 100%, and with the console's flex-1 (basis 0) the shrink math
+            collapsed the CONSOLE to zero width — nothing ever appeared
+            beside the board. lg:w-auto lets it shrink-to-fit --board-w and
+            hand the leftover width to the console. */}
         <div
-          className="flex w-full min-w-0 flex-col items-center gap-2"
+          className="flex w-full min-w-0 flex-col items-center gap-2 lg:w-auto"
           ref={boardRef}
         >
           {/* Player cards follow the board, always. The side shown at the
@@ -949,7 +955,7 @@ export default function GamePage() {
         {/* Match console — beside the board on desktop, filling the leftover
             width; below the board on mobile. It scrolls inside itself so the
             page never scrolls a live game out from under the player. */}
-        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[44rem] lg:flex-1 lg:overflow-y-auto lg:pb-1">
+        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[26rem] lg:flex-none lg:overflow-y-auto lg:pb-1">
           {/* Desktop: the board column is nothing but the square, so the
               cards, controls and moves live here — opponent on top, you at
               the bottom, mirroring the board. This is what buys the square

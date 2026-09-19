@@ -76,6 +76,15 @@ function preview(text: string): string {
 export default function MessagesPage() {
   const identity = useIdentity();
   const authed = !identity.isGuest && Boolean(identity.username);
+  /* Deep link (?with=<playerId>): notification events point here so a bell
+     tap opens the actual thread. Read off window.location in an effect —
+     the codebase pattern (see app/create) that keeps this page prerenderable
+     without a Suspense boundary. */
+  const [deepLinkPeer, setDeepLinkPeer] = useState<string>("");
+  useEffect(() => {
+    const with_ = new URLSearchParams(window.location.search).get("with");
+    if (with_) setDeepLinkPeer(with_);
+  }, []);
 
   const [inbox, setInbox] = useState<Envelope[] | null>(null);
   /** The friends this account may chat with (server decides, not the UI). */
@@ -292,6 +301,39 @@ export default function MessagesPage() {
     setResults([]);
     setError(null);
   };
+
+  /* Resolve a deep-linked peer once the inbox has envelopes to name them
+     from; until then the header would show a raw id. Re-runs harmlessly —
+     the ref pins the work to the first resolution. */
+  const deepLinkDone = useRef<string>("");
+  useEffect(() => {
+    if (!deepLinkPeer || !inbox || inbox === null) return;
+    if (deepLinkDone.current === deepLinkPeer) return;
+    const hit = inbox.find(
+      (m) =>
+        m.kind === "dm" &&
+        (m.counterpartId === deepLinkPeer ||
+          m.fromPlayerId === deepLinkPeer ||
+          m.toPlayerId === deepLinkPeer),
+    );
+    if (!hit) return;
+    deepLinkDone.current = deepLinkPeer;
+    openPeer({
+      player_id: deepLinkPeer,
+      username:
+        hit.counterpartName && hit.counterpartName !== "You"
+          ? hit.counterpartName
+          : hit.fromPlayerId === deepLinkPeer
+            ? hit.fromName
+            : deepLinkPeer,
+      is_guest: false,
+      rating: 0,
+      country: null,
+      games: 0,
+      avatar_url: hit.counterpartAvatar ?? null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkPeer, inbox]);
 
   if (!authed) {
     return (

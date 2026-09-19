@@ -28,6 +28,7 @@ type MessageEnvelope = MessagesModule.MessageEnvelope;
 let storage: typeof StorageModule;
 let messages: typeof MessagesModule;
 let admin: typeof import("@/lib/server/admin");
+let notify: typeof import("@/lib/server/notify");
 
 const INBOX_KEY = "chainmate:messages:inboxes";
 
@@ -52,6 +53,7 @@ before(async () => {
   storage = await import("@/lib/server/storage");
   messages = await import("@/lib/server/messages");
   admin = await import("@/lib/server/admin");
+  notify = await import("@/lib/server/notify");
 });
 
 /** Seed one player's inbox directly (the push path needs real friendships). */
@@ -206,6 +208,14 @@ test("the dashboard reply path delivers as ChainMate without any friendship", as
     inbox.some((m) => m.kind === "dm" && m.body === "Moderation note"),
     "the official reply never reached the player's inbox",
   );
+
+  // The bell must ring: an official DM the player cannot see coming is the
+  // whole reason the message event exists. Ordinary player DMs stay silent.
+  const events = await notify.eventsFor(PLAYER);
+  const bellEvent = events.find((e) => e.type === "message");
+  assert.ok(bellEvent, "an official DM raised no notification event");
+  assert.equal(bellEvent.actorPlayerId, "chainmate");
+  assert.ok(events.filter((e) => e.type === "message").length === 1, "the event fired twice");
 });
 
 test("DMs fail closed without a real friendship (no Supabase)", async () => {
