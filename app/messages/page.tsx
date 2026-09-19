@@ -414,9 +414,17 @@ export default function MessagesPage() {
                 </ul>
               ) : (
                 <>
-                  <p className="px-4 pb-1.5 pt-3 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Chats
-                  </p>
+                  {/* Mobile needs an exit from the list pane itself — on a
+                      phone the desktop header (with its Back to profile) is
+                      not rendered, so the list was a dead end. */}
+                  <div className="flex items-center justify-between px-4 pb-1.5 pt-3">
+                    <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Chats
+                    </p>
+                    <BackLink href="/profile" className="lg:hidden">
+                      Back
+                    </BackLink>
+                  </div>
                   {inbox === null ? (
                     <LoadingRows rows={5} />
                   ) : conversations.length === 0 ? (

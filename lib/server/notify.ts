@@ -69,7 +69,11 @@ function newId(): string {
 
 /** Best display name for the actor (falls back without leaking raw ids). */
 async function actorDisplayName(playerId: string): Promise<string> {
-  return (await usernameForPlayer(playerId)) ?? "A player";
+  // The official account writes moderation replies and outreach; it has no
+  // profile row, so it must resolve by identity, not fall through to a
+  // placeholder ("A player" confused everyone).
+  if (playerId === "chainmate") return "ChainMate";
+  return (await usernameForPlayer(playerId)) ?? "Someone";
 }
 
 async function pushEvent(
@@ -129,7 +133,9 @@ export async function notifyFriendAccepted(
  * Messages badge only); this producer exists for senders whose message would
  * otherwise be invisible until the player happens to open /messages — the
  * official account's moderation replies and admin outreach above all. The
- * event body carries the message preview; tapping it opens the thread.
+ * body is the message itself, un-prefixed: the row already shows who sent
+ * it (avatar + name), and a "ChainMate: Hi onchaindc. This is a final
+ * warning…" read like a letter's envelope quoting itself.
  */
 export async function notifyDirectMessage(
   fromPlayerId: string,
@@ -142,7 +148,7 @@ export async function notifyDirectMessage(
     type: "message",
     actorPlayerId: fromPlayerId,
     actorName: name,
-    body: `${name}: ${preview}`,
+    body: preview,
     href: `/messages?with=${encodeURIComponent(toPlayerId === fromPlayerId ? "" : fromPlayerId)}`,
     createdAt: Date.now(),
   });

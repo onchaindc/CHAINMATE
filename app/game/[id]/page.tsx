@@ -837,12 +837,21 @@ export default function GamePage() {
           measurement pass. The banner slot keeps a min height so an error
           appearing or clearing never shifts the board (the "page jumps"
           complaint). */}
+      {/* Action errors render as an overlay toast instead of a layout row:
+          a banner appearing above the board used to shove the square down
+          and resize it mid-game (the "page jumps" complaint). A toast
+          changes nothing about the board's budget. */}
       {error && (
-        <div className="mb-2 flex shrink-0 items-start gap-2.5 rounded-md bg-destructive/10 px-3 py-2">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-destructive">Something went wrong</p>
-            <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
+        <div
+          role="alert"
+          className="pointer-events-none fixed inset-x-3 bottom-3 z-40 sm:left-auto sm:max-w-sm"
+        >
+          <div className="animate-fade-in-up flex items-start gap-2.5 rounded-md border border-destructive/30 bg-card/95 px-3 py-2 shadow-elevation-3 backdrop-blur">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-destructive">Something went wrong</p>
+              <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
+            </div>
           </div>
         </div>
       )}
@@ -859,10 +868,12 @@ export default function GamePage() {
           under the board, full width, at every breakpoint. */}
       <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-6">
         {/* The board column is width-driven at every breakpoint. Its height
-            budget (viewport − header − banners − its own chrome) is measured
-            by BoardChromeMeter and published as --board-w, which the square
+            budget (viewport − header − its own chrome) is measured by
+            BoardChromeMeter and published as --board-w, which the square
             reads — so the board is as big as the screen allows and never a
-            pixel taller than the fold. */}
+            pixel taller than the fold. The column reserves the error banner's
+            height above it (outside this column, in the shell), so the
+            banner's appearance can never shift the square. */}
         {/* The board column hugs its square: w-full only while stacked (the
             column IS the width below lg). At lg, w-full claimed a flex basis
             of 100%, and with the console's flex-1 (basis 0) the shrink math

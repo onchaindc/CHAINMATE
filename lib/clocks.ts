@@ -13,15 +13,40 @@ export interface ClockState {
   black: number;
 }
 
-/** Parse "5 + 0" / "15 + 10" into { baseMs, incrementMs }. */
+/**
+ * Parse a time-control label into { baseMs, incrementMs }.
+ *
+ * Understands the classic "5 + 0" / "15 + 10" minutes+increment form (with
+ * fractional minutes), the explicit "3m 45s" / "3m45s" form, and the daily
+ * correspondence form "1d" / "3d". The clock, the timeout sweep and the
+ * server all funnel through this one parser, so a label only has to parse
+ * here to work everywhere.
+ */
 export function parseTimeControl(
   timeControl: string | undefined,
 ): { baseMs: number; incrementMs: number } | null {
   if (!timeControl) return null;
-  const parts = timeControl.split("+").map((p) => parseInt(p.trim(), 10));
+  const raw = timeControl.trim();
+  const days = /^(\d+(?:\.\d+)?)\s*d(?:\s*\+\s*(\d+(?:\.\d+)?))?$/i.exec(raw);
+  if (days) {
+    return {
+      baseMs: Math.max(0, parseFloat(days[1]!)) * 86_400_000,
+      incrementMs: Math.max(0, parseFloat(days[2] ?? "0")) * 1000,
+    };
+  }
+  const minSec = /^(\d+(?:\.\d+)?)\s*m\s*(\d+(?:\.\d+)?)?\s*s?$/i.exec(raw);
+  if (minSec) {
+    return {
+      baseMs:
+        Math.max(0, parseFloat(minSec[1]!)) * 60_000 +
+        Math.max(0, parseFloat(minSec[2] ?? "0")) * 1000,
+      incrementMs: 0,
+    };
+  }
+  const parts = raw.split("+").map((p) => parseFloat(p.trim()));
   if (parts.length === 0 || !Number.isFinite(parts[0] ?? NaN)) return null;
   return {
-    baseMs: Math.max(0, parts[0]) * 60_000,
+    baseMs: Math.max(0, parts[0] ?? 0) * 60_000,
     incrementMs: Math.max(0, parts[1] ?? 0) * 1000,
   };
 }

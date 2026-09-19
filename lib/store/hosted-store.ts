@@ -53,6 +53,8 @@ export interface PlayerInfo {
   rating?: number;
   /** ISO country code when the player set one (for flags). */
   country?: string;
+  /** Uploaded profile picture, when the player set one. */
+  avatarUrl?: string | null;
   isAi?: boolean;
 }
 

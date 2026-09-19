@@ -125,7 +125,7 @@ function GamesContent() {
                   game={game}
                   me={game.backend === "local" ? localMe : identity.playerId}
                   delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                  names={game.backend === "local" ? undefined : names}
+                  players={game.backend === "local" ? undefined : players}
                 />
               ))}
             </div>
@@ -172,7 +172,7 @@ function GamesContent() {
                 game={game}
                 me={game.backend === "local" ? localMe : identity.playerId}
                 delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                names={game.backend === "local" ? undefined : names}
+                players={game.backend === "local" ? undefined : players}
               />
             ))}
           </div>

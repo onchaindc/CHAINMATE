@@ -149,6 +149,22 @@ export function Lobby() {
     return map;
   }, [data?.players, data?.friends]);
 
+  /** Full player info (names + avatars) for the game rows, with friends
+      folded in so a fresh friend's row still has a face. */
+  const mergedPlayers = useMemo(() => {
+    const map: Record<string, PlayerInfo> = { ...(data?.players ?? {}) };
+    for (const f of data?.friends ?? []) {
+      map[f.playerId] = {
+        id: f.playerId,
+        name: f.username,
+        rating: f.rating,
+        country: f.country,
+        avatarUrl: f.avatarUrl,
+      };
+    }
+    return map;
+  }, [data?.players, data?.friends]);
+
   /** Rating change per game, for the recent list. */
   const deltas = useMemo(() => {
     const map = new Map<string, number>();
@@ -241,7 +257,7 @@ export function Lobby() {
                 {resume.length > 1 && (
                   <div className="mt-4 divide-y divide-border/50 border-t border-border/60 pt-1">
                     {resume.slice(1).map((g) => (
-                      <GameRow key={g.id} game={g} me={playerId} names={names} />
+                      <GameRow key={g.id} game={g} me={playerId} players={mergedPlayers} />
                     ))}
                   </div>
                 )}
@@ -377,7 +393,7 @@ export function Lobby() {
                       game={g}
                       me={playerId}
                       delta={deltas.get(g.id) ?? null}
-                      names={names}
+                      players={mergedPlayers}
                     />
                   ))}
                 </div>

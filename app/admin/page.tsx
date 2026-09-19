@@ -625,15 +625,17 @@ function Dashboard({
 
       {/* The lock message has its own slot: it means "re-enter your code",
           which is actionable, not a load failure. Anything else the periodic
-          refresh surfaces is an error, and shows as one. */}
-      {error &&
-        (error.includes("Dashboard locked") ? (
-          <div className="mt-4">
-            <PasscodeUnlock playerId={playerId} onUnlock={onUnlock} />
-          </div>
-        ) : (
-          <ErrorNote message={error} className="mt-4" />
-        ))}
+          refresh surfaces is an error, and shows as one. The dashboard
+          content HIDES while locked — rendering the unlock card inside the
+          rendered page stacked both on top of each other (the "leaking
+          over themselves" screenshot). */}
+      {error && error.includes("Dashboard locked") ? (
+        <div className="mt-4">
+          <PasscodeUnlock playerId={playerId} onUnlock={onUnlock} />
+        </div>
+      ) : (
+        <>
+          {error && <ErrorNote message={error} className="mt-4" />}
 
       {notice && (
         <p className="animate-fade-in-up mt-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground/90">
@@ -1136,6 +1138,8 @@ function Dashboard({
         {pendingTourAction?.action === "delete" &&
           "The tournament is removed entirely. Deletion is refused while players have paid entries: resolve refunds first."}
       </ConfirmDialog>
+        </>
+      )}
     </div>
   );
 }

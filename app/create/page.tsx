@@ -22,7 +22,8 @@ import { cn } from "@/lib/utils";
  * states the two-player case as a fact instead of a branch.
  */
 
-const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
+/** Minutes+increment for over-the-board speeds, plus daily for slow mail-box play. */
+const TIME_CONTROLS = ["2 + 1", "3 + 2", "3m 45s", "5 + 0", "10 + 0", "15 + 10", "1d"] as const;
 
 export default function CreateGamePage() {
   const router = useRouter();
@@ -143,7 +144,7 @@ export default function CreateGamePage() {
               Time control
             </p>
             <div
-              className="grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+              className="grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1 sm:grid-cols-4"
               role="radiogroup"
               aria-label="Time control"
             >
@@ -170,7 +171,8 @@ export default function CreateGamePage() {
               ))}
             </div>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              Minutes per side + increment per move.
+              Bullet, blitz, rapid and daily — minutes per side + increment per
+              move. "1d" gives each player a full day.
             </p>
           </div>
 

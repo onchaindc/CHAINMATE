@@ -34,14 +34,6 @@ export default function WatchPage() {
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
 
   /** Player id → username, for the rows that only carry ids. */
-  const names = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const info of Object.values(players)) {
-      if (info.name) map[info.id] = info.name;
-    }
-    return map;
-  }, [players]);
-
   /** Local (offline) games use the local identity, not the hosted one. */
   const [localIds, setLocalIds] = useState<Set<string>>(() => new Set());
 
@@ -162,7 +154,7 @@ export default function WatchPage() {
           ) : (
             <div className="divide-y divide-border/50 px-2 py-2">
               {open.map((entry) => (
-                <GameRow key={entry.id} game={entry} me={hostedMe} names={names} />
+                <GameRow key={entry.id} game={entry} me={hostedMe} players={players} />
               ))}
             </div>
           )}
@@ -195,7 +187,7 @@ export default function WatchPage() {
                   /* Offline games were played under the local identity, so
                      "You" only lines up when matched against that one. */
                   me={localIds.has(entry.id) ? localMe : hostedMe}
-                  names={localIds.has(entry.id) ? undefined : names}
+                  players={localIds.has(entry.id) ? undefined : players}
                 />
               ))}
             </div>

@@ -263,7 +263,7 @@ function ProfileContent() {
                     /* Local games are never rated, so they hold the column open
                        with a blank rather than claiming a delta of zero. */
                     delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                    names={game.backend === "local" ? undefined : names}
+                    players={game.backend === "local" ? undefined : players}
                   />
                 ))}
               </div>

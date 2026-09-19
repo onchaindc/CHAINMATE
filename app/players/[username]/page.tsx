@@ -74,14 +74,6 @@ export default function PublicPlayerPage() {
   const viewerId = identity.playerId;
   const isMe = player !== null && player.playerId === viewerId;
 
-  const names = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const info of Object.values(players)) {
-      if (info.name) map[info.id] = info.name;
-    }
-    return map;
-  }, [players]);
-
   /**
    * Rating change per game, for the history rows.
    *
@@ -386,7 +378,7 @@ export default function PublicPlayerPage() {
                   game={game}
                   me={viewerId}
                   delta={deltas.get(game.id) ?? null}
-                  names={names}
+                  players={players}
                 />
               ))}
             </div>

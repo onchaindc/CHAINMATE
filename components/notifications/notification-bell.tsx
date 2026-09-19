@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Mail, Swords, UserCheck, UserPlus, Volume2 } from "lucide-react";
+import { Bell, Mail, Swords, UserCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
@@ -68,7 +68,6 @@ export function NotificationBell() {
   const unread = bellUnread + eventUnread;
 
   const [events, setEvents] = useState<EventEnvelope[]>([]);
-  const [announcements, setAnnouncements] = useState<MessageEnvelope[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -85,9 +84,6 @@ export function NotificationBell() {
         events?: EventEnvelope[];
       };
       setEvents((data.events ?? []).slice(0, 10));
-      setAnnouncements(
-        (data.messages ?? []).filter((m) => m.kind === "broadcast").slice(0, 5),
-      );
     } catch {
       // transient
     }
@@ -215,36 +211,9 @@ export function NotificationBell() {
               </ul>
             )}
 
-            {announcements.length > 0 && (
-              <>
-                <p className="border-t border-border/60 px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Announcements
-                </p>
-                <ul className="divide-y divide-border/50">
-                  {announcements.map((m) => (
-                    <li
-                      key={m.id}
-                      className={cn("px-3 py-2.5", m.readAt === null && "bg-primary/[0.06]")}
-                    >
-                      <p className="flex items-center gap-1.5 text-xs font-medium">
-                        <Volume2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-                        <span className="truncate">ChainMate</span>
-                        <span className="ml-auto shrink-0 font-normal text-2xs text-muted-foreground">
-                          {timeAgo(m.sentAt)}
-                        </span>
-                      </p>
-                      <p className="mt-0.5 line-clamp-2 text-2xs leading-snug text-muted-foreground">
-                        {m.body}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {events.length === 0 && announcements.length === 0 && (
+            {events.length === 0 && (
               <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                Nothing yet. Friend requests, challenges and official announcements land here.
+                Nothing yet. Friend requests, challenges and official messages land here.
               </p>
             )}
           </div>

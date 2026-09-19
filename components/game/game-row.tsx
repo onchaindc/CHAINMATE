@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { guestDisplayName } from "@/lib/identity";
+import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { cn } from "@/lib/utils";
 import {
   Award,
@@ -18,6 +19,7 @@ import {
   type GameIndexEntry,
   type GameState,
 } from "@/lib/types";
+import type { PlayerInfo } from "@/lib/store/hosted-store";
 
 interface GameRowProps {
   game: GameState | GameIndexEntry;
@@ -29,8 +31,8 @@ interface GameRowProps {
    * null holds the column open, `undefined` removes it from the row entirely.
    */
   delta?: number | null;
-  /** Real display names for player ids (usernames from the server). */
-  names?: Record<string, string>;
+  /** Real display info for player ids (usernames, avatars from the server). */
+  players?: Record<string, PlayerInfo>;
 }
 
 /**
@@ -43,7 +45,7 @@ interface GameRowProps {
  * rows glow, losses recede, draws sit neutral — scanning a page of results
  * takes a glance instead of a read.
  */
-export function GameRow({ game, me, delta, names }: GameRowProps) {
+export function GameRow({ game, me, delta, players }: GameRowProps) {
   const over = isGameOver(game.status);
   const creator = game.creator;
   const opponent = game.opponent || "";
@@ -53,29 +55,28 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
   /**
    * Real username when the server sent one, otherwise a plain "Guest".
    *
-   * Routed through `guestDisplayName` rather than `names?.[id] || "Guest"`:
+   * Routed through `guestDisplayName` rather than `players?.[id]?.name || "Guest"`:
    * `upsertProfiles` (db.ts) synthesises `Guest_XXXX` into the username
    * column, so the server can hand back a non-empty name that `||` passes
    * straight through — putting the short id back on screen.
    */
   const nameFor = (id: string) =>
-    id === AI_PLAYER_ID ? "Computer" : guestDisplayName(names?.[id]);
+    id === AI_PLAYER_ID ? "Computer" : guestDisplayName(players?.[id]?.name);
 
-  /** The player this row is ABOUT: me when I played, else the creator. */
-  const primaryId = mine ? (isCreatorMe ? creator : opponent) : creator;
-  /** The other side. Empty while a challenge is still waiting. */
-  const vsId = mine
-    ? isCreatorMe
-      ? opponent
-      : creator
-    : opponent || "";
+  /**
+   * The row is ABOUT the opponent — the person you played. A waiting game
+   * (no opponent yet) falls back to the creator, i.e. you.
+   */
+  const waiting = game.status === "waiting" || !opponent;
+  const primaryId = waiting ? creator : opponent;
+  /** The other side — usually you. Empty while a challenge is still waiting. */
+  const secondaryId = waiting ? "" : creator;
 
   const primaryName = nameFor(primaryId);
-  const isVsComputer = vsId === AI_PLAYER_ID;
-  const vsName = vsId ? nameFor(vsId) : "";
-  /** Which side I (or the primary player) sat on. */
+  const isVsComputer = primaryId === AI_PLAYER_ID;
+  const secondaryName = secondaryId ? nameFor(secondaryId) : "";
+  /** Which side the row's primary player sat on. */
   const primaryIsWhite = primaryId === creator;
-  const waiting = game.status === "waiting" || !vsId;
 
   /* ----- Result: one clean state per outcome ---------------------------- */
   let chip: { label: string; tone: "win" | "loss" | "draw" | "live" | "waiting"; icon?: React.ReactNode };
@@ -120,7 +121,8 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
     chip = { label: "Live", tone: "live" };
   }
 
-  const colorLabel = mine ? (primaryIsWhite ? "W" : "B") : null;
+  /** Your colour in this game, as a tiny disc beside your name. */
+  const myColorIsWhite = isCreatorMe ? true : isOpponentMe ? false : null;
   const ts = game.endedAt ?? game.updatedAt ?? game.createdAt ?? 0;
   const date = ts
     ? new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
@@ -132,42 +134,45 @@ export function GameRow({ game, me, delta, names }: GameRowProps) {
       href={href}
       className="group flex items-center gap-3 rounded-md px-3 py-2.5 transition-colors hover:bg-secondary/40"
     >
-      {/* Who: the row's primary player, with the played colour as a disc so a
-          page of rows reads like a card list, not a sentence. */}
-      <span
-        className={cn(
-          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-2xs font-semibold",
-          primaryIsWhite
-            ? "border-piece-outline/30 bg-piece-light text-piece-dark"
-            : "border-piece-outline/30 bg-piece-dark text-piece-light",
-        )}
-        title={colorLabel ? `You played ${primaryIsWhite ? "White" : "Black"}` : undefined}
-      >
-        {colorLabel ?? ""}
-      </span>
+      {/* Who: the OPPONENT leads the row, with their real picture (or their
+          initial — never random glyphs) at a size you can actually see. */}
+      <PlayerAvatar name={primaryName} avatarUrl={players?.[primaryId]?.avatarUrl} size="md" />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-1.5">
           <span className="truncate text-sm font-medium text-foreground">
             {primaryName}
           </span>
-          {/* Your own rows label themselves so "You" stays out of the middle
-              of a name pair — the tiny badge does the pointing. */}
-          {mine && (
-            <span className="shrink-0 rounded bg-primary/15 px-1 py-px text-2xs font-semibold uppercase tracking-wide text-primary">
-              you
-            </span>
-          )}
+          {/* The played colour as a tiny disc right after the name. */}
+          <span
+            className={cn(
+              "h-2.5 w-2.5 shrink-0 rounded-full border border-piece-outline/30",
+              primaryIsWhite ? "bg-piece-light" : "bg-piece-dark",
+            )}
+            title={`Played ${primaryIsWhite ? "White" : "Black"}`}
+          />
         </span>
         <span className="mt-0.5 flex items-center gap-1.5 truncate text-2xs text-muted-foreground">
-          {isVsComputer ? (
-            <Bot className="h-3 w-3 shrink-0" aria-hidden />
-          ) : (
-            <User className="h-3 w-3 shrink-0" aria-hidden />
-          )}
           {waiting ? (
             <span>waiting for an opponent</span>
           ) : (
-            <span className="truncate">vs {vsName}</span>
+            <>
+              {isVsComputer ? (
+                <Bot className="h-3 w-3 shrink-0" aria-hidden />
+              ) : (
+                <User className="h-3 w-3 shrink-0" aria-hidden />
+              )}
+              <span className="truncate">vs {secondaryName}</span>
+              {myColorIsWhite !== null && (
+                <span
+                  className={cn(
+                    "shrink-0 rounded bg-secondary/70 px-1 font-mono text-2xs tabular-nums",
+                  )}
+                  title={`You played ${myColorIsWhite ? "White" : "Black"}`}
+                >
+                  {myColorIsWhite ? "W" : "B"}
+                </span>
+              )}
+            </>
           )}
           <span aria-hidden>·</span>
           <span className="shrink-0 font-mono tabular-nums">{game.timeControl ?? "Match"}</span>
