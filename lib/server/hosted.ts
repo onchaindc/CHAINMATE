@@ -858,8 +858,86 @@ export async function getHostedGame(id: string): Promise<GameState | null> {
     }
   }
   if (!game) return null;
-  // A flag fall may have happened since the last write — settle it now.
-  return resolveTimeout(game);
+  // Presence (tournament clock gate) and then a flag fall may both have
+  // become due since the last write — settle them on every read.
+  const presence = resolvePresence(game);
+  if (presence !== game) await writeGame(presence);
+  return resolveTimeout(presence);
+}
+
+/**
+ * Presence window for tournament matches: once both players have checked in
+ * the clock starts immediately; otherwise an absent player gets this grace
+ * before the clock starts anyway (the event cannot stall forever on someone
+ * who never opens the board).
+ */
+export const PRESENCE_GRACE_MS = 60_000;
+
+function sideOfPlayer(game: GameState, playerId: string): "white" | "black" | null {
+  if (game.creator === playerId) return "white";
+  if (game.opponent === playerId) return "black";
+  return null;
+}
+
+/**
+ * Check in as PRESENT for this game. Tournament boards are created with the
+ * game already active — the clock must not start running until both players
+ * have actually arrived. Arrival is recorded server-side (the client can
+ * never fake it), and when both sides are present the clock's start instant
+ * is stamped. Casual games without the field are untouched: their behaviour
+ * is unchanged.
+ *
+ * Idempotent: arriving twice keeps the first arrival.
+ */
+export async function arriveHostedGame(id: string, playerId: string): Promise<GameState> {
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("Game not found");
+  if (game.status !== "active" || game.opponent === "") return game;
+  const side = sideOfPlayer(game, playerId);
+  if (!side) return game; // spectators can never affect presence
+
+  const arrived = { ...(game.arrivedAt ?? {}) };
+  const now = Date.now();
+  if (game.clockStartedAt) return game; // already running — nothing to do
+  if (!arrived[side]) {
+    arrived[side] = now;
+    await writeGame({ ...game, arrivedAt: arrived, updatedAt: now });
+  }
+  const other = side === "white" ? "black" : "white";
+  const bothHere = Boolean(arrived.white) && Boolean(arrived.black);
+  const firstArrival = Math.min(arrived.white ?? Infinity, arrived.black ?? Infinity);
+  const due = bothHere || (arrived[side] && now - firstArrival >= PRESENCE_GRACE_MS);
+  if (due) {
+    const next: GameState = {
+      ...game,
+      arrivedAt: arrived,
+      clockStartedAt: now,
+      updatedAt: now,
+    };
+    await writeGame(next);
+    return next;
+  }
+  return { ...game, arrivedAt: arrived };
+}
+
+/**
+ * Lazy presence resolution on every read: a player who never arrives must
+ * not freeze the event, so after the grace window the clock starts on its
+ * own (from the moment the grace expired — the absent player still loses
+ * nothing they were present for, and the waiting player is not punished
+ * either: the clock only starts burning once it exists).
+ */
+function resolvePresence(game: GameState): GameState {
+  if (game.status !== "active" || !game.opponent || game.clockStartedAt || game.arrivedAt === undefined) {
+    return game;
+  }
+  const now = Date.now();
+  const first = Math.min(game.arrivedAt.white ?? Infinity, game.arrivedAt.black ?? Infinity);
+  if (first === Infinity) return game;
+  if (now - first >= PRESENCE_GRACE_MS) {
+    return { ...game, clockStartedAt: now, updatedAt: now };
+  }
+  return game;
 }
 
 export async function joinHostedGame(id: string, playerId: string): Promise<GameState> {
@@ -891,6 +969,14 @@ export async function submitHostedMove(
 ): Promise<GameState> {
   const game = await getHostedGame(id);
   if (!game) throw new Error("Game not found");
+  // Moving IS arriving: the first real move settles presence and starts the
+  // clock if the grace has run its course (or the opponent is also there).
+  if (!game.clockStartedAt && game.arrivedAt !== undefined) {
+    const side = sideOfPlayer(game, playerId);
+    if (side && !game.arrivedAt[side]) {
+      await arriveHostedGame(id, playerId).catch(() => undefined);
+    }
+  }
   const res = applyMoveToGame(game, playerId, from, to, promotion);
   if (!res.ok) throw new Error(res.error);
   let next: GameState = stampMoveTime(res.game);

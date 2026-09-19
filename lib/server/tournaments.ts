@@ -326,6 +326,7 @@ export async function createTournament(
     cancelReason: null,
     startedAt: null,
     completedAt: null,
+    nextRoundAt: null,
     currentRound: 0,
     totalRounds: 0,
     winnerId: null,
@@ -507,6 +508,29 @@ function totalRoundsFor(doc: TournamentDocument, playerCount: number): number {
   return 0; // arena has no rounds
 }
 
+/**
+ * Intermission between rounds (Swiss / knockout): after a round's LAST game
+ * ends, the next round is scheduled this many milliseconds later rather than
+ * dealt instantly. Players get a breather, the tournament page shows a
+ * round-ended banner with a countdown, and nobody finds a fresh board dealt
+ * while they were reading the result. The NEXT round's clock does not start
+ * until both players arrive anyway (see arriveHostedGame) — the two
+ * mechanisms compound instead of stacking waits.
+ *
+ * Overridable via TOURNAMENT_ROUND_INTERMISSION_MS (ms) — tests run with 0
+ * so progression stays synchronous under `bun test`.
+ */
+export const ROUND_INTERMISSION_MS = parseIntermissionMs();
+
+function parseIntermissionMs(): number {
+  const raw = process.env.TOURNAMENT_ROUND_INTERMISSION_MS;
+  if (raw != null && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  return 60_000;
+}
+
 /* ------------------------------------------------------------------ */
 /* Maintenance — the idempotent time-driven state machine              */
 /* ------------------------------------------------------------------ */
@@ -662,6 +686,7 @@ async function startTournamentNow(
   doc.startedAt = Date.now();
   doc.totalRounds = totalRoundsFor(doc, activeEntryCount(doc));
   doc.currentRound = 0;
+  doc.nextRoundAt = null;
   doc.standings = recomputeStandings(doc);
   await writeTournamentDoc(doc);
 
@@ -839,6 +864,10 @@ export async function runTournamentMaintenance(): Promise<void> {
       }
       if (doc.status === "in_progress") {
         await withTournamentLock(doc.id, () => finalizeArenaIfDue(doc));
+        // Intermission: deal a scheduled round whose break has elapsed. Runs
+        // before progression so a due round is never pre-empted by a sweep
+        // that would see the previous round as "complete but not advanced".
+        await withTournamentLock(doc.id, () => fireDueRoundIfScheduled(doc).catch(() => undefined));
         // Stale-round recovery: a crash between a result landing and round
         // generation (or between the last game of a final round and
         // completion) must not leave the event frozen. ensureNextRoundInner
@@ -1790,7 +1819,7 @@ async function maybeProgressAfterResult(tournamentId: string): Promise<void> {
     }
     // Every match resolved — build the next round. Byes can make
     // winners.length odd: an odd winner gets a free pass (documented).
-    await ensureNextRoundInner(tournamentId);
+    await scheduleNextRoundAfterIntermission(tournamentId);
     return;
   }
 
@@ -1807,8 +1836,50 @@ async function maybeProgressAfterResult(tournamentId: string): Promise<void> {
       await completeTournamentInner(tournamentId, null);
       return;
     }
-    await ensureNextRoundInner(tournamentId);
+    await scheduleNextRoundAfterIntermission(tournamentId);
   }
+}
+
+/**
+ * A round just finished but more rounds remain: schedule the next one after
+ * the intermission instead of dealing it on top of the result screen.
+ * Idempotent: a second call (race, retry, the maintenance sweep) sees the
+ * scheduled instant already set and leaves it alone.
+ */
+async function scheduleNextRoundAfterIntermission(tournamentId: string): Promise<void> {
+  const doc = await getTournamentDoc(tournamentId);
+  if (!doc || doc.status !== "in_progress") return;
+  const remaining =
+    doc.format === "swiss"
+      ? (doc.swissRounds ?? SWISS_DEFAULT_ROUNDS) - doc.currentRound
+      : doc.totalRounds - doc.currentRound;
+  if (remaining <= 0) {
+    // No rounds left — this was the final one; complete now (standings win).
+    await completeTournamentInner(tournamentId, null);
+    return;
+  }
+  if (doc.nextRoundAt != null) return; // already scheduled
+  doc.nextRoundAt = Date.now() + ROUND_INTERMISSION_MS;
+  await writeTournamentDoc(doc);
+  // Zero intermission (tests, or an instant-flow deployment): fire the round
+  // right here so progression never depends on the maintenance sweep running.
+  if (ROUND_INTERMISSION_MS === 0) {
+    await fireDueRoundIfScheduled(doc);
+  }
+}
+
+/**
+ * Fire a scheduled round whose intermission has elapsed (lock held).
+ * Idempotent: clears the instant BEFORE generation so a concurrent sweep
+ * cannot double-deal; ensureNextRoundInner is itself a no-op when the round
+ * is already open.
+ */
+async function fireDueRoundIfScheduled(doc: TournamentDocument): Promise<void> {
+  if (doc.status !== "in_progress") return;
+  if (doc.nextRoundAt == null || Date.now() < doc.nextRoundAt) return;
+  doc.nextRoundAt = null;
+  await writeTournamentDoc(doc);
+  await ensureNextRoundInner(doc.id).catch(() => undefined);
 }
 
 /**
@@ -2037,6 +2108,10 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
     startedAt: doc.startedAt,
     completedAt: doc.completedAt,
     createdAt: doc.createdAt,
+    /** Intermission countdown: the instant the next round will be dealt. */
+    nextRoundAt: doc.nextRoundAt ?? null,
+    /** Client-side mirror of ROUND_INTERMISSION_MS (UI copy uses it). */
+    roundIntermissionMs: ROUND_INTERMISSION_MS,
     currentRound: doc.format === "arena" ? undefined : doc.currentRound || undefined,
     totalRounds: doc.format === "arena" ? undefined : doc.totalRounds || undefined,
     winnerId: doc.winnerId,

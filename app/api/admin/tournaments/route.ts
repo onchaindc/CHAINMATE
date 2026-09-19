@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
-import { isAdminPlayer } from "@/lib/server/admin";
+import { adminSessionToken, isAdminPlayer, passcodeSessionValid } from "@/lib/server/admin";
 import {
   adminCancelTournament,
   adminCompleteTournament,
@@ -30,6 +30,11 @@ async function actingAdmin(req: NextRequest, claimed: string) {
   const isAdmin = await isAdminPlayer(acting.playerId);
   if (!isAdmin) {
     return { ok: false as const, error: "Not found", status: 404 };
+  }
+  // GETs carry the passcode session too (X-Admin-Session header / ?token=):
+  // a locked dashboard must show the lock screen, not a stale-looking list.
+  if (!(await passcodeSessionValid(adminSessionToken(req)))) {
+    return { ok: false as const, error: "Dashboard locked: enter the passcode again", status: 423 };
   }
   return { ok: true as const, playerId: acting.playerId };
 }

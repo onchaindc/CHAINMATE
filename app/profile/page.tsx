@@ -10,7 +10,6 @@ import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
-import { AvatarUploadCard } from "@/components/profile/avatar-upload-card";
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { GuestBanner } from "@/components/auth/guest-banner";
@@ -140,6 +139,7 @@ function ProfileContent() {
         ratingDelta={stats?.ratingHistory?.[0]?.change ?? null}
         isGuest={identity.isGuest}
         avatarUrl={identity.avatarUrl ?? stats?.avatarUrl}
+        editableAvatar
         joinedAt={stats?.createdAt}
         badges={stats && provisional && <ProfileBadge>Provisional</ProfileBadge>}
         description={
@@ -224,9 +224,6 @@ function ProfileContent() {
 
       {/* Nimiq wallet binding — real provider flow, server-verified link. */}
       <NimiqWalletCard playerId={playerId} />
-
-      {/* Profile picture — inline camera on the avatar + remove option. */}
-      <AvatarUploadCard className="animate-fade-in-up [animation-delay:70ms]" />
 
       {/* Stats */}
       <StatTiles

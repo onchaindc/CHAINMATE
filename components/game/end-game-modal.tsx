@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { Loader2, Play, RotateCcw, Sparkles, Trophy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
 import { describeResult } from "@/lib/game-result";
@@ -30,8 +30,12 @@ interface EndGameModalProps {
       call sites keep compiling. */
   analyzing?: boolean;
   onGenerateSummary?: () => void;
-  /** One-click rematch against the same opponent (hosted human games). */
+  /** One-click rematch against the same opponent (hosted human games).
+   *  NEVER offered for tournament matches — the bracket decides what
+   *  happens next. */
   onRematch?: () => Promise<void>;
+  /** Tournament match: the result hands the player back to the event. */
+  tournamentId?: string;
   onReplay: () => void;
   onClose: () => void;
 }
@@ -51,6 +55,7 @@ export function EndGameModal({
   stats,
   myPlayerId,
   mySide,
+  tournamentId,
   onRematch,
   onReplay,
   onClose,
@@ -260,7 +265,17 @@ export function EndGameModal({
             <Play aria-hidden />
             Replay
           </Button>
-          {onRematch ? (
+          {/* A tournament match flows back into the event — the bracket, not
+              the players, decides what happens next. No rematch, no "play
+              again", no casual next game from inside the popup. */}
+          {tournamentId ? (
+            <Link href={`/tournaments/${tournamentId}`} className="flex-1">
+              <Button className="w-full">
+                <Trophy aria-hidden />
+                Back to tournament
+              </Button>
+            </Link>
+          ) : onRematch ? (
             <Button
               className="flex-1"
               disabled={rematching}

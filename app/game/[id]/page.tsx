@@ -75,6 +75,7 @@ export default function GamePage() {
     abort,
     rematch,
     resolveTimeout,
+    arrive,
     generateSummary,
   } = useGame(id);
 
@@ -229,16 +230,25 @@ export default function GamePage() {
   /* Board colours and piece artwork, remembered across sessions per player. */
   const { boardTheme, pieceSet, setBoardTheme, setPieceSet } = useBoardPrefs();
 
+  /* The board shows the position at `ply` while REVIEWING a live game too —
+     that is the whole point of the Back button: a player who missed the
+     opponent's move rewinds to see it. Only replay mode (finished game) and
+     live review share this one derivation, so the rewind can never be a
+     no-op. */
   const boardFen = useMemo(() => {
-    if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
+    if (game && ply !== null && ply < game.moves.length) return fenAfterPly(game.moves, ply);
     return game?.fen ?? null;
-  }, [replayMode, game, ply]);
+  }, [game, ply]);
 
-  const replayLastMove = useMemo(() => {
-    if (!replayMode || !game || !ply) return null;
+  /* The last-move highlight follows the position on screen, live or rewound. */
+  const shownLastMove = useMemo(() => {
+    if (!game || ply === null || ply === 0 || ply > game.moves.length) {
+      const last = game?.moves[game.moves.length - 1];
+      return last ? { from: last.from, to: last.to } : null;
+    }
     const m = game.moves[ply - 1];
     return m ? { from: m.from, to: m.to } : null;
-  }, [replayMode, game, ply]);
+  }, [game, ply]);
 
   /* ------------------------------------------------------------------ */
   /* Real player data: ratings for both sides + this game's deltas.      */
@@ -295,11 +305,22 @@ export default function GamePage() {
      defeat the memo and bring the drag hitching back. These two hooks sit
      ABOVE the loading/not-found early returns: a hook after a conditional
      return breaks React's hook ordering on the loading→loaded transition
-     and fails the production build outright. */
+     and fails the production build outright.
+
+     The deps are the MOVE'S OWN VALUES, not `game`: the hosted store polls
+     every 2s and each poll yields a new `game` object, so depending on the
+     game object rebuilt `lastMove` — and re-rendered the whole board — on
+     every poll even when nothing changed. That was the tournament lag:
+     each re-render re-parses the position (new Chess(fen) three or four
+     times) right as a player is picking a piece. With primitive deps the
+     board re-renders only when the position or the last move really
+     changes. */
   const lastMove = useMemo(() => {
     const last = game?.moves[game.moves.length - 1];
     return last ? { from: last.from, to: last.to } : null;
-  }, [game]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- primitive deps by design; see note above
+  }, [game?.moves.length, game?.moves.at(-1)?.from, game?.moves.at(-1)?.to]);
+  void lastMove; // superseded by shownLastMove above — kept for the memo pattern note
 
   const handleBoardMove = useCallback(
     (from: string, to: string, promotion?: string) => {
@@ -320,6 +341,26 @@ export default function GamePage() {
     timeoutTriggered.current = true;
     void resolveTimeout();
   }, [flagFallen, resolveTimeout]);
+
+  /* ------------------------------------------------------------------ */
+  /* Tournament presence: check in the moment a live tournament board is */
+  /* open. The server starts the clock only when BOTH players have       */
+  /* arrived (or the absence grace expires), so nobody sits down to a    */
+  /* half-drained clock. Casual games are unaffected — the server no-ops */
+  /* for them.                                                           */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!game || game.status !== "active" || !game.opponent || !mySide) return;
+    if (game.clockStartedAt) return;
+    void arrive();
+  }, [game?.id, game?.status, game?.clockStartedAt, mySide, arrive]);
+
+  /** The clock is gated on presence and at least one player is not in yet. */
+  const clockWaiting =
+    game?.status === "active" &&
+    Boolean(game?.opponent) &&
+    !game?.clockStartedAt &&
+    game?.arrivedAt !== undefined;
 
   if (loading) {
     return (
@@ -652,7 +693,7 @@ export default function GamePage() {
               orientation={orientation}
               interactive={!replayMode && interactive}
               inCheck={inCheck}
-              lastMove={replayMode ? replayLastMove : lastMove}
+              lastMove={shownLastMove}
               pieceSet={pieceSet}
               onMove={handleBoardMove}
               busy={busy === "move"}
@@ -713,10 +754,16 @@ export default function GamePage() {
                     <span className="min-w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
                       {ply} / {game.moves.length}
                     </span>
+                    {/* Forward past the last played move IS live: no separate
+                        button, no special state — the board simply catches up
+                        and stays caught up (the snap effect above re-engages
+                        once ply === moves.length). */}
                     <Button
                       size="icon"
                       variant="ghost"
-                      onClick={() => setPly(ply === game.moves.length - 1 ? null : ply! + 1)}
+                      onClick={() =>
+                        setPly(ply! + 1 >= game.moves.length ? null : ply! + 1)
+                      }
                       aria-label="Next move"
                     >
                       <ChevronRight aria-hidden />
@@ -731,14 +778,9 @@ export default function GamePage() {
                       <SkipBack aria-hidden />
                     </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => setPly(null)}
-                    className="gap-1.5"
-                  >
-                    <SkipForward aria-hidden />
-                    Back to live
-                  </Button>
+                  <span className="text-2xs uppercase tracking-wider text-muted-foreground">
+                    reviewing move {ply} of {game.moves.length}
+                  </span>
                 </div>
               ) : (
               <>
@@ -755,7 +797,7 @@ export default function GamePage() {
                     aria-label="Review previous moves"
                   >
                     <SkipBack className="h-3.5 w-3.5" aria-hidden />
-                    Back
+                    Last move
                   </Button>
                   <Button
                     variant="ghost"
@@ -871,6 +913,8 @@ export default function GamePage() {
                     ? "This is a private challenge between two players."
                     : game.status === "active" && mySide === null
                     ? "Spectating: the game updates live."
+                    : clockWaiting
+                    ? "The clock starts when both players are at the board."
                     : game.status === "active" && drawSupported && drawOfferFromMe
                       ? "Draw offered: waiting for your opponent's reply."
                       : game.status === "active" && drawSupported && drawOfferFromOpponent
@@ -956,7 +1000,10 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* Post-game result modal — appears the moment the game ends */}
+      {/* Post-game result modal — appears the moment the game ends. The
+          tournamentId prop is what kills the rematch button: the modal swaps
+          its actions for "Back to tournament", because the bracket decides
+          what happens next, not the players. */}
       {gameOver && resultOpen && (
         <EndGameModal
           game={game}
@@ -964,6 +1011,7 @@ export default function GamePage() {
           myPlayerId={myId}
           mySide={mySide}
           analyzing={false}
+          tournamentId={game.tournamentId}
           onRematch={
             // TOURNAMENT GAMES NEVER OFFER A REMATCH: the event's bracket
             // decides what happens next (next round, or the event is over

@@ -137,6 +137,12 @@ export class GenLayerGameStore implements GameStore {
     return game;
   }
 
+  async arrive(id: string): Promise<GameState> {
+    const game = await this.getGame(id);
+    if (!game) throw new Error("Game not found");
+    return game;
+  }
+
   async generateSummary(id: string): Promise<GameState> {
     const data = await api(`/api/games/${encodeURIComponent(id)}`, {
       method: "POST",

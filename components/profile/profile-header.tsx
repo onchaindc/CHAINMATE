@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { AvatarControls } from "@/components/profile/avatar-upload-card";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,6 +29,7 @@ export function ProfileHeader({
   actions,
   avatarUrl,
   joinedAt,
+  editableAvatar = false,
   className,
 }: {
   name: string;
@@ -51,6 +53,8 @@ export function ProfileHeader({
   avatarUrl?: string | null;
   /** Unix ms the account joined — shown as a small "Joined" line. */
   joinedAt?: number | string | null;
+  /** Show the camera/remove controls on the avatar (own profile only). */
+  editableAvatar?: boolean;
   className?: string;
 }) {
   const joined =
@@ -67,7 +71,11 @@ export function ProfileHeader({
         className,
       )}
     >
-      <PlayerAvatar name={name} avatarUrl={avatarUrl} size="lg" />
+      {editableAvatar ? (
+        <AvatarControls name={name} avatarUrl={avatarUrl} />
+      ) : (
+        <PlayerAvatar name={name} avatarUrl={avatarUrl} size="lg" />
+      )}
 
       <div className="min-w-0">
         {eyebrow && (

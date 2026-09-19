@@ -232,7 +232,14 @@ export default function AdminPage() {
     return <PasscodeUnlock playerId={playerId} onUnlock={unlock} />;
   }
 
-  return <Dashboard playerId={playerId} passcodeToken={token} onLock={relock} />;
+  return (
+    <Dashboard
+      playerId={playerId}
+      passcodeToken={token}
+      onLock={relock}
+      onUnlock={unlock}
+    />
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -387,10 +394,14 @@ function Dashboard({
   playerId,
   passcodeToken,
   onLock,
+  /** Re-open a session without leaving the page when the server says the
+      dashboard locked (idle expiry, or a session lost between instances). */
+  onUnlock,
 }: {
   playerId: string;
   passcodeToken: string;
   onLock: () => void;
+  onUnlock: (token: string) => void;
 }) {
   const [bans, setBans] = useState<BanRecord[] | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
@@ -420,6 +431,7 @@ function Dashboard({
       const bansData = await adminApi<{ bans: BanRecord[]; names: Record<string, string> }>(
         "/api/admin/bans",
         playerId,
+        { headers: { "X-Admin-Session": passcodeToken } },
       );
       setBans(bansData.bans);
       setNames((prev) => ({ ...prev, ...bansData.names }));
@@ -432,6 +444,7 @@ function Dashboard({
       const accountsData = await adminApi<{ accounts: AdminAccount[]; totalUsers: number }>(
         "/api/admin/accounts",
         playerId,
+        { headers: { "X-Admin-Session": passcodeToken } },
       );
       setAccounts(accountsData.accounts);
       setTotalUsers(accountsData.totalUsers);
@@ -455,6 +468,7 @@ function Dashboard({
       const tourData = await adminApi<{ tournaments: AdminTournamentRow[] }>(
         "/api/admin/tournaments",
         playerId,
+        { headers: { "X-Admin-Session": passcodeToken } },
       );
       setTournaments(tourData.tournaments);
     } catch {
@@ -588,22 +602,38 @@ function Dashboard({
         }
       />
 
-      {/* Headline stat */}
+      {/* Headline stat. "…" until the first successful load — a failed or
+          still-loading request must not read as a confident zero. */}
       <StatTiles
         layout="three"
         className="animate-fade-in-up mt-6"
         tiles={[
-          { label: "Total users", value: totalUsers === null ? "0" : String(totalUsers) },
+          { label: "Total users", value: totalUsers === null ? "…" : String(totalUsers) },
           {
             label: "Active restrictions",
-            value: bans === null ? "0" : String(bans.length),
+            value: bans === null ? "…" : String(bans.length),
           },
           {
             label: "Support messages",
-            value: support === null ? "0" : String(support.filter((m) => m.readAt === null).length),
+            value:
+              support === null
+                ? "…"
+                : String(support.filter((m) => m.readAt === null).length),
           },
         ]}
       />
+
+      {/* The lock message has its own slot: it means "re-enter your code",
+          which is actionable, not a load failure. Anything else the periodic
+          refresh surfaces is an error, and shows as one. */}
+      {error &&
+        (error.includes("Dashboard locked") ? (
+          <div className="mt-4">
+            <PasscodeUnlock playerId={playerId} onUnlock={onUnlock} />
+          </div>
+        ) : (
+          <ErrorNote message={error} className="mt-4" />
+        ))}
 
       {notice && (
         <p className="animate-fade-in-up mt-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground/90">

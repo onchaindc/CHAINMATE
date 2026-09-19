@@ -149,6 +149,28 @@ export function useGame(id: string) {
       return null;
     }
   }, [id, applyState]);
+
+  /**
+   * Check in as present for a tournament match. Fired once per game when the
+   * board loads and the game is live but the clock has not started yet — the
+   * server stamps the arrival and starts the clock the moment both players
+   * are in (or the absence grace expires). Silent: presence is cosmetic on
+   * failure, the next poll carries the state either way.
+   */
+  const arrivedRef = useRef(false);
+  useEffect(() => {
+    arrivedRef.current = false;
+  }, [id]);
+  const arrive = useCallback(async () => {
+    if (arrivedRef.current) return;
+    arrivedRef.current = true;
+    try {
+      const next = await storeRef.current!.arrive(id);
+      applyState(next);
+    } catch {
+      // best-effort: polling reconciles presence
+    }
+  }, [id, applyState]);
   const generateSummary = useCallback(
     () => runAction("summary", () => storeRef.current!.generateSummary(id)),
     [id, runAction],
@@ -202,6 +224,7 @@ export function useGame(id: string) {
     abort,
     rematch,
     resolveTimeout,
+    arrive,
     generateSummary,
   };
 }

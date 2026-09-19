@@ -310,6 +310,13 @@ export class LocalGameStore implements GameStore {
     return game;
   }
 
+  /** Local games have no presence gate — arrival is a no-op. */
+  async arrive(id: string): Promise<GameState> {
+    const game = this.getGameSync(id);
+    if (!game) throw new Error("Game not found");
+    return game;
+  }
+
   async generateSummary(id: string): Promise<GameState> {
     const game = this.getGameSync(id);
     if (!game) throw new Error("Game not found");

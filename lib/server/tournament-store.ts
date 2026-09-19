@@ -86,6 +86,12 @@ export interface TournamentDocument {
   minPlayers: number | null;
   startedAt: number | null;
   completedAt: number | null;
+  /**
+   * Unix ms the next round will be generated (Swiss/knockout intermission).
+   * Set by the engine the moment a round's last game ends; the round is
+   * actually dealt when the instant passes. Null = no pending round.
+   */
+  nextRoundAt: number | null;
   /** Current round while in progress (1-based). */
   currentRound: number;
   totalRounds: number;
@@ -437,6 +443,7 @@ async function upsertTournamentRow(doc: TournamentDocument): Promise<void> {
       start_when_full: doc.startWhenFull ?? false,
       started_at: iso(doc.startedAt),
       completed_at: iso(doc.completedAt),
+      next_round_at: iso(doc.nextRoundAt),
       current_round: doc.currentRound,
       total_rounds: doc.totalRounds,
       winner_player_id: doc.winnerId,
@@ -524,7 +531,7 @@ async function listTournamentRowsFromSupabase(): Promise<TournamentDocument[]> {
   if (!admin) return [];
   const { data, error } = await admin
     .from("tournaments")
-    .select("id, name, description, creator_player_id, format, time_control, max_players, status, swiss_rounds, created_at, registration_closes_at, scheduled_start_at, scheduled_end_at, cancel_reason, min_players, start_when_full, started_at, completed_at, current_round, total_rounds, winner_player_id, entry_fee_luna, prize_preset, payout_status")
+    .select("id, name, description, creator_player_id, format, time_control, max_players, status, swiss_rounds, created_at, registration_closes_at, scheduled_start_at, scheduled_end_at, cancel_reason, min_players, start_when_full, started_at, completed_at, next_round_at, current_round, total_rounds, winner_player_id, entry_fee_luna, prize_preset, payout_status")
     .order("created_at", { ascending: false })
     .limit(INDEX_MAX);
   if (error || !data) return [];
@@ -555,6 +562,7 @@ async function listTournamentRowsFromSupabase(): Promise<TournamentDocument[]> {
     startWhenFull: row.start_when_full === true,
     startedAt: row.started_at ? new Date(String(row.started_at)).getTime() : null,
     completedAt: row.completed_at ? new Date(String(row.completed_at)).getTime() : null,
+    nextRoundAt: row.next_round_at ? new Date(String(row.next_round_at)).getTime() : null,
     currentRound: Number(row.current_round ?? 0),
     totalRounds: Number(row.total_rounds ?? 0),
     winnerId: row.winner_player_id ? String(row.winner_player_id) : null,

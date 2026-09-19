@@ -237,6 +237,15 @@ export class HostedGameStore implements GameStore {
     return data.game;
   }
 
+  async arrive(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "arrive", playerId: getMyPlayerId() }),
+    });
+    if (!data.game) throw new Error("Failed to check in");
+    return data.game;
+  }
+
   async generateSummary(id: string): Promise<GameState> {
     const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
       method: "POST",

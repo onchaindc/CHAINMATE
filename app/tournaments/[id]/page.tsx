@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowRight,
   CalendarClock,
   CheckCircle2,
   Coins,
@@ -452,12 +451,9 @@ export default function TournamentDetailPage() {
                 Find opponent
               </Button>
             )}
-            {detail.myActiveGameId && (
-              <Link href={`/game/${detail.myActiveGameId}`} className={cn(buttonVariants({ size: "sm" }))}>
-                Resume game
-                <ArrowRight aria-hidden />
-              </Link>
-            )}
+            {/* No "Resume game" here: the live match banner below IS the
+                one clear way into an active game — a second button saying
+                the same thing read as a stuck/lagging state. */}
           </div>
         }
       />
@@ -482,6 +478,27 @@ export default function TournamentDetailPage() {
             Go to board →
           </span>
         </Link>
+      )}
+
+      {/* ---------- ROUND ENDED — intermission before the next one ---------- */}
+      {s.status === "in_progress" &&
+        s.nextRoundAt != null &&
+        s.nextRoundAt > Date.now() && (
+        <div
+          className="animate-fade-in-up mt-4 flex items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3.5"
+          role="status"
+        >
+          <Timer className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">
+              Round {s.currentRound ?? "—"} has ended
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Standings are updated. Round {s.currentRound != null ? s.currentRound + 1 : "—"} starts
+              in <IntermissionCountdown at={s.nextRoundAt} /> — the page updates by itself.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* ---------- Facts strip ---------- */}
@@ -618,8 +635,8 @@ export default function TournamentDetailPage() {
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {pendingRejoin
-                  ? `This transfer is on-chain but has no seat attached right now. Verify it below (that never charges again) or rejoin with a new payment. It is not refunded automatically: the ${displayNim(entryFeeLuna)} NIM stays in the treasury until support resolves it.`
-                  : `${displayNim(entryFeeLuna)} NIM received from your linked wallet and verified on-chain. Your seat is secured.`}
+                  ? `This payment hasn't been credited yet. Verify it below — you won't be charged again.`
+                  : `Payment confirmed — you're in.`}
               </p>
             </div>
           </div>
@@ -757,8 +774,18 @@ export default function TournamentDetailPage() {
           <div className="mt-3 space-y-4">
             {[...detail.rounds].reverse().map((round) => (
               <div key={round.index}>
-                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {round.label}
+                  {!round.open && (
+                    <span className="rounded bg-secondary/60 px-1.5 py-0.5 font-sans text-2xs tracking-normal text-muted-foreground">
+                      ended
+                    </span>
+                  )}
+                  {round.open && s.status === "in_progress" && (
+                    <span className="inline-flex items-center gap-1 font-sans text-2xs tracking-normal text-primary">
+                      <Radio className="h-2.5 w-2.5 animate-pulse-soft" aria-hidden /> live
+                    </span>
+                  )}
                 </p>
                 <div className="mt-2 divide-y divide-border/50 overflow-hidden rounded-lg border border-border/70 bg-card/50">
                   {round.matches.map((m) => (
@@ -970,7 +997,8 @@ export default function TournamentDetailPage() {
                         check status
                       </button>
                     )}
-                  {isHost && (p.status === "pending" || p.status === "failed") && (
+                  {isHost &&
+                    (p.status === "pending" || p.status === "failed" || p.status === "dispatching") && (
                       <button
                         type="button"
                         disabled={payoutBusy !== null}
@@ -980,9 +1008,11 @@ export default function TournamentDetailPage() {
                       >
                         {payoutBusy?.startsWith(`wallet:${p.playerId}`) || payoutBusy?.startsWith(`wallet-claim:${p.playerId}`)
                           ? "confirm in wallet…"
-                          : p.status === "failed"
-                            ? "retry from wallet"
-                            : "send prize"}
+                          : p.status === "pending"
+                            ? "send prize"
+                            : p.status === "failed"
+                              ? "retry from wallet"
+                              : "pay from wallet"}
                       </button>
                     )}
                   {isHost && p.status === "sent" && (
@@ -1011,11 +1041,8 @@ export default function TournamentDetailPage() {
             </ul>
           </Panel>
           <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
-            Prize amounts are calculated from verified payments. &quot;Pending&quot;
-            means recorded and owed — sending moves the NIM from the treasury
-            wallet to the winner&apos;s linked address. If a send was interrupted,
-            &quot;Check status&quot; resolves it safely: it looks the recorded
-            broadcast up on-chain and can never pay twice.
+            &quot;Pending&quot; = owed. If a send was interrupted,
+            &quot;Check status&quot; resolves it safely — it can never pay twice.
           </p>
         </section>
       )}
@@ -1126,7 +1153,7 @@ function PaidEntryPanel({
       <div className="animate-fade-in-up mt-4 flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
         <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />
         <span>
-          Entry paid: <strong className="font-mono tabular-nums">{fee} NIM</strong> verified on-chain.
+          Entry paid: <strong className="font-mono tabular-nums">{fee} NIM</strong>
         </span>
       </div>
     );
@@ -1149,9 +1176,6 @@ function PaidEntryPanel({
             <Coins className="h-4 w-4 text-primary" aria-hidden />
             <span>
               Entry fee: <strong className="font-mono tabular-nums">{fee} NIM</strong>
-              <span className="ml-2 text-2xs text-muted-foreground">
-                paid to the ChainMate treasury · verified on-chain
-              </span>
             </span>
           </p>
           {entry.wallet.wallet && (
@@ -1163,39 +1187,16 @@ function PaidEntryPanel({
 
         {paymentPending && (
           <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning">
-            You&apos;re in, but the payment isn&apos;t verified yet. Complete the payment
+            You&apos;re in, but the payment isn&apos;t confirmed yet. Complete the payment
             below before the host starts the tournament.
           </p>
         )}
 
         {!joined && (
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Joining pays the entry fee from your linked Nimiq wallet. Your seat
-            is confirmed once the payment is verified on-chain.
+          <p className="text-xs text-muted-foreground">
+            Joining pays {fee} NIM from your linked Nimiq wallet.
           </p>
         )}
-
-        {/* The money flow, stated plainly — hosts don't fund anything, every
-            entrant pays the treasury, and the pool pays the winners. */}
-        <details className="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-          <summary className="cursor-pointer list-none text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground">
-            How the money works
-          </summary>
-          <div className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
-            <p>
-              <strong className="text-foreground/80">Each player pays their own entry.</strong>{" "}
-              Your {fee} NIM goes straight from your wallet to the ChainMate
-              treasury. The host never funds the tournament and never touches
-              the money.
-            </p>
-            <p>
-              <strong className="text-foreground/80">The pool is the entries.</strong>{" "}
-              Every verified payment is summed on-chain; when the tournament
-              completes, that exact pool is paid out to the winners per the
-              host&apos;s chosen preset (winner / top 3 / top 5).
-            </p>
-          </div>
-        </details>
 
         {phaseLabel && (
           <p className="flex items-center gap-2 text-sm text-primary">
@@ -1357,6 +1358,23 @@ function nameOf(detail: TournamentDetailPayload, playerId: string): string {
   // server hasn't named (matches how Games/Watch show unnamed players).
   if (playerId === detail.summary.creatorId) return detail.summary.creatorName ?? "Host";
   return detail.entryNames?.[playerId] ?? guestDisplayName(undefined);
+}
+
+/**
+ * Live countdown to a scheduled instant ("45s", "1m 20s"). Re-renders on the
+ * page's own 5s poll cadence — good enough for a one-minute intermission.
+ */
+function IntermissionCountdown({ at }: { at: number }) {
+  const remaining = Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  if (remaining <= 0) return <strong className="font-mono tabular-nums">any second now</strong>;
+  if (remaining < 60) {
+    return <strong className="font-mono tabular-nums">{remaining}s</strong>;
+  }
+  return (
+    <strong className="font-mono tabular-nums">
+      {Math.floor(remaining / 60)}m {remaining % 60}s
+    </strong>
+  );
 }
 
 function UsersIcon() {

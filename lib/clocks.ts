@@ -35,13 +35,20 @@ export function computeClocks(game: GameState, now: number): ClockState | null {
   const tc = parseTimeControl(game.timeControl);
   if (!tc || !game.startedAt) return null;
 
+  // Presence gate: for tournament games the clock starts only when BOTH
+  // players have checked in at the board. Before that instant the clocks sit
+  // at their full base time — nobody loses a second waiting for the other to
+  // find the room.
+  const clockStart = game.clockStartedAt ?? game.startedAt;
+  const effectiveStart = Math.max(game.startedAt, clockStart);
+
   let white = tc.baseMs;
   let black = tc.baseMs;
 
   // Move timestamps: moves[0] was played at moves[0].at, and the previous
-  // instant was startedAt (or the previous move). Each mover pays the elapsed
-  // time of their own turn and receives the increment afterwards.
-  let prev = game.startedAt;
+  // instant was effectiveStart (or the previous move). Each mover pays the
+  // elapsed time of their own turn and receives the increment afterwards.
+  let prev = effectiveStart;
   for (let i = 0; i < game.moves.length; i++) {
     const at = game.moves[i].at;
     if (!at) return null; // no timestamps recorded — clocks unavailable
@@ -51,10 +58,12 @@ export function computeClocks(game: GameState, now: number): ClockState | null {
     prev = at;
   }
 
-  // The side to move is still thinking: tick their clock up to `now`.
+  // The side to move is still thinking: tick their clock up to `now`, but
+  // never before the clock itself was started (waiting for an absent player
+  // burns nobody's time).
   if (game.status === "active") {
     const turn = game.fen.split(" ")[1] ?? "w";
-    const elapsed = Math.max(0, now - prev);
+    const elapsed = Math.max(0, now - Math.max(prev, effectiveStart));
     if (turn === "w") white -= elapsed;
     else black -= elapsed;
   }

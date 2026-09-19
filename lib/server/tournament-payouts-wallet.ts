@@ -95,9 +95,12 @@ export async function preparePayoutClaim(
     throw new PayoutClaimError("already-sent", "This prize has already been sent", 409);
   }
   if (payout.status === "dispatching") {
+    // Reachable only when the payout endpoint CAN sign (the claim path
+    // releases read-only-stuck rows itself); the dispatch may genuinely be
+    // mid-flight there — recovery, not replacement, is the safe action.
     throw new PayoutClaimError(
       "dispatch-in-flight",
-      "An automatic payout dispatch was started for this prize. Use Check status to resolve it first.",
+      "An automatic payout dispatch is in flight. Use Check status to resolve it first.",
       409,
     );
   }
@@ -153,8 +156,37 @@ export async function claimPayoutWithWalletTransaction(
     const payout = await store.get(tournamentId, targetPlayerId);
     if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
     if (payout.status === "verified") return { payout, confirmations: 0 };
-    if (payout.status === "sent" || payout.status === "dispatching") {
+    if (payout.status === "sent") {
       throw new PayoutClaimError("already-sent", "This prize already has a transaction in flight", 409);
+    }
+    if (payout.status === "dispatching") {
+      // A WAL row can only be released when no transaction can possibly be
+      // in flight from it. On a signing node, dispatch re-broadcasts the
+      // recorded intent (recovery) and must NOT be bypassed — the host-wallet
+      // path refuses, exactly as before. But on a read-only endpoint (or a
+      // missing signer) nothing was ever broadcast: the row is dead weight
+      // that used to block this prize forever with "An automatic payout
+      // dispatch was started…" — the deadlock the operator hit. Release it
+      // to 'failed'; retryPayout then returns it to pending and the host pays
+      // from their own wallet. sendPayout's unlock pre-check guarantees no
+      // broadcast occurred on an endpoint that cannot sign.
+      const { payoutEndpointCannotSign } = await import("@/lib/server/tournament-payouts-dispatch");
+      if (!(await payoutEndpointCannotSign())) {
+        throw new PayoutClaimError(
+          "dispatch-in-flight",
+          "An automatic payout dispatch is in flight on the signing node. Use Check status to resolve it first.",
+          409,
+        );
+      }
+      const released: PayoutRecord = {
+        ...payout,
+        status: "failed",
+        failureReason: "Auto-dispatch unavailable on a read-only endpoint, released for host-wallet payment",
+      };
+      await store.upsert(released);
+      const { mirrorPayouts } = await import("@/lib/server/tournament-payouts");
+      await mirrorPayouts(tournamentId, [released]).catch(() => undefined);
+      // fall through: the claim proceeds against the released row
     }
 
     // --- durable replay guard: one hash can settle exactly one prize, ever.

@@ -186,6 +186,14 @@ export interface TournamentSummary {
   scheduledEndAt?: number | null;
   startedAt: number | null;
   completedAt: number | null;
+  /**
+   * Intermission countdown: the instant the next round will be dealt (Swiss
+   * / knockout). Set the moment a round's last game ends; null when none is
+   * pending. The UI shows a round-ended banner with this countdown.
+   */
+  nextRoundAt?: number | null;
+  /** Server's intermission length, so the UI copy never disagrees with it. */
+  roundIntermissionMs?: number;
   createdAt: number;
   /** Formats that run rounds expose this while in progress. */
   currentRound?: number;
