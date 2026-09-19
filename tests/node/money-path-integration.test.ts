@@ -139,6 +139,12 @@ before(async () => {
   }
   process.env.NEXT_PUBLIC_NIMIQ_TREASURY_ADDRESS = ENTRY_TREASURY;
 
+  // Hermetic round progression: the engine's intermission defaults to 60s
+  // between rounds, but these suites assert progression synchronously. Pin
+  // the documented test contract BEFORE the first import —
+  // ROUND_INTERMISSION_MS is captured at module load.
+  process.env.TOURNAMENT_ROUND_INTERMISSION_MS = "0";
+
   economy = await import("@/lib/server/tournament-economy");
   engine = await import("@/lib/server/tournaments");
   store = await import("@/lib/server/tournament-store");
