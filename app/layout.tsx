@@ -62,12 +62,15 @@ export const metadata: Metadata = {
      the app NAME so hosts render "ChainMate" as their own crisp text below
      the icon instead of the bitmap lettering blurring at small sizes. */
   icons: {
+    /* The ?v= suffix makes every surface a new URL whenever the official art
+       is re-imported, so mini-app hosts (Nimiq Pay) and browsers re-fetch
+       instead of showing a stale — previously blurry — cached render. */
     icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/favicon.svg?v=2", type: "image/svg+xml" },
+      { url: "/icon-192.png?v=2", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png?v=2", sizes: "512x512", type: "image/png" },
     ],
-    apple: "/apple-touch-icon.png",
+    apple: "/apple-touch-icon.png?v=2",
   },
   manifest: "/site.webmanifest",
 };

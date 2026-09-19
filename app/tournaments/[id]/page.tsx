@@ -560,7 +560,7 @@ export default function TournamentDetailPage() {
       )}
 
       {/* ---------- Facts strip ---------- */}
-      <div className="animate-fade-in-up mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border/70 bg-card/40 px-4 py-3 font-mono text-xs tabular-nums text-muted-foreground [animation-delay:40ms]">
+      <div className="animate-fade-in-up mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-xs tabular-nums text-muted-foreground [animation-delay:40ms]">
         <span
           className={cn(
             "inline-flex items-center gap-1.5 font-sans text-2xs font-semibold uppercase tracking-wider",
@@ -692,39 +692,33 @@ export default function TournamentDetailPage() {
 
       {actionError && <ErrorNote message={actionError} className="mt-4" />}
 
-      {/* ---------- Payment confirmation (the receipt) ---------- */}
+      {/* ---------- Payment confirmation (the receipt). One line, said once:
+          the headline and the amount. No repeated sentence under it. ---------- */}
       {isPaid && (justConfirmed || pendingRejoin) && (
         <div
-          className={cn(
-            "animate-fade-in-up mt-4 rounded-lg border px-4 py-3.5",
-            pendingRejoin
-              ? "border-warning/40 bg-warning/5"
-              : "border-primary/40 bg-primary/10",
-          )}
           role="status"
+          className={cn(
+            "animate-fade-in-up mt-3 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-semibold tracking-tight",
+            pendingRejoin ? "bg-warning/10 text-warning" : "bg-primary/10 text-primary",
+          )}
         >
-          <div className="flex items-center gap-3">
-            {pendingRejoin ? (
-              <Coins className="h-5 w-5 shrink-0 text-warning" aria-hidden />
-            ) : (
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" aria-hidden />
-            )}
-            <div className="min-w-0">
-              <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tracking-tight">
-                {pendingRejoin
-                  ? "Uncredited payment"
-                  : "Payment confirmed: you're in!"}
-                <span className="font-mono tabular-nums text-foreground/80">
-                  {displayNim(entryFeeLuna)} NIM
-                </span>
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                {pendingRejoin
-                  ? `This payment hasn't been credited yet. Verify it below — you won't be charged again.`
-                  : `Payment confirmed — you're in.`}
-              </p>
-            </div>
-          </div>
+          {pendingRejoin ? (
+            <Coins className="h-4 w-4 shrink-0" aria-hidden />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+          )}
+          {pendingRejoin ? (
+            <span>
+              Payment seen — not credited yet. Verify it below; you won&rsquo;t be charged again.
+            </span>
+          ) : (
+            <span>
+              Payment confirmed — you&rsquo;re in
+              <span className="ml-2 font-mono font-semibold tabular-nums text-foreground/80">
+                {displayNim(entryFeeLuna)} NIM
+              </span>
+            </span>
+          )}
         </div>
       )}
 
@@ -1056,7 +1050,7 @@ export default function TournamentDetailPage() {
           <Panel className="mt-3">
             <ul className="divide-y divide-border/50">
               {detail.payouts.map((p) => (
-                <li key={p.playerId} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+                <li key={p.playerId} className="flex flex-wrap items-center gap-3 px-4 py-2">
                   <span className="w-6 text-right font-mono text-xs tabular-nums text-muted-foreground">
                     {p.payoutRank}
                   </span>
@@ -1404,18 +1398,18 @@ function LeaveWhilePending({ onLeave }: { onLeave: (() => void) | undefined }) {
 }
 
 function PayoutStatusPill({ status }: { status: string }) {
+  /* Quiet tinted chips, sentence case — a status is a fact, not a shout. */
   const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: "prize pending", cls: "border-warning/40 text-warning" },
-    // "Dispatching" reads as a stuck mystery — say what it actually is.
-    dispatching: { label: "send in progress", cls: "border-warning/40 text-warning" },
-    sent: { label: "payout sent", cls: "border-primary/40 text-primary" },
-    verified: { label: "paid ✓", cls: "border-primary/40 text-primary bg-primary/5" },
-    failed: { label: "failed, retrying", cls: "border-destructive/40 text-destructive" },
-    blocked_no_wallet: { label: "awaiting wallet", cls: "border-warning/40 text-warning" },
+    pending: { label: "pending", cls: "bg-warning/10 text-warning" },
+    dispatching: { label: "sending…", cls: "bg-warning/10 text-warning" },
+    sent: { label: "sent", cls: "bg-primary/10 text-primary" },
+    verified: { label: "paid", cls: "bg-primary/10 text-primary" },
+    failed: { label: "retrying", cls: "bg-destructive/10 text-destructive" },
+    blocked_no_wallet: { label: "needs wallet", cls: "bg-warning/10 text-warning" },
   };
-  const it = map[status] ?? { label: status, cls: "border-border/60 text-muted-foreground" };
+  const it = map[status] ?? { label: status, cls: "bg-secondary/50 text-muted-foreground" };
   return (
-    <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-2xs uppercase tracking-wider", it.cls)}>
+    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium", it.cls)}>
       {it.label}
     </span>
   );
@@ -1505,7 +1499,7 @@ function MatchRow({
     <Link
       href={m.gameId ? `/game/${m.gameId}` : "#"}
       className={cn(
-        "group flex items-center justify-between gap-3 px-4 py-2.5 transition-colors",
+        "group flex items-center justify-between gap-3 px-4 py-2 transition-colors",
         m.gameId ? "hover:bg-secondary/40" : "pointer-events-none",
         isMyGame && "bg-primary/5",
       )}
@@ -1529,10 +1523,10 @@ function MatchRow({
       </div>
       <span
         className={cn(
-          "shrink-0 rounded border px-1.5 py-0.5 font-mono text-2xs tabular-nums",
+          "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs tabular-nums",
           m.status === "complete"
-            ? "border-border/60 text-muted-foreground"
-            : "border-primary/40 text-primary",
+            ? "bg-secondary/50 text-muted-foreground"
+            : "bg-primary/10 text-primary",
         )}
       >
         {m.status !== "complete" && (

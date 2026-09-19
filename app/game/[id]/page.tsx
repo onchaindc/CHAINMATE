@@ -15,7 +15,6 @@ import {
   RefreshCw,
   SkipBack,
   SkipForward,
-  Trophy,
   Users,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -603,7 +602,7 @@ export default function GamePage() {
           white pieces) in exactly the match-report view. */}
       <MeasuredBanners>
       {error && (
-        <div className="mb-3 flex shrink-0 items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+        <div className="mb-2 flex shrink-0 items-start gap-2.5 rounded-md bg-destructive/10 px-3 py-2">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
           <div className="min-w-0">
             <p className="text-sm font-medium text-destructive">Something went wrong</p>
@@ -614,30 +613,36 @@ export default function GamePage() {
 
       {/* Persistent result — the modal is dismissible, this is not. It is the
           page's own record of how the match ended, and it can bring the full
-          report back at any time. */}
+          report back at any time. Kept to a single quiet line: the verdict
+          carries the emphasis, everything else is secondary text on the page
+          background rather than another heavy bordered box. */}
       {result && (
         <div
           className={cn(
-            "animate-fade-in-up mb-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-4 py-2.5",
+            "animate-fade-in-up mb-2 flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md px-3 py-2",
             result.won
-              ? "border-primary/40 bg-primary/10"
+              ? "bg-primary/[0.07]"
               : result.lost
-                ? "border-negative/40 bg-negative/10"
-                : "border-border/70 bg-secondary/30",
+                ? "bg-negative/[0.07]"
+                : "bg-secondary/30",
           )}
         >
-          <Trophy
-            className={cn(
-              "h-4 w-4 shrink-0",
-              result.won ? "text-primary" : "text-muted-foreground",
-            )}
+          <span
             aria-hidden
+            className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              result.won
+                ? "bg-primary"
+                : result.lost
+                  ? "bg-negative"
+                  : "bg-muted-foreground",
+            )}
           />
           <p className="text-sm font-semibold tracking-tight">
             {result.verdict}
             <span className="ml-1.5 font-normal text-muted-foreground">{result.reason}</span>
           </p>
-          <p className="min-w-0 basis-full text-xs leading-snug text-muted-foreground sm:basis-auto">
+          <p className="hidden min-w-0 truncate text-xs text-muted-foreground md:block">
             {result.detail}
           </p>
           {!resultOpen && (

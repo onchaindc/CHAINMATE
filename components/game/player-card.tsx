@@ -54,13 +54,15 @@ export function PlayerCard({
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-3 overflow-hidden rounded-lg border px-3 py-1.5 transition-colors",
-        active ? "border-primary/45 bg-primary/[0.07]" : "border-border/60 bg-card/40",
-        isWinner && "border-primary/50 bg-accent/5",
+        /* Flat card: no border, just a tinted surface that deepens when it
+           is this side's move. The gold rail carries the turn signal, so a
+           boxed outline everywhere is visual noise the eye must parse. */
+        "relative flex items-center justify-between gap-3 overflow-hidden rounded-lg px-3 py-1.5 transition-colors",
+        active ? "bg-primary/[0.09]" : "bg-secondary/25",
+        isWinner && "bg-accent/10",
       )}
     >
-      {/* Whose move it is, said in the layout itself rather than only in words:
-          a gold rail down the edge of the card belonging to the side to move.
+      {/* Whose move it is, said in the layout itself rather than only in words:          a gold rail down the edge of the card belonging to the side to move.
           It reads instantly from across a room, which is the entire job of a
           turn indicator during a game with a clock running. */}
       <span
@@ -142,13 +144,15 @@ export function PlayerCard({
           className={cn(
             /* The clock is the largest number on the screen for a reason: under
                time pressure it is the only thing a player looks at. Tabular
-               figures so the digits never reflow as they count down. */
-            "shrink-0 rounded-md border px-2.5 py-0.5 text-center font-mono text-xl font-semibold leading-tight tabular-nums transition-colors duration-300 sm:text-2xl",
+               figures so the digits never reflow as they count down. No box
+               around it — a tinted pill for the running clock only, so the
+               inactive side reads as quiet as the card around it. */
+            "shrink-0 rounded-md px-2.5 py-0.5 text-center font-mono text-xl font-semibold leading-tight tabular-nums transition-colors duration-300 sm:text-2xl",
             clockLow
-              ? "border-negative/50 bg-negative/10 text-negative"
+              ? "bg-negative/15 text-negative"
               : active
-                ? "border-primary/50 bg-primary/[0.10] text-foreground"
-                : "border-border/60 bg-secondary/25 text-muted-foreground",
+                ? "bg-primary/15 text-foreground"
+                : "text-muted-foreground/80",
           )}
           aria-label={`${side === "white" ? "White" : "Black"} clock`}
         >
