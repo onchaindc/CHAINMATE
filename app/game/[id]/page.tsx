@@ -1032,16 +1032,15 @@ export default function GamePage() {
  * Publishes the board square's true budget as `--board-w` (px) on the
  * document root — the column and board read it as their max width.
  *
- * The budget is min(66vw, the column's available HEIGHT for the board):
+ * Desktop: the square is min(66vw, the column's measured height budget) —
  * a square can never be wider than the height the screen gives it, or the
- * bottom rank clips under the fold. The height side is measured from the
- * live DOM (the column's bounding top → the flex row's bottom edge), so
- * everything above and below the board — nav, header, banners, both player
- * cards, controls, the status line — is budgeted by reality, not by an
- * estimate that drifted as rows were added. On mobile the column is NOT
- * height-constrained, so the available height reads as ~unbounded and the
- * 66vw cap wins; the board then fills the full width exactly as a phone
- * expects. Re-measures on resize and on any content change; renders null.
+ * bottom rank clips under the fold. The height side is el.clientHeight (the
+ * column is flex-stretched to the row's height, so that IS the viewport
+ * budget) minus the live-measured chrome (player cards, controls, move
+ * strip, banners), never an estimate that drifts as rows are added.
+ * Mobile: width-driven — the board fills the column like any phone layout
+ * expects; no viewport-height budget and no 66vw cap apply there.
+ * Re-measures on resize and on any content change; renders null.
  */
 function BoardChromeMeter({
   columnRef,
@@ -1054,28 +1053,34 @@ function BoardChromeMeter({
     const root = el.ownerDocument.documentElement;
     const publish = () => {
       const vw = root.clientWidth;
-      const widthCap = Math.round(vw * 0.66);
-
-      // Height the column can hand to the board: from the column's top to
-      // the bottom of its flex-row parent, minus the column's non-board
-      // children (player cards, controls, status line) and the gaps.
       const row = el.parentElement;
-      let heightCap = Number.POSITIVE_INFINITY;
-      const rowRect = row?.getBoundingClientRect();
-      const colRect = el.getBoundingClientRect();
-      if (rowRect && colRect.height > 0 && rowRect.height > colRect.height + 1) {
-        // The row is taller than the column → the column is height-limited
-        // (lg:flex-row with h-full). Budget = row bottom − column top −
-        // non-board chrome.
+      // Desktop = the flex row lays out horizontally (lg:flex-row); below lg
+      // it stacks and the page scrolls normally.
+      const desktop = row
+        ? getComputedStyle(row).flexDirection.startsWith("row")
+        : vw >= 1024;
+
+      let budget: number;
+      if (desktop) {
+        // The column is STRETCHED to the row's height, so el.clientHeight is
+        // the true viewport budget regardless of how tall its content is —
+        // comparing the row's rect to the column's never fires (they are the
+        // same box), which is how the board recently grew past the fold.
+        // Budget = that height − every non-board row (player cards, controls,
+        // move strip) − the gaps between rows, capped at 66vw.
         let chrome = 0;
         for (const child of Array.from(el.children)) {
           if (child.hasAttribute("data-board-root")) continue;
           chrome += child.getBoundingClientRect().height;
         }
         const gaps = Math.max(0, el.children.length - 1) * 8;
-        heightCap = Math.max(352, rowRect.bottom - colRect.top - chrome - gaps);
+        budget = Math.min(vw * 0.66, Math.max(352, el.clientHeight - chrome - gaps));
+      } else {
+        // Mobile is width-driven: the board fills the column — the 66vw cap
+        // is a desktop layout notion and shrank the phone board to two thirds
+        // of the screen.
+        budget = el.clientWidth || vw;
       }
-      const budget = Math.min(widthCap, heightCap);
       if (Number.isFinite(budget) && budget > 0) {
         root.style.setProperty("--board-w", `${Math.round(budget)}px`);
       }
