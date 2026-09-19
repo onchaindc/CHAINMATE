@@ -58,6 +58,7 @@ export default function GamePage() {
     turnSide,
     myTurn,
     winnerSide,
+    optimistic,
     join,
     submitMove,
     submitAiMove,
@@ -220,19 +221,25 @@ export default function GamePage() {
      live review share this one derivation, so the rewind can never be a
      no-op. */
   const boardFen = useMemo(() => {
+    // Optimistic echo first: while the server round-trip is in flight the
+    // board ALREADY shows our move landed — the piece must never sit on its
+    // original square waiting for the network (that was the perceived lag).
+    if (optimistic && !reviewing) return optimistic.fen;
     if (game && ply !== null && ply < game.moves.length) return fenAfterPly(game.moves, ply);
     return game?.fen ?? null;
-  }, [game, ply]);
+  }, [optimistic, game, ply, reviewing]);
 
-  /* The last-move highlight follows the position on screen, live or rewound. */
+  /* The last-move highlight follows the position on screen, live or rewound
+     (or the optimistic echo, which carries its own from/to). */
   const shownLastMove = useMemo(() => {
+    if (optimistic && !reviewing) return optimistic.lastMove;
     if (!game || ply === null || ply === 0 || ply > game.moves.length) {
       const last = game?.moves[game.moves.length - 1];
       return last ? { from: last.from, to: last.to } : null;
     }
     const m = game.moves[ply - 1];
     return m ? { from: m.from, to: m.to } : null;
-  }, [game, ply]);
+  }, [optimistic, game, ply, reviewing]);
 
   /* ------------------------------------------------------------------ */
   /* Real player data: ratings for both sides + this game's deltas.      */
@@ -405,17 +412,20 @@ export default function GamePage() {
   const canJoinAsBlack = waiting && mySide === null && !challengeToSomeoneElse;
   /* Reviewing a past position mid-game locks the board: the input would
      otherwise target the live position while the player is looking at an
-     older one. Follow the moves back to live to keep playing. */
-  const interactive =
-    !waiting && !gameOver && !reviewing && mySide !== null && myTurn && busy !== "move";
+     older one. Follow the moves back to live to keep playing.
+
+     `busy !== "move"` is deliberately ABSENT now: with the optimistic echo
+     the piece lands visually the moment you drop it, so a slow server
+     round-trip must not freeze the board mid-turn — dragging again during
+     the POST just attempts the next move from the echoed position. */
+  const interactive = !waiting && !gameOver && !reviewing && mySide !== null && myTurn;
   /**
    * Premoves: while it is the opponent's move, own-piece clicks and drops
    * queue a move that plays the instant the turn arrives. Live two-player
    * games only — a spectator has no pieces, and replay/waiting have no
    * next turn to queue into.
    */
-  const allowPremove =
-    !waiting && !gameOver && !reviewing && mySide !== null && !myTurn && busy !== "move";
+  const allowPremove = !waiting && !gameOver && !reviewing && mySide !== null && !myTurn;
   const baseOrientation: "white" | "black" = mySide === "black" ? "black" : "white";
   const orientation: "white" | "black" = flipped
     ? baseOrientation === "white"
@@ -905,7 +915,7 @@ export default function GamePage() {
               pieceSet={pieceSet}
               allowPremove={allowPremove}
               onMove={handleBoardMove}
-              busy={busy === "move"}
+              busy={false}
             />
           </div>
           <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>

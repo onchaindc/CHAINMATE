@@ -438,6 +438,14 @@ async function transitionTournamentInner(
     // transitionTournament only ever arrives from the HOST (the actor check
     // above), so this door may refuse on unpaid entries; the time-driven
     // callers below pass "authority" and drop them instead.
+    //
+    // Idempotent: if the event is ALREADY running, the host's click succeeds
+    // — it may have raced the auto-start sweep or a double-click, and "the
+    // tournament was already started elsewhere" read like a catastrophic
+    // desync to a host staring at a working event. Return the live doc.
+    if (doc.status === "in_progress") {
+      return { ok: true, doc };
+    }
     return startTournamentNow(doc, "host");
   }
 
@@ -642,10 +650,18 @@ async function startTournamentNow(
         .eq("id", doc.id)
         .maybeSingle();
       if (mirrorRow?.status === "in_progress") {
+        // The durable mirror says the event IS running while the live doc
+        // lags — a half-started wedge. Heal it by adopting the mirror's
+        // status instead of failing: the fixtures exist (the mirror moved
+        // only when the start committed), so the host sees a working event.
         const healed = await transitionTournamentStatus(doc.id, "in_progress", doc.status);
         if (!healed) {
-          // Another instance is starting it right now — report the race honestly.
-          return { ok: false, error: "The tournament was already started elsewhere" };
+          // Another instance is healing the same wedge right now; from this
+          // caller's chair the event simply started — say so.
+          const fresh = await getTournamentDoc(doc.id);
+          if (fresh) fresh.status = "in_progress";
+          if (fresh) return { ok: true, doc: fresh };
+          return { ok: true, doc };
         }
       }
     }
@@ -680,7 +696,14 @@ async function startTournamentNow(
     }
   }
   const won = await transitionTournamentStatus(doc.id, doc.status, "in_progress");
-  if (!won) return { ok: false, error: "The tournament was already started elsewhere" };
+  if (!won) {
+    // Lost the cross-instance race: another caller started the event a
+    // millisecond earlier. That is SUCCESS for this caller — the event they
+    // clicked Start on is running. Report it as such (idempotent start).
+    const fresh = await getTournamentDoc(doc.id);
+    if (fresh && fresh.status === "in_progress") return { ok: true, doc: fresh };
+    return { ok: false, error: "The tournament could not be started — try again" };
+  }
 
   doc.status = "in_progress";
   doc.startedAt = Date.now();
