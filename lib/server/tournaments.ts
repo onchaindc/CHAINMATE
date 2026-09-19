@@ -1147,6 +1147,53 @@ export async function deleteTournament(
     const thirdPartyPaid = doc.entries.some(
       (e) => e.paid && e.leftAt === undefined && e.playerId !== doc.creatorId,
     );
+    // OUTSTANDING REFUNDS BLOCK DELETION — for admins too. Deleting the
+    // document destroys the refund ledger, and an erased obligation reads
+    // as "nothing owed" to every reconciliation path: it is the one way
+    // players' fees can silently vanish. Materialise anything missing
+    // first (an admin-cancelled event may never have had rows written),
+    // then require every refund to be verified before the record goes.
+    let refundsOutstanding = false;
+    if (isPaidTournamentDoc(doc)) {
+      try {
+        const paid = await listPaidEntries(tournamentId);
+        if (paid.length > 0) {
+          doc.refunds = doc.refunds ?? {};
+          for (const p of paid) {
+            if (!doc.refunds[p.playerId]) {
+              doc.refunds[p.playerId] = {
+                playerId: p.playerId,
+                entryTxHash: p.txHash,
+                amountLuna: p.amountLuna.toString(),
+                status: "owed",
+                refundTxHash: null,
+                attempts: 0,
+                lastError: null,
+                createdAt: Date.now(),
+                verifiedAt: null,
+              };
+            }
+          }
+          refundsOutstanding = Object.values(doc.refunds).some((r) => r.status !== "verified");
+          if (refundsOutstanding) {
+            await writeTournamentDoc(doc);
+            doc.payoutStatus = "refund_required";
+            await writeTournamentDoc(doc);
+          }
+        }
+      } catch {
+        // Ledger unavailable: treat as outstanding and refuse — never
+        // destroy a document that MIGHT owe money.
+        refundsOutstanding = isPaidTournamentDoc(doc);
+      }
+    }
+    if (refundsOutstanding) {
+      return {
+        ok: false,
+        error:
+          "Entry-fee refunds are still outstanding. Return every fee (each player's row on the tournament page) before deleting.",
+      };
+    }
     const hostMayDelete =
       doc.creatorId === playerId &&
       !thirdPartyPaid &&

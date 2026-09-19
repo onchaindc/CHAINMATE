@@ -215,6 +215,7 @@ before(async () => {
     "acct_leave1",
     "acct_wd1", "acct_wd2", "acct_wd3",
     "acct_rec1", "acct_rec2",
+    "acct_stuck_payee", "acct_refund_me", "acct_refund_me2", "acct_delete_guard",
   ];
   for (const p of allPlayers) {
     await nimiqStore.setBindingForPlayer(p, {
@@ -638,4 +639,311 @@ test("maintenance completes a tournament left mid-round by a crash", async () =>
   if (healed.status === "completed") {
     assert.ok(healed.winnerId, "the winner is recorded");
   }
+});
+
+/* ================================================================== */
+/* 8. Legacy stuck payouts + host-wallet refunds + delete guard        */
+/* ================================================================== */
+
+/**
+ * The operator's live bug: prizes left 'dispatching' by the era when the
+ * payout endpoint was a read-only gateway stayed "SEND IN PROGRESS"
+ * forever. The host-wallet claim path must release them (provably nothing
+ * was broadcast on an endpoint that cannot sign) and settle.
+ */
+test("a legacy stuck 'dispatching' prize is released and payable from the host wallet", async () => {
+  const doc = await newTournament({
+    format: "arena",
+    maxPlayers: 4,
+    entryFeeLuna: FEE_LUNA,
+    prizePreset: "winner",
+  });
+  const player = "acct_stuck_payee";
+  // Host joins and pays too: a host-driven start refuses a paid event with
+  // unpaid entries.
+  await openAndJoin(doc.id, [HOST, player]);
+  await payEntry(doc.id, HOST);
+  await payEntry(doc.id, player);
+
+  // Complete the event with the player as its only active entrant.
+  const started = await engine.transitionTournament(doc.id, HOST, "in_progress");
+  assert.ok(started.ok, `start: ${started.ok ? "" : started.error}`);
+  const completed = await engine.transitionTournament(doc.id, HOST, "completed");
+  assert.ok(completed.ok, `complete: ${completed.ok ? "" : completed.error}`);
+
+  // The engine's completion already planned the purse; whichever player it
+  // ranked first is the payee. (planTournamentPayouts is idempotent: a plan
+  // already exists, so a second call here would report skipped.)
+  const store0 = payouts.fastStorePayoutStore;
+  const existing = await store0.listByTournament(doc.id);
+  assert.ok(existing.length > 0, "the engine planned the purse on completion");
+  const payee = existing.find((p) => p.playerId === player)?.playerId ?? existing[0].playerId;
+
+  // Write the legacy WAL row by hand: the exact shape the old dispatch path
+  // left behind (status dispatching, no hash, dead validity height).
+  const row = await store0.get(doc.id, payee);
+  assert.ok(row);
+  const PRIZE_LUNA = BigInt(row.amountLuna);
+  await store0.upsert({
+    ...row,
+    status: "dispatching",
+    senderAddress: ENTRY_TREASURY,
+    validityStartHeight: 1,
+    dispatchAttempts: 1,
+  });
+
+  const walletMod = await import("@/lib/server/tournament-payouts-wallet");
+
+  // With no payout node configured, the endpoint provably cannot sign: the
+  // release MUST happen in prepare (both UI entry points hit prepare first).
+  const intent = await walletMod.preparePayoutClaim(doc.id, HOST, payee);
+  assert.equal(intent.playerId, payee);
+  const released = await store0.get(doc.id, payee);
+  assert.equal(released?.status, "failed", "the stuck row was released to failed");
+
+  // The claim then settles it like any failed prize: host pays from their
+  // own wallet, verified on-chain. The RPC module POSTs JSON-RPC to
+  // NIMIQ_RPC_URL — point it at a local sink and answer via the fetch shim.
+  // (Restored afterwards: the env must not leak into other suites.)
+  process.env.NIMIQ_RPC_URL = "http://127.0.0.1:1/rpc-mock";
+  seq += 1;
+  const prizeHash = `b${seq.toString().padStart(63, "0")}`;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    let methodName = "";
+    try {
+      methodName = String(JSON.parse(String(init?.body ?? "{}"))?.method ?? "");
+    } catch {
+      methodName = "";
+    }
+    if (methodName === "getBlockNumber") {
+      return new Response(JSON.stringify({ result: 1000 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (methodName === "getTransactionByHash") {
+      return new Response(
+        JSON.stringify({
+          result: {
+            hash: prizeHash,
+            from: walletFor(HOST),
+            to: walletFor(payee),
+            value: PRIZE_LUNA.toString(),
+            blockNumber: 990,
+            executionResult: true,
+            networkId: 5,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return realFetch(input as never, init);
+  }) as typeof fetch;
+  try {
+    // NIMIQ_RPC_URL points at the sink; the fetch shim answers everything.
+    const result = await walletMod.claimPayoutWithWalletTransaction(
+      doc.id,
+      HOST,
+      payee,
+      prizeHash,
+      { txStore: memoryTxStore() },
+    );
+    assert.equal(result.payout.status, "sent");
+    assert.equal(result.payout.payoutTxHash, prizeHash);
+    const final = await store0.get(doc.id, payee);
+    assert.equal(final?.status, "sent", "the prize is settled, no longer stuck");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.NIMIQ_RPC_URL;
+  }
+});
+
+/** Minimal in-memory consumption store for claim tests. */
+function memoryTxStore() {
+  const rows = new Map<string, unknown>();
+  return {
+    async findByNetworkAndHash(network: string, txHash: string) {
+      return rows.get(`${network}:${txHash}`) ?? null;
+    },
+    async insertConsumed(tx: { network: string; txHash: string }) {
+      const key = `${tx.network}:${tx.txHash}`;
+      if (rows.has(key)) throw new Error("This transaction was already consumed");
+      rows.set(key, tx);
+      return rows.size;
+    },
+  } as never;
+}
+
+/**
+ * A cancelled paid tournament's refund obligations must be returnable from
+ * the host's own wallet, with the claim verified against the player's
+ * linked wallet and the exact fee.
+ */
+test("a cancelled paid tournament's fees are returnable from the host wallet", async () => {
+  const doc = await newTournament({
+    format: "arena",
+    maxPlayers: 4,
+    entryFeeLuna: FEE_LUNA,
+    prizePreset: "winner",
+  });
+  const player = "acct_refund_me";
+  await openAndJoin(doc.id, [player]);
+  await payEntry(doc.id, player);
+  const cancelled = await engine.transitionTournament(doc.id, HOST, "cancelled", "Host had to cancel");
+  assert.ok(cancelled.ok);
+
+  const docCancelled = await engineDoc(doc.id);
+  assert.ok(docCancelled.refunds?.[player], "refund obligation materialised");
+  assert.equal(docCancelled.refunds[player].status, "owed");
+
+  const walletMod = await import("@/lib/server/tournament-refunds-wallet");
+  const intent = await walletMod.prepareRefundReturn(doc.id, HOST, player);
+  assert.equal(intent.recipientAddress, walletFor(player));
+  assert.equal(BigInt(intent.amountLuna), FEE_LUNA);
+
+  // The host pays the refund from their own wallet; the claim verifies the
+  // real transaction (faked JSON-RPC via the fetch shim) and records it.
+  process.env.NIMIQ_RPC_URL = "http://127.0.0.1:1/rpc-mock";
+  seq += 1;
+  const refundHash = `c${seq.toString().padStart(63, "0")}`;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    let methodName = "";
+    try {
+      methodName = String(JSON.parse(String(init?.body ?? "{}"))?.method ?? "");
+    } catch {
+      methodName = "";
+    }
+    if (methodName === "getBlockNumber") {
+      return new Response(JSON.stringify({ result: 1000 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (methodName === "getTransactionByHash") {
+      return new Response(
+        JSON.stringify({
+          result: {
+            hash: refundHash,
+            from: walletFor(HOST),
+            to: walletFor(player),
+            value: FEE_LUNA.toString(),
+            blockNumber: 990,
+            executionResult: true,
+            networkId: 5,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return realFetch(input as never, init);
+  }) as typeof fetch;
+  try {
+    const result = await walletMod.claimRefundWithWalletTransaction(
+      doc.id,
+      HOST,
+      player,
+      refundHash,
+      { txStore: memoryTxStore() },
+    );
+    assert.equal(result.refund.status, "dispatched");
+    assert.equal(result.refund.refundTxHash, refundHash);
+
+    const fresh = await engineDoc(doc.id);
+    assert.equal(fresh.refunds![player].status, "dispatched");
+    assert.equal(fresh.payoutStatus, "refund_required", "still awaiting verification");
+
+    // Replay guard: the same hash can never settle a second refund.
+    const doc2 = await newTournament({
+      format: "arena",
+      maxPlayers: 4,
+      entryFeeLuna: FEE_LUNA,
+      prizePreset: "winner",
+    });
+    const player2 = "acct_refund_me2";
+    await openAndJoin(doc2.id, [player2]);
+    await payEntry(doc2.id, player2);
+    await engine.transitionTournament(doc2.id, HOST, "cancelled", "again");
+    await assert.rejects(
+      walletMod.claimRefundWithWalletTransaction(doc2.id, HOST, player2, refundHash, {
+        txStore: memoryTxStore(),
+      }),
+      /not the recorded entry fee|does not pay the entrant|already used/i,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.NIMIQ_RPC_URL;
+  }
+});
+
+/**
+ * Deleting a paid event with outstanding refunds must be refused — the
+ * refund ledger IS the obligation, and deleting it erases the debt.
+ */
+test("deleting a paid tournament with outstanding refunds is refused", async () => {
+  const doc = await newTournament({
+    format: "arena",
+    maxPlayers: 4,
+    entryFeeLuna: FEE_LUNA,
+    prizePreset: "winner",
+  });
+  const player = "acct_delete_guard";
+  await openAndJoin(doc.id, [player]);
+  await payEntry(doc.id, player);
+  // Note: NOT cancelled — a direct delete attempt on a registration-phase
+  // paid event with a third-party paid seat is the dangerous path.
+
+  // A third-party paid seat locks deletion to admins; the refund materialises
+  // and the refusal names the outstanding refund.
+  const res = await engine.deleteTournament(doc.id, HOST);
+  assert.equal(res.ok, false, "delete must be refused while a refund is owed");
+  if (!res.ok) {
+    assert.match(res.error, /refund/i);
+  }
+  const still = await engineDoc(doc.id);
+  assert.ok(still.refunds?.[player], "the refund obligation materialised on the refusal path");
+
+  // Settle the refund (verify it durably): the outstanding-refund guard is
+  // satisfied. The admin-only rule for third-party paid seats still holds,
+  // so deletion is demonstrated by an event the host may delete.
+  const settled: TournamentDocument = await engineDoc(doc.id);
+  settled.refunds![player] = {
+    ...settled.refunds![player],
+    status: "verified",
+    refundTxHash: Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[i % 16]).join(""),
+    verifiedAt: Date.now(),
+  };
+  await store.writeTournamentDoc(settled);
+  const res2 = await engine.deleteTournament(doc.id, HOST);
+  assert.equal(res2.ok, false, "admin-only rule survives refund settlement");
+  if (!res2.ok) {
+    assert.match(res2.error, /administrator/i, "the remaining refusal is the admin rule");
+  }
+
+  // Host-deletable event (only the host ever paid): outstanding refund
+  // blocks, settled refund lets it through.
+  const doc2 = await newTournament({
+    format: "arena",
+    maxPlayers: 4,
+    entryFeeLuna: FEE_LUNA,
+    prizePreset: "winner",
+  });
+  await openAndJoin(doc2.id, [HOST]);
+  await payEntry(doc2.id, HOST);
+  const del1 = await engine.deleteTournament(doc2.id, HOST);
+  assert.equal(del1.ok, false, "outstanding refunds block even a host-deletable event");
+  if (!del1.ok) assert.match(del1.error, /refund/i);
+  const settled2 = await engineDoc(doc2.id);
+  settled2.refunds![HOST] = {
+    ...settled2.refunds![HOST],
+    status: "verified",
+    refundTxHash: Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(i + 3) % 16]).join(""),
+    verifiedAt: Date.now(),
+  };
+  await store.writeTournamentDoc(settled2);
+  const del2 = await engine.deleteTournament(doc2.id, HOST);
+  assert.equal(del2.ok, true, `delete succeeds once every refund is verified: ${del2.ok ? "" : del2.error}`);
 });

@@ -107,9 +107,30 @@ export async function adminCancelTournament(
     const won = await transitionTournamentStatus(tournamentId, doc.status, "cancelled");
     if (!won) return { ok: false, error: "State changed concurrently; try again" };
     doc.status = "cancelled";
+    doc.cancelReason = doc.cancelReason ?? `Cancelled by a ChainMate administrator.`;
     if (isPaidTournamentDoc(doc)) {
       try {
-        if ((await listPaidEntries(tournamentId)).length > 0) {
+        const paid = await listPaidEntries(tournamentId);
+        if (paid.length > 0) {
+          // The SAME materialisation the host path uses: one durable refund
+          // obligation per verified entrant (idempotent per player), so the
+          // host's refund UI has real rows to settle — not just a flag.
+          doc.refunds = doc.refunds ?? {};
+          for (const p of paid) {
+            if (!doc.refunds[p.playerId]) {
+              doc.refunds[p.playerId] = {
+                playerId: p.playerId,
+                entryTxHash: p.txHash,
+                amountLuna: p.amountLuna.toString(),
+                status: "owed",
+                refundTxHash: null,
+                attempts: 0,
+                lastError: null,
+                createdAt: Date.now(),
+                verifiedAt: null,
+              };
+            }
+          }
           doc.payoutStatus = "refund_required";
         }
       } catch {
@@ -117,7 +138,15 @@ export async function adminCancelTournament(
       }
     }
     await writeTournamentDoc(doc);
-    return { ok: true, message: `Cancelled "${doc.name}".` };
+    // Mirror the freshly written refund rows (after the document persists,
+    // never outpacing the fast store).
+    if (doc.refunds) {
+      const { mirrorRefund } = await import("@/lib/server/tournament-store");
+      for (const r of Object.values(doc.refunds)) {
+        await mirrorRefund(tournamentId, r).catch(() => undefined);
+      }
+    }
+    return { ok: true, message: `Cancelled "${doc.name}". Entry fees are queued for return.` };
   });
 }
 

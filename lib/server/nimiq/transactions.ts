@@ -140,8 +140,10 @@ export interface VerificationObligation {
   expectedRecipient?: string;
   /** Expected network; defaults to the deployment's configured network. */
   network?: NimiqNetworkName;
-  /** What the consumption row records; defaults to 'verification'. */
-  kind?: "verification" | "tournament_entry";
+  /** What the consumption row records; defaults to 'verification'.
+   *  'refund' = an outgoing host-wallet ENTRY-FEE RETURN (not an entry, not a
+   *  prize) — its own kind so the verified prize pool can never count it. */
+  kind?: "verification" | "tournament_entry" | "refund";
   /** Reserved for Phase 2B; recorded on the consumption row when present. */
   tournamentId?: string;
 }

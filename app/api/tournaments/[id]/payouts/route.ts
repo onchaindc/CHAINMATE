@@ -21,6 +21,12 @@ import {
   confirmSentWalletPayout,
   preparePayoutClaim,
 } from "@/lib/server/tournament-payouts-wallet";
+import {
+  RefundClaimError,
+  claimRefundWithWalletTransaction,
+  confirmDispatchedRefund,
+  prepareRefundReturn,
+} from "@/lib/server/tournament-refunds-wallet";
 
 export const runtime = "nodejs";
 
@@ -51,7 +57,18 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 interface PayoutActionBody {
-  action: "plan" | "send" | "retry" | "dispatch" | "verify" | "wallet-prepare" | "wallet-claim" | "wallet-confirm";
+  action:
+    | "plan"
+    | "send"
+    | "retry"
+    | "dispatch"
+    | "verify"
+    | "wallet-prepare"
+    | "wallet-claim"
+    | "wallet-confirm"
+    | "refund-prepare"
+    | "refund-claim"
+    | "refund-confirm";
   playerId?: string;
   /** For send/dispatch/retry/verify: which winner's payout to act on. */
   targetPlayerId?: string;
@@ -258,6 +275,53 @@ export async function POST(req: NextRequest, { params }: Params) {
           },
         });
       }
+      case "refund-prepare": {
+        // Wire facts for returning ONE entrant's fee from the host's own
+        // Nimiq Pay wallet (the deployment has no signing node).
+        if (!body.targetPlayerId) {
+          return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+        }
+        const intent = await prepareRefundReturn(id, acting.playerId, body.targetPlayerId);
+        return NextResponse.json({ intent });
+      }
+      case "refund-claim": {
+        if (!body.targetPlayerId || !body.txHash) {
+          return NextResponse.json(
+            { error: "targetPlayerId and txHash are required" },
+            { status: 400 },
+          );
+        }
+        const result = await claimRefundWithWalletTransaction(
+          id,
+          acting.playerId,
+          body.targetPlayerId,
+          body.txHash,
+        );
+        return NextResponse.json({
+          refund: {
+            playerId: result.refund.playerId,
+            status: result.refund.status,
+            amountLuna: result.refund.amountLuna,
+            refundTxHash: result.refund.refundTxHash,
+            confirmations: result.confirmations,
+          },
+        });
+      }
+      case "refund-confirm": {
+        if (!body.targetPlayerId) {
+          return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+        }
+        const result = await confirmDispatchedRefund(id, acting.playerId, body.targetPlayerId);
+        return NextResponse.json({
+          refund: {
+            playerId: result.refund.playerId,
+            status: result.refund.status,
+            amountLuna: result.refund.amountLuna,
+            refundTxHash: result.refund.refundTxHash,
+            confirmations: result.confirmations,
+          },
+        });
+      }
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
@@ -272,6 +336,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       );
     }
     if (err instanceof PayoutClaimError) {
+      return NextResponse.json(
+        { error: err.message, kind: err.kind },
+        { status: err.status },
+      );
+    }
+    if (err instanceof RefundClaimError) {
       return NextResponse.json(
         { error: err.message, kind: err.kind },
         { status: err.status },

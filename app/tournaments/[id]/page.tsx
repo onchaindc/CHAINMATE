@@ -220,7 +220,10 @@ export default function TournamentDetailPage() {
   }, [stillJoined, entry.pendingTxHash]);
 
   /** Host-only payout dispatch/verify — crash-safe on the server. */
-  const runPayoutAction = async (action: "dispatch" | "verify" | "wallet-confirm", targetPlayerId: string) => {
+  const runPayoutAction = async (
+    action: "dispatch" | "verify" | "wallet-confirm" | "refund-confirm",
+    targetPlayerId: string,
+  ) => {
     if (!detail || payoutBusy) return;
     setPayoutBusy(`${action}:${targetPlayerId}`);
     setActionError(null);
@@ -289,6 +292,61 @@ export default function TournamentDetailPage() {
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Sending the prize failed");
+    } finally {
+      setPayoutBusy(null);
+    }
+  };
+
+  /**
+   * HOST-WALLET REFUND — returning one entrant's fee from the host's own
+   * Nimiq Pay wallet when the event is cancelled (or the fee must go back
+   * after leaving before lock). Same three steps as the prize path:
+   * server-issued wire facts, the wallet sheet, on-chain verification.
+   */
+  const refundFromWallet = async (targetPlayerId: string) => {
+    if (payoutBusy) return;
+    setPayoutBusy(`refund:${targetPlayerId}`);
+    setActionError(null);
+    try {
+      const prep = (await tournamentApi.payoutAction(
+        id,
+        identity.playerId,
+        "refund-prepare",
+        targetPlayerId,
+      )) as { intent: { recipientAddress: string; amountLuna: string; network: string } };
+      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
+      const { canonicalAddress } = await import("@/lib/nimiq/address");
+
+      const connected = await connectNimiq();
+      if (!connected.ok) throw new Error(connected.error.message);
+      const sent = await sendNimiqBasicTransaction(connected.value, {
+        recipient: canonicalAddress(prep.intent.recipientAddress),
+        value: BigInt(prep.intent.amountLuna),
+      });
+      if (!sent.ok) throw new Error(sent.error.message);
+
+      setPayoutBusy(`refund-claim:${targetPlayerId}`);
+      try {
+        await tournamentApi.payoutAction(
+          id,
+          identity.playerId,
+          "refund-claim",
+          targetPlayerId,
+          sent.value,
+        );
+        await load();
+      } catch (claimErr) {
+        // The money has MOVED — the hash is kept so "Check status" (which
+        // re-claims by the recorded hash's next confirmations read) resolves
+        // it without a second payment ever being possible.
+        setActionError(
+          `Refund sent (tx ${sent.value.slice(0, 10)}…) but verification is not finished: ${
+            claimErr instanceof Error ? claimErr.message : "claim failed"
+          }. Press “Check status” on this refund in a moment — you will NOT pay again.`,
+        );
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Returning the fee failed");
     } finally {
       setPayoutBusy(null);
     }
@@ -577,7 +635,7 @@ export default function TournamentDetailPage() {
                   </p>
                   <ul className="mt-1.5 divide-y divide-border/40 rounded-md border border-border/50">
                     {detail.refunds.map((r) => (
-                      <li key={r.playerId} className="flex items-center gap-3 px-3 py-2 text-sm">
+                      <li key={r.playerId} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
                         <span className="min-w-0 flex-1 truncate">{nameOf(detail, r.playerId)}</span>
                         <span className="font-mono text-xs tabular-nums text-foreground/80">
                           {displayNim(r.amountLuna)} NIM
@@ -595,6 +653,33 @@ export default function TournamentDetailPage() {
                           {r.status === "verified" && "refunded"}
                           {r.status === "failed" && "retrying"}
                         </span>
+                        {isHost &&
+                          (r.status === "owed" || r.status === "failed") && (
+                            <button
+                              type="button"
+                              disabled={payoutBusy !== null}
+                              onClick={() => void refundFromWallet(r.playerId)}
+                              title="Open Nimiq Pay with the player's address and their exact fee prefilled. ChainMate verifies your transaction on-chain and records the refund."
+                              className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                            >
+                              {payoutBusy?.startsWith(`refund:${r.playerId}`) || payoutBusy?.startsWith(`refund-claim:${r.playerId}`)
+                                ? "confirm in wallet…"
+                                : r.status === "failed"
+                                  ? "retry refund"
+                                  : "return fee"}
+                            </button>
+                          )}
+                        {isHost && r.status === "dispatched" && (
+                          <button
+                            type="button"
+                            disabled={payoutBusy !== null}
+                            onClick={() => void runPayoutAction("refund-confirm", r.playerId)}
+                            title="Re-check the refund transaction's confirmations on-chain."
+                            className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+                          >
+                            check status
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>

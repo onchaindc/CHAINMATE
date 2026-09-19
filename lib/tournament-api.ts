@@ -168,7 +168,18 @@ export const tournamentApi = {
   async payoutAction(
     tournamentId: string,
     playerId: string,
-    action: "plan" | "send" | "retry" | "dispatch" | "verify" | "wallet-prepare" | "wallet-claim" | "wallet-confirm",
+    action:
+      | "plan"
+      | "send"
+      | "retry"
+      | "dispatch"
+      | "verify"
+      | "wallet-prepare"
+      | "wallet-claim"
+      | "wallet-confirm"
+      | "refund-prepare"
+      | "refund-claim"
+      | "refund-confirm",
     targetPlayerId?: string,
     txHash?: string,
   ): Promise<Record<string, unknown>> {
