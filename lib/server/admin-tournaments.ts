@@ -34,6 +34,23 @@ import { getVerifiedPrizePool, listPaidEntries } from "@/lib/server/tournament-e
 import { isPaidTournamentDoc } from "@/lib/server/tournament-economy-doc";
 import { listTournaments } from "@/lib/server/tournaments";
 
+export interface AdminPayoutLine {
+  playerId: string;
+  playerName: string | null;
+  payoutRank: number;
+  shareBps: number;
+  amountLuna: string;
+  status: string;
+  destinationAddress: string | null;
+}
+
+export interface AdminRefundLine {
+  playerId: string;
+  playerName: string | null;
+  amountLuna: string;
+  status: string;
+}
+
 export interface AdminTournamentRow {
   id: string;
   name: string;
@@ -47,11 +64,20 @@ export interface AdminTournamentRow {
   entryFeeNim: string | null;
   createdAt: number;
   startedAt: number | null;
+  /** Aggregate money state (none | pending | partial | paid | refund_required | refunded). */
+  payoutStatus: string;
+  /** Prize distribution preset ("winner" | "top3" | "top5" | null). */
+  prizePreset: string | null;
+  /** Per-rank payout rows (completed paid events) — the purse to settle. */
+  payouts: AdminPayoutLine[];
+  /** Outstanding refund obligations (cancel / leave-before-lock). */
+  refunds: AdminRefundLine[];
 }
 
 /** Every tournament for the admin table, host names and money attached. */
 export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTournamentRow[]> {
   const { tournaments } = await listTournaments({ limit });
+  const { listTournamentPayouts } = await import("@/lib/server/tournament-payouts");
   const rows: AdminTournamentRow[] = [];
   for (const t of tournaments) {
     const doc = await getTournamentDoc(t.id);
@@ -59,6 +85,41 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
     const active = doc.entries.filter((e) => e.leftAt === undefined);
     const paid = active.filter((e) => e.paid);
     const paidDoc = isPaidTournamentDoc(doc);
+
+
+    // Payout purse + refunds: the admin dashboard is ChainMate's settlement
+    // console, so every completed/cancelled paid event carries its rows here.
+    let payoutLines: AdminPayoutLine[] = [];
+    if (paidDoc && (doc.status === "completed" || doc.status === "cancelled")) {
+      try {
+        const records = await listTournamentPayouts(doc.id);
+        payoutLines = [];
+        for (const p of records) {
+          payoutLines.push({
+            playerId: p.playerId,
+            playerName: p.playerId === doc.creatorId ? await usernameForPlayer(doc.creatorId) : null,
+            payoutRank: p.payoutRank,
+            shareBps: p.shareBps,
+            amountLuna: p.amountLuna,
+            status: p.status,
+            destinationAddress: p.destinationAddress ?? null,
+          });
+        }
+      } catch {
+        payoutLines = [];
+      }
+    }
+    const refundLines: AdminRefundLine[] = doc.refunds
+      ? await Promise.all(
+          Object.values(doc.refunds).map(async (r) => ({
+            playerId: r.playerId,
+            playerName: r.playerId === doc.creatorId ? await usernameForPlayer(doc.creatorId) : null,
+            amountLuna: r.amountLuna,
+            status: r.status,
+          })),
+        )
+      : [];
+
     rows.push({
       id: doc.id,
       name: doc.name,
@@ -72,6 +133,10 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
       prizePoolNim: paidDoc ? formatNim(await getVerifiedPrizePool(doc.id)) : null,
       createdAt: doc.createdAt,
       startedAt: doc.startedAt,
+      payoutStatus: doc.payoutStatus ?? "none",
+      prizePreset: doc.prizePreset ?? null,
+      payouts: payoutLines,
+      refunds: refundLines,
     });
   }
   return rows;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
+import { isAdminPlayer } from "@/lib/server/admin";
 import { getTournamentDoc } from "@/lib/server/tournament-store";
 import { isPaidTournamentDoc } from "@/lib/server/tournament-economy-doc";
 import { recomputeStandingsFor } from "@/lib/server/tournament-payouts-view";
@@ -67,6 +68,7 @@ interface PayoutActionBody {
     | "wallet-prepare"
     | "wallet-claim"
     | "wallet-confirm"
+    | "wallet-destination"
     | "refund-prepare"
     | "refund-claim"
     | "refund-confirm";
@@ -75,14 +77,24 @@ interface PayoutActionBody {
   targetPlayerId?: string;
   /** For wallet-claim: the hash of the host's Nimiq Pay transaction. */
   txHash?: string;
+  /** For wallet-destination: a canonical Nimiq address typed in the admin console. */
+  destinationAddress?: string;
 }
 
 /**
- * POST /api/tournaments/[id]/payouts — host-only payout actions.
+ * POST /api/tournaments/[id]/payouts — HOST or ADMIN payout actions.
+ *
+ * ChainMate (the operator, via the admin dashboard) is the sole prize
+ * distributor, so every settlement action accepts the platform admin in
+ * addition to the event's host. An admin acts ON this tournament only —
+ * there is no cross-tournament power and nothing else changes.
  *   plan:  (re)create the payout records after completion (idempotent)
  *   send:  attempt dispatch through the configured treasury signer —
  *          typed 503 when none is configured (the 2B default)
  *   retry: return a failed/blocked payout to pending
+ *   wallet-destination: admin-only — set the payout address for a winner
+ *          whose wallet binding is unreachable, from an address typed in
+ *          the admin console
  */
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params;
@@ -104,9 +116,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (!doc) {
       return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
     }
-    if (doc.creatorId !== acting.playerId) {
+    const isHost = doc.creatorId === acting.playerId;
+    const isAdmin = isHost ? false : await isAdminPlayer(acting.playerId);
+    if (!isHost && !isAdmin) {
       return NextResponse.json(
-        { error: "Only the host can manage payouts" },
+        { error: "Only the host or a ChainMate admin can manage payouts" },
         { status: 403 },
       );
     }
@@ -285,6 +299,32 @@ export async function POST(req: NextRequest, { params }: Params) {
             confirmations: result.confirmations,
           },
         });
+      }
+      case "wallet-destination": {
+        // ADMIN console only: set where this prize goes when the winner's
+        // own wallet binding cannot be resolved. The address is validated
+        // to full canonical form before it is ever stored.
+        if (!isAdmin) {
+          return NextResponse.json({ error: "Only a ChainMate admin can set a payout destination" }, { status: 403 });
+        }
+        if (!body.targetPlayerId || !body.destinationAddress) {
+          return NextResponse.json({ error: "targetPlayerId and destinationAddress are required" }, { status: 400 });
+        }
+        const { setPayoutDestination } = await import("@/lib/server/tournament-payouts");
+        try {
+          const payout = await setPayoutDestination(id, body.targetPlayerId, body.destinationAddress);
+          return NextResponse.json({
+            payout: {
+              playerId: payout.playerId,
+              status: payout.status,
+              amountLuna: payout.amountLuna,
+              destinationAddress: payout.destinationAddress,
+            },
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Could not set the destination";
+          return NextResponse.json({ error: message }, { status: 400 });
+        }
       }
       case "refund-prepare": {
         // Wire facts for returning ONE entrant's fee from the host's own

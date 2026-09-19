@@ -472,6 +472,9 @@ export default function TournamentDetailPage() {
 
   const s = detail.summary;
   const isHost = detail.myRole === "host";
+  /** ChainMate (the admin) is the sole prize distributor — settlement
+      buttons exist for the host AND the platform admin. */
+  const canSettle = isHost || isAdmin;
 
   const isEntrant = detail.myRole === "entrant";
   // Membership, not role: a HOST WHO JOINED (the common paid-event case —
@@ -715,7 +718,7 @@ export default function TournamentDetailPage() {
                           {r.status === "verified" && "refunded"}
                           {r.status === "failed" && "retrying"}
                         </span>
-                        {isHost &&
+                        {canSettle &&
                           (r.status === "owed" || r.status === "failed") && (
                             <button
                               type="button"
@@ -731,7 +734,7 @@ export default function TournamentDetailPage() {
                                   : "return fee"}
                             </button>
                           )}
-                        {isHost && r.status === "dispatched" && (
+                        {canSettle && r.status === "dispatched" && (
                           <button
                             type="button"
                             disabled={payoutBusy !== null}
@@ -750,6 +753,79 @@ export default function TournamentDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ---------- Outstanding refunds on LIVE/finished events ---------- */}
+      {/* A refund obligation can exist on a COMPLETED event too: a player
+          left during registration and their verified fee was queued for
+          return, then the event played out. The cancelled banner above only
+          renders for cancelled events — without this block the completed
+          event showed the "refund required" aggregate with NOTHING to look
+          at or settle. Same list, same actions, no red banner. */}
+      {s.status !== "cancelled" && detail.refunds && detail.refunds.length > 0 && (
+        <section className="animate-fade-in-up mt-8">
+          <SectionLabel>Entry fee refunds</SectionLabel>
+          <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
+            Fees queued for return from players who left before the event
+            locked. Prizes and refunds settle independently.
+          </p>
+          <Panel className="mt-3">
+            <ul className="divide-y divide-border/50">
+              {detail.refunds.map((r) => (
+                <li key={r.playerId} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">
+                    {nameOf(detail, r.playerId)}
+                    {r.playerId === identity.playerId && (
+                      <span className="ml-1.5 text-2xs uppercase tracking-wider text-primary">you</span>
+                    )}
+                  </span>
+                  <span className="font-mono text-xs tabular-nums text-foreground/80">
+                    {displayNim(r.amountLuna)} NIM
+                  </span>
+                  <span
+                    className={cn(
+                      "text-2xs font-semibold uppercase tracking-wider",
+                      r.status === "verified" && "text-positive",
+                      r.status === "dispatched" && "text-primary",
+                      (r.status === "owed" || r.status === "failed") && "text-warning",
+                    )}
+                  >
+                    {r.status === "owed" && "refund queued"}
+                    {r.status === "dispatched" && "returning"}
+                    {r.status === "verified" && "refunded"}
+                    {r.status === "failed" && "retrying"}
+                  </span>
+                  {canSettle && (r.status === "owed" || r.status === "failed") && (
+                    <button
+                      type="button"
+                      disabled={payoutBusy !== null}
+                      onClick={() => void refundFromWallet(r.playerId)}
+                      title="Open Nimiq Pay with the player's address and their exact fee prefilled. ChainMate verifies your transaction on-chain and records the refund."
+                      className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                    >
+                      {payoutBusy?.startsWith(`refund:${r.playerId}`) || payoutBusy?.startsWith(`refund-claim:${r.playerId}`)
+                        ? "confirm in wallet…"
+                        : r.status === "failed"
+                          ? "retry refund"
+                          : "return fee"}
+                    </button>
+                  )}
+                  {canSettle && r.status === "dispatched" && (
+                    <button
+                      type="button"
+                      disabled={payoutBusy !== null}
+                      onClick={() => void runPayoutAction("refund-confirm", r.playerId)}
+                      title="Re-check the refund transaction's confirmations on-chain."
+                      className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+                    >
+                      check status
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </section>
       )}
 
       {/* An auto-dispatch note is guidance, not a failure: this deployment
@@ -1115,7 +1191,7 @@ export default function TournamentDetailPage() {
           <SectionLabel>Purse &amp; payouts</SectionLabel>
           <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs leading-relaxed text-muted-foreground">
             <span>
-              Prize pool: <strong className="font-mono tabular-nums text-foreground">{displayNim(totalPool(detail.payouts))} NIM</strong>
+              Prize pool: <strong className="font-mono tabular-nums text-foreground">{displayNim(detail.verifiedPoolLuna ?? totalPool(detail.payouts))} NIM</strong>
               {" "}from verified entries ({s.prizePreset === "top3" ? "60/25/15" : s.prizePreset === "top5" ? "45/25/15/10/5" : "winner takes all"})
             </span>
             <PayoutStateBadge status={s.payoutStatus ?? "none"} />
@@ -1138,7 +1214,16 @@ export default function TournamentDetailPage() {
                     {displayNim(p.amountLuna)} NIM
                   </span>
                   <PayoutStatusPill status={p.status} />
-                  {isHost && (p.status === "dispatching" || p.status === "sent") && (
+                  {isAdmin && p.status === "blocked_no_wallet" && (
+                    <DestinationEditor
+                      tournamentId={id}
+                      myPlayerId={identity.playerId}
+                      playerId={p.playerId}
+                      busy={payoutBusy !== null}
+                      onSaved={() => void load()}
+                    />
+                  )}
+                  {canSettle && (p.status === "dispatching" || p.status === "sent") && (
                       <button
                         type="button"
                         disabled={payoutBusy !== null}
@@ -1149,7 +1234,7 @@ export default function TournamentDetailPage() {
                         check status
                       </button>
                     )}
-                  {isHost &&
+                  {canSettle &&
                     (p.status === "pending" || p.status === "failed" || p.status === "dispatching") && (
                       <button
                         type="button"
@@ -1167,7 +1252,7 @@ export default function TournamentDetailPage() {
                               : "pay from wallet"}
                       </button>
                     )}
-                  {isHost && p.status === "sent" && (
+                  {canSettle && p.status === "sent" && (
                       <button
                         type="button"
                         disabled={payoutBusy !== null}
@@ -1488,6 +1573,94 @@ function PayoutStateBadge({ status }: { status: string }) {
   };
   const it = map[status] ?? { label: status, cls: "text-muted-foreground" };
   return <span className={cn("font-semibold", it.cls)}>· {it.label}</span>;
+}
+
+/**
+ * ADMIN payout-destination editor. When a prize is blocked because the
+ * winner's wallet cannot be resolved, the admin types the destination
+ * address directly — ChainMate is the sole distributor, so the console is
+ * where this is decided. The server validates before anything is stored;
+ * the row unblocks to "pending" on success.
+ */
+function DestinationEditor({
+  tournamentId,
+  myPlayerId,
+  playerId,
+  busy,
+  onSaved,
+}: {
+  tournamentId: string;
+  myPlayerId: string;
+  playerId: string;
+  busy: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => setEditing(true)}
+        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+      >
+        set address
+      </button>
+    );
+  }
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await tournamentApi.payoutSetDestination(
+        tournamentId,
+        myPlayerId,
+        playerId,
+        value.trim(),
+      );
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not set the address");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <span className="flex w-full flex-col gap-1.5 sm:w-auto">
+      <span className="flex gap-1.5">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="NQ… address"
+          autoFocus
+          className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50 sm:w-56"
+        />
+        <button
+          type="button"
+          disabled={saving || busy || !value.trim()}
+          onClick={() => void save()}
+          className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+        >
+          {saving ? "saving…" : "save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="shrink-0 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:text-foreground"
+        >
+          ✕
+        </button>
+      </span>
+      {error && <span className="text-2xs text-destructive">{error}</span>}
+    </span>
+  );
 }
 
 /* ------------------------------------------------------------------ */

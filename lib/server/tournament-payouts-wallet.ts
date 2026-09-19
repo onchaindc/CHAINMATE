@@ -127,10 +127,19 @@ export async function preparePayoutClaim(
     payout = released; // the claim below proceeds against the released row
   }
 
-  // Destination: the winner's CURRENT linked wallet (the planning record's
-  // snapshot can be stale after a re-link — the live binding is the truth).
+  // Destination precedence:
+  //   1. the winner's CURRENT linked wallet — the live binding is the truth
+  //      after a re-link (and a binding mirrored to Supabase is now recovered
+  //      even on a cold instance, which is what used to read "needs wallet");
+  //   2. the plan-time destination — the address snapshot recorded when the
+  //      payout was planned (resolved correctly THEN, and better than
+  //      refusing when a cold instance cannot see the binding now);
+  //   3. an ADMIN-set destination lives in the same snapshot field, so it
+  //      falls out of rule 2 naturally.
+  // Only when NEITHER resolves is the prize genuinely unpayable.
   const wallet = await getLinkedWallet(targetPlayerId).catch(() => null);
-  if (!wallet) {
+  const destination = wallet?.address ?? payout.destinationAddress ?? null;
+  if (!destination) {
     throw new PayoutClaimError(
       "winner-no-wallet",
       "The winner has no linked Nimiq wallet yet — they must link one to receive the prize",
@@ -141,7 +150,7 @@ export async function preparePayoutClaim(
   return {
     tournamentId,
     playerId: targetPlayerId,
-    recipientAddress: wallet.address,
+    recipientAddress: destination,
     amountLuna: payout.amountLuna,
     network: NIMIQ_NETWORK,
   };

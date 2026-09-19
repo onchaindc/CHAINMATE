@@ -209,6 +209,8 @@ export interface TournamentSummary {
   /**
    * Live verified prize pool in luna (paid tournaments only; the exact sum
    * of verified entry payments, recomputed server-side on every read).
+   * Detail payloads carry the true ledger sum — NOT the sum of payout rows,
+   * which under-reports when the field is shorter than the preset's ranks.
    */
   verifiedPoolLuna?: string | null;
   /** Server-stored cancellation reason ("Not enough players…", host note…). */

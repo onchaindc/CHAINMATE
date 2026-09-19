@@ -70,6 +70,8 @@ export interface TournamentDetailPayload {
   entryNames?: Record<string, string>;
   /** Phase 2B: payout lines for completed paid tournaments. */
   payouts?: TournamentPayoutLine[];
+  /** True verified prize pool in luna (paid events) — the ledger sum, not the payout-row sum. */
+  verifiedPoolLuna?: string | null;
   /** Refund obligations for paid events (cancel / leave before lock). */
   refunds?: Array<{
     playerId: string;
@@ -164,7 +166,7 @@ export const tournamentApi = {
     return data.payouts;
   },
 
-  /** Phase 2B/3B: host-only payout action (plan | send | retry | dispatch | verify). */
+  /** Phase 2B/3B: host-or-admin payout action (plan | send | retry | dispatch | verify). */
   async payoutAction(
     tournamentId: string,
     playerId: string,
@@ -186,6 +188,24 @@ export const tournamentApi = {
     return call(`/api/tournaments/${encodeURIComponent(tournamentId)}/payouts`, {
       method: "POST",
       body: JSON.stringify({ playerId, action, targetPlayerId, txHash }),
+    });
+  },
+
+  /** ADMIN console: set where a blocked prize pays out (canonical Nimiq address). */
+  async payoutSetDestination(
+    tournamentId: string,
+    playerId: string,
+    targetPlayerId: string,
+    destinationAddress: string,
+  ): Promise<Record<string, unknown>> {
+    return call(`/api/tournaments/${encodeURIComponent(tournamentId)}/payouts`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId,
+        action: "wallet-destination",
+        targetPlayerId,
+        destinationAddress,
+      }),
     });
   },
 };

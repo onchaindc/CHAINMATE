@@ -27,6 +27,14 @@ function formatEntryFee(luna: string): string {
   }
 }
 
+/** Share line for a prize preset: what the top places take home. */
+function presetShareLabel(preset: TournamentSummary["prizePreset"]): string | null {
+  if (preset === "top3") return "60/25/15";
+  if (preset === "top5") return "45/25/15/10/5";
+  if (preset === "winner") return "winner takes all";
+  return null;
+}
+
 const STATUS_LABEL: Record<TournamentStatus, string> = {
   draft: "Draft",
   registration: "Open",
@@ -226,6 +234,20 @@ function TournamentCard({
               <span className="inline-flex items-center gap-1">
                 <Coins className="h-3 w-3" aria-hidden />
                 Free
+              </span>
+            )}
+            {/* The purse, where there is one: live verified pool (when the
+                server has resolved entries) or the entry fee × field, plus
+                the preset split so players see what 1st/2nd/3rd get. */}
+            {t.entryFeeLuna && t.entryFeeLuna !== "0" && (
+              <span className="inline-flex items-center gap-1 text-primary">
+                <Trophy className="h-3 w-3" aria-hidden />
+                {t.verifiedPoolLuna && t.verifiedPoolLuna !== "0"
+                  ? `${formatEntryFee(t.verifiedPoolLuna)} NIM pool`
+                  : `up to ${formatEntryFee((BigInt(t.entryFeeLuna) * BigInt(Math.max(t.playerCount, 1))).toString())} NIM pool`}
+                {presetShareLabel(t.prizePreset) &&
+                  t.prizePreset !== "winner" &&
+                  ` · ${presetShareLabel(t.prizePreset)}`}
               </span>
             )}
             {hostName && <span className="truncate">Host: {hostName}</span>}

@@ -2068,6 +2068,8 @@ export async function getTournamentDetail(
   myActiveGameId: string | null;
   entryNames: Record<string, string>;
   payouts?: TournamentPayoutLine[];
+  /** True verified prize pool in luna (paid events) — the ledger sum. */
+  verifiedPoolLuna?: string | null;
   refunds?: TournamentRefundLine[];
 } | null> {
   await openDueTournaments();
@@ -2133,6 +2135,11 @@ export async function getTournamentDetail(
     }
   }
 
+  // The true verified pool travels with every paid detail payload — the UI
+  // header uses it instead of summing payout rows (which under-reports when
+  // the field is shorter than the preset's rank count).
+  const verifiedPool = await verifiedPrizePoolOf(doc).catch(() => 0n);
+
   // Refund lines for paid events (cancel / leave-before-lock) — UI-safe.
   let refunds: TournamentRefundLine[] | undefined;
   if (doc.refunds && Object.keys(doc.refunds).length > 0) {
@@ -2158,6 +2165,7 @@ export async function getTournamentDetail(
     myActiveGameId: myMatch?.gameId ?? null,
     entryNames,
     payouts,
+    verifiedPoolLuna: verifiedPool > 0n ? verifiedPool.toString() : null,
   };
 }
 
@@ -2197,6 +2205,20 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
   };
 }
 
+/**
+ * The TRUE verified prize pool for a paid tournament — the exact sum of
+ * verified entry consumptions, read fresh from the ledger. The payout rows'
+ * sum is NOT the pool: with a short field (4 players in a top-5 event) the
+ * last rank has nobody to pay, and summing only the created rows reported
+ * "380 NIM" for a 400 NIM pool — the shortfall was real money correctly
+ * unallocated, not missing. The card and the purse header show this number.
+ */
+export async function verifiedPrizePoolOf(doc: TournamentDocument): Promise<bigint> {
+  if (!doc.entryFeeLuna || doc.entryFeeLuna === "0") return 0n;
+  const { getVerifiedPrizePool } = await import("@/lib/server/tournament-economy");
+  return getVerifiedPrizePool(doc.id);
+}
+
 export async function listTournaments(opts?: {
   status?: TournamentStatus;
   limit?: number;
@@ -2206,7 +2228,13 @@ export async function listTournaments(opts?: {
   const summaries: TournamentSummary[] = [];
   const playerIds = new Set<string>();
   for (const doc of docs) {
-    summaries.push(summaryOf(doc, activeEntryCount(doc)));
+    const summary = summaryOf(doc, activeEntryCount(doc));
+    // True verified pool for paid events, so tournament cards can show the
+    // real purse (never a client-side estimate).
+    if (doc.entryFeeLuna && doc.entryFeeLuna !== "0") {
+      summary.verifiedPoolLuna = (await verifiedPrizePoolOf(doc).catch(() => 0n)).toString();
+    }
+    summaries.push(summary);
     playerIds.add(doc.creatorId);
     if (doc.winnerId) playerIds.add(doc.winnerId);
   }
