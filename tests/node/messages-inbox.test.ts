@@ -27,6 +27,7 @@ type MessageEnvelope = MessagesModule.MessageEnvelope;
 
 let storage: typeof StorageModule;
 let messages: typeof MessagesModule;
+let admin: typeof import("@/lib/server/admin");
 
 const INBOX_KEY = "chainmate:messages:inboxes";
 
@@ -50,6 +51,7 @@ before(async () => {
   });
   storage = await import("@/lib/server/storage");
   messages = await import("@/lib/server/messages");
+  admin = await import("@/lib/server/admin");
 });
 
 /** Seed one player's inbox directly (the push path needs real friendships). */
@@ -165,6 +167,32 @@ test("markInboxRead clears unread without touching the messages", async () => {
   for (const envelope of inbox) {
     assert.ok(envelope.readAt !== null, "every envelope must carry a read stamp");
   }
+});
+
+test("the operator DMs anyone without friendship — full admin rights", async () => {
+  const ADMIN = "acct_admin_boss";
+  const STRANGER = "acct_stranger_1";
+  // Grant the seat the same way the dashboard does (first account through
+  // passcode setup). No Supabase here, so the friend gate would fail CLOSED
+  // for everyone — except the operator, which is exactly the contract.
+  const claimed = await admin.claimOperatorSeat(ADMIN);
+  assert.equal(claimed, true);
+  assert.equal(await admin.isAdminPlayer(ADMIN), true);
+
+  const res = await messages.sendDirectMessage(ADMIN, STRANGER, "Official hello");
+  assert.deepEqual(res, { ok: true });
+
+  // Delivered for real: the stranger's inbox holds the DM, and the official
+  // account never had a friendship row with anyone.
+  const inbox = await messages.inboxFor(STRANGER);
+  assert.ok(
+    inbox.some((m) => m.kind === "dm" && m.fromPlayerId === ADMIN && m.body === "Official hello"),
+  );
+
+  // A non-admin in the same position is still refused (the gate holds).
+  const Civ = "acct_civilian_1";
+  const denied = await messages.sendDirectMessage(Civ, STRANGER, "hey");
+  assert.equal(denied.ok, false);
 });
 
 test("DMs fail closed without a real friendship (no Supabase)", async () => {

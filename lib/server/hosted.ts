@@ -292,7 +292,39 @@ export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
   const raw = await getGameStorage().get(`${STATS_PREFIX}${playerId}`);
   if (raw) {
     try {
-      return JSON.parse(raw) as PlayerStats;
+      const cached = JSON.parse(raw) as PlayerStats;
+      // The definitional predicate (acct_… = account) applied to the CACHED
+      // blob too: a stats record written before the account existed — or by
+      // an older build — still says isGuest: true with no username, and
+      // every friends-list row built from it rendered the name as dead
+      // text with no profile link. Heal the blob once from the profile row
+      // (one bounded read only while the blob is actually wrong), so the
+      // cache can never permanently downgrade a real account.
+      const accountShaped = playerId.startsWith("acct_");
+      if (accountShaped && (cached.isGuest || !cached.username)) {
+        if (supabaseConfigured()) {
+          try {
+            const row = await profileForPlayerId(playerId);
+            if (row?.username) {
+              const healed: PlayerStats = {
+                ...cached,
+                username: row.username,
+                isGuest: false,
+                avatarUrl: cached.avatarUrl ?? row.avatar_url ?? null,
+                country: cached.country ?? row.country ?? undefined,
+              };
+              await getGameStorage().set(
+                `${STATS_PREFIX}${playerId}`,
+                JSON.stringify(healed),
+              );
+              return healed;
+            }
+          } catch {
+            // fall through to the cached blob — chess never waits on Supabase
+          }
+        }
+      }
+      return cached;
     } catch {
       // corrupted record — fall through to the database
     }
@@ -1845,6 +1877,38 @@ export async function seekMatch(
     }
   }
 
+  return withSeekLock(() => seekMatchLocal(playerId, timeControl, now));
+}
+
+/**
+ * Serialise every mutation of the LOCAL seek pool.
+ *
+ * The local pool is a single JSON blob read, modified and written back with
+ * awaits in between (rating lookups, game creation). Two seek requests that
+ * interleave can both read the same waiting player, both pair with them, and
+ * each write a pool without the other's pairing — one opponent ends up
+ * ghosted in a game nobody joined, and the same player can be handed to two
+ * searchers at once. Three players clicking Search in the same instant is
+ * exactly this race. The durable pool needs none of this: its claim is a
+ * single conditional UPDATE. This chain gives the local fallback the same
+ * safety — each seek's read-pair-write completes before the next begins, so
+ * of three simultaneous searchers one pair forms and the third keeps
+ * searching.
+ */
+let seekChain: Promise<unknown> = Promise.resolve();
+function withSeekLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = seekChain.then(fn, fn);
+  // The chain never rejects: a failed seek must not poison the next one.
+  seekChain = run.catch(() => undefined);
+  return run;
+}
+
+/** The local-pool body of seekMatch — always entered under withSeekLock. */
+async function seekMatchLocal(
+  playerId: string,
+  timeControl: string | undefined,
+  now: number,
+): Promise<SeekResult> {
   // A pairing may already exist for us — made by the other side's seek, or by
   // our own earlier call whose response never made it back. Always honour it
   // instead of starting a second game.
@@ -1940,9 +2004,11 @@ export async function cancelSeek(playerId: string): Promise<void> {
       // Best-effort: an abandoned row ages out of the pool on its own.
     }
   }
-  const seekers = await readSeekers();
-  await writeSeekers(seekers.filter((s) => s.playerId !== playerId));
-  await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`).catch(() => {});
+  await withSeekLock(async () => {
+    const seekers = await readSeekers();
+    await writeSeekers(seekers.filter((s) => s.playerId !== playerId));
+    await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`).catch(() => {});
+  });
 }
 
 /* ------------------------------------------------------------------ */

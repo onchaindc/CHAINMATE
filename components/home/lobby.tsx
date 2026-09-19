@@ -398,13 +398,11 @@ export function Lobby() {
             className="[animation-delay:60ms]"
           />
 
-          {/* Friends — a known opponent beats a random one. */}
+          {/* Friends — a known opponent beats a random one. The list itself is
+              the affordance: every name links to a profile, so a separate
+              "Manage" chrome link next to the heading was noise. */}
           <section className="animate-fade-in-up [animation-delay:120ms]">
-            <SectionLabel
-              aside={<Link href="/profile" className="hover:text-foreground">Manage</Link>}
-            >
-              Friends
-            </SectionLabel>
+            <SectionLabel>Friends</SectionLabel>
             <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
               {data === null ? (
                 <LoadingRows rows={2} />

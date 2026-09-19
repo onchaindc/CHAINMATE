@@ -17,7 +17,7 @@
  */
 
 import { getGameStorage } from "@/lib/server/storage";
-import { usernameForPlayer } from "@/lib/server/admin";
+import { isAdminPlayer, usernameForPlayer } from "@/lib/server/admin";
 import { listFriendIds, profileForPlayerId } from "@/lib/supabase/db";
 
 const MESSAGES_KEY = "chainmate:messages:inboxes";
@@ -256,11 +256,22 @@ export async function sendDirectMessage(
   if (!text) return { ok: false, error: "Message is empty" };
   if (text.length > 2000) return { ok: false, error: "Message is too long (2000 characters max)" };
   if (fromPlayerId === toPlayerId) return { ok: false, error: "You cannot message yourself" };
-  // Friends-only DMs, enforced HERE on every send. Server-side, so a crafted
-  // POST with an arbitrary toPlayerId can never reach a stranger's inbox.
-  const allowed = await dmAllowedPeers(fromPlayerId);
-  if (!allowed.has(toPlayerId)) {
-    return { ok: false, error: "You can only message players you are friends with. Add them first, then chat." };
+  // The operator (admin) messages anyone — full rights, no friendship
+  // required. The OFFICIAL account (ChainMate support replies) carries the
+  // same authority: nobody can sign in as it, and gating its replies on its
+  // own friendship list is what bounced admin messages with "add them
+  // first, then chat". Checked BEFORE the friend gate; see dmAllowedPeers
+  // for the fail-closed reasoning behind the gate itself.
+  if (fromPlayerId === CHAINMATE_ID || (await isAdminPlayer(fromPlayerId))) {
+    // fall through to delivery
+  } else {
+    // Friends-only DMs, enforced HERE on every send. Server-side, so a
+    // crafted POST with an arbitrary toPlayerId can never reach a stranger's
+    // inbox.
+    const allowed = await dmAllowedPeers(fromPlayerId);
+    if (!allowed.has(toPlayerId)) {
+      return { ok: false, error: "You can only message players you are friends with. Add them first, then chat." };
+    }
   }
   const fromName = await displayNameFor(fromPlayerId);
   const sentAt = Date.now();
@@ -418,6 +429,12 @@ export async function replyToSupportMessage(
   if (!(await isAdminPlayer(adminPlayerId))) {
     return { ok: false, error: "Not found" };
   }
+  // The envelope is FROM the official ChainMate account, but the permission
+  // is the OPERATOR's — checked above. sendDirectMessage must never re-apply
+  // the friends gate to ChainMate itself (the old behaviour): an official
+  // reply to a player who wasn't (yet) a friend of the ChainMate account
+  // bounced with "add them first, then chat", which is exactly the report
+  // this module exists to fix.
   return sendDirectMessage(CHAINMATE_ID, toPlayerId, body);
 }
 

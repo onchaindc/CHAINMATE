@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { ArrowLeft, Loader2, MessagesSquare, Search, Send } from "lucide-react";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -241,7 +242,13 @@ export default function MessagesPage() {
   }, [inbox, peer]);
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
+    /* Scroll the THREAD viewport internally — never scrollIntoView, which
+       walks up to the nearest scrollable ancestor chain and yanks the whole
+       page (the reported "chat makes the page jump"). The thread pane is the
+       element with overflow here, so setting its scrollTop pins the newest
+       bubble into view without touching the window. */
+    const el = threadEndRef.current?.parentElement;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [thread.length, peer]);
 
   const send = async () => {
@@ -438,10 +445,13 @@ export default function MessagesPage() {
           {peer ? (
             <>
               <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+                {/* Back to the thread list. On phones this leaves the chat;
+                    on desktop it returns to the pick-a-conversation state —
+                    the back affordance the threads header had but the chat
+                    itself was missing. */}
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="lg:hidden"
                   aria-label="Back to chats"
                   onClick={() => setPeer(null)}
                 >
@@ -449,7 +459,18 @@ export default function MessagesPage() {
                 </Button>
                 <PlayerAvatar name={peer.username} avatarUrl={peerAvatar} size="md" />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{peer.username}</p>
+                  {/* The name is their profile link, matching the friends
+                      list: a chat header is where you look someone up. */}
+                  {peer.username && !peer.is_guest ? (
+                    <Link
+                      href={`/players/${encodeURIComponent(peer.username)}`}
+                      className="block truncate text-sm font-semibold underline-offset-2 hover:underline"
+                    >
+                      {peer.username}
+                    </Link>
+                  ) : (
+                    <p className="truncate text-sm font-semibold">{peer.username}</p>
+                  )}
                   {peer.rating > 0 && (
                     <p className="text-2xs text-muted-foreground">{peer.rating} rated</p>
                   )}
