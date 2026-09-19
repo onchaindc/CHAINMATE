@@ -167,6 +167,22 @@ export async function claimPayoutWithWalletTransaction(
     throw new PayoutClaimError("invalid-hash", "Transaction hash must be 64 hex characters");
   }
 
+  // A settled row must resume (or refuse a second hash) BEFORE prepare —
+  // prepare throws 'already-sent' for it, which would dead-end the client's
+  // retry instead of converging.
+  const preStore = deps.store ?? fastStorePayoutStore;
+  const pre = await preStore.get(tournamentId, targetPlayerId).catch(() => null);
+  if (pre && (pre.status === "verified" || (pre.status === "sent" && pre.payoutTxHash))) {
+    if (pre.status === "verified" || pre.payoutTxHash === txHash) {
+      return confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store: preStore });
+    }
+    throw new PayoutClaimError(
+      "already-sent",
+      "This prize already has a transaction recorded — use Check status; do not send again",
+      409,
+    );
+  }
+
   // Same preparation gates (host, completed, unsettled) — then the plan.
   const intent = await preparePayoutClaim(tournamentId, hostId, targetPlayerId);
 
@@ -178,7 +194,19 @@ export async function claimPayoutWithWalletTransaction(
     if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
     if (payout.status === "verified") return { payout, confirmations: 0 };
     if (payout.status === "sent") {
-      throw new PayoutClaimError("already-sent", "This prize already has a transaction in flight", 409);
+      // Idempotent resume: re-claiming with the SAME hash is the client's
+      // retry path (a lost response, a reload mid-confirmation) — converge
+      // on the current state instead of erroring. A DIFFERENT hash means
+      // the host may have paid twice: refuse, the first transaction stands.
+      if (payout.payoutTxHash === txHash) {
+        const fresh = await confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store });
+        return fresh;
+      }
+      throw new PayoutClaimError(
+        "already-sent",
+        "This prize already has a transaction recorded — use Check status; do not send again",
+        409,
+      );
     }
     if (payout.status === "dispatching") {
       // preparePayoutClaim already ran the read-only probe and either
@@ -335,15 +363,43 @@ export async function claimPayoutWithWalletTransaction(
     }
     const confirmations = height - blockNumber + 1;
     if (confirmations < PAYOUT_CONFIRMATIONS) {
-      throw new PayoutClaimError(
-        "insufficient-confirmations",
-        `This transaction has ${Math.max(confirmations, 0)} confirmations, ${PAYOUT_CONFIRMATIONS} required. Wait a moment and press Check status again.`,
-        409,
-      );
+      // Below the verification threshold — but the transaction has passed
+      // every identity gate (network, host sender, winner recipient, exact
+      // amount, executed) and sits ON THE CHAIN with at least one
+      // confirmation. The money has moved; refusing to record it here kept
+      // the row 'pending' with the pay button still showing, and hosts paid
+      // a SECOND time chasing a payment that was already finalising. So:
+      // commit the hash now — the durable replay guard makes any further
+      // claim with this hash impossible — mark the payout 'sent', and let
+      // confirmSentWalletPayout advance it to 'verified' at 8.
+      await txStore.insertConsumed({
+        network: intent.network,
+        txHash,
+        playerId: hostId,
+        kind: "verification", // outgoing settlements are not entries
+        tournamentId,
+        sender,
+        recipient,
+        amountLuna: amountLuna.toString(),
+        blockNumber,
+        confirmations,
+      });
+      const sent: PayoutRecord = {
+        ...payout,
+        status: "sent",
+        payoutTxHash: txHash,
+        sentAt: Date.now(),
+        failureReason: null,
+        destinationAddress: intent.recipientAddress,
+      };
+      await store.upsert(sent);
+      const { mirrorPayouts } = await import("@/lib/server/tournament-payouts");
+      await mirrorPayouts(tournamentId, [sent]).catch(() => undefined);
+      return { payout: sent, confirmations };
     }
 
-    // --- All gates passed. Consume the hash durably (replay guard) and mark
-    // the payout sent with the real hash.
+    // --- All gates passed at threshold. Consume the hash durably (replay
+    // guard) and mark the payout sent with the real hash.
     await txStore.insertConsumed({
       network: intent.network,
       txHash,

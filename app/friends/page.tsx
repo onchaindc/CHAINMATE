@@ -21,7 +21,7 @@ function FriendsContent() {
   const hostedStore = getStore("hosted") as HostedGameStore;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-14">
+    <div className="shell px-4 py-12 sm:px-6 lg:py-14">
       <BackLink href="/profile">Back to profile</BackLink>
       <div className="mt-4">
         <PageHeader

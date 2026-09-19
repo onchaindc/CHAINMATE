@@ -255,7 +255,7 @@ export function buildRpcTreasurySigner(
             throw new PayoutDispatchError(
               "rpc-unavailable",
               methodShaped
-                ? "The configured payout endpoint cannot sign transactions (it is a read-only gateway). Payouts need NIMIQ_PAYOUT_RPC_URL pointing at a node whose keystore holds the treasury key, unlocked."
+                ? "This deployment's payout endpoint can't sign transactions, so prizes are paid from the host wallet instead."
                 : "Could not reach the payout node to check the treasury wallet",
             );
           }

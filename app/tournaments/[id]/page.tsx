@@ -281,14 +281,29 @@ export default function TournamentDetailPage() {
           sent.value,
         );
         await load();
-      } catch (claimErr) {
-        // The money has MOVED at this point — the hash is shown so the host
-        // can retry the claim (Check status) without ever paying twice.
+      } catch {
+        // The money has MOVED. The server records any transaction that
+        // passes its identity gates at ≥1 confirmation — so this claim can
+        // only fail on a real network problem, never on "still confirming".
+        // Retry the SAME hash until it lands; a second send is never needed.
         setActionError(
-          `Payment sent (tx ${sent.value.slice(0, 10)}…) but verification is not finished: ${
-            claimErr instanceof Error ? claimErr.message : "claim failed"
-          }. Press “Check status” on this prize in a moment — you will NOT pay again.`,
+          `Prize sent (tx ${sent.value.slice(0, 10)}…) — still confirming. Do NOT send again: re-press the prize's action in a moment to finish verification.`,
         );
+        // Retry the claim immediately once — the common case (1–7
+        // confirmations by now) lands and the row shows "sent".
+        try {
+          await tournamentApi.payoutAction(
+            id,
+            identity.playerId,
+            "wallet-claim",
+            targetPlayerId,
+            sent.value,
+          );
+          setActionError(null);
+          await load();
+        } catch {
+          /* stays in the guiding message above; never a second payment */
+        }
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Sending the prize failed");
@@ -335,15 +350,26 @@ export default function TournamentDetailPage() {
           sent.value,
         );
         await load();
-      } catch (claimErr) {
-        // The money has MOVED — the hash is kept so "Check status" (which
-        // re-claims by the recorded hash's next confirmations read) resolves
-        // it without a second payment ever being possible.
+      } catch {
+        // The fee has MOVED back. The server records any transaction passing
+        // its identity gates at ≥1 confirmation; retry the SAME hash until
+        // the claim lands — a second send is never needed.
         setActionError(
-          `Refund sent (tx ${sent.value.slice(0, 10)}…) but verification is not finished: ${
-            claimErr instanceof Error ? claimErr.message : "claim failed"
-          }. Press “Check status” on this refund in a moment — you will NOT pay again.`,
+          `Refund sent (tx ${sent.value.slice(0, 10)}…) — still confirming. Do NOT send again: re-press the refund's action in a moment to finish verification.`,
         );
+        try {
+          await tournamentApi.payoutAction(
+            id,
+            identity.playerId,
+            "refund-claim",
+            targetPlayerId,
+            sent.value,
+          );
+          setActionError(null);
+          await load();
+        } catch {
+          /* stays in the guiding message above; never a second payment */
+        }
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Returning the fee failed");
@@ -1402,7 +1428,7 @@ function PayoutStatusPill({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     pending: { label: "pending", cls: "bg-warning/10 text-warning" },
     dispatching: { label: "sending…", cls: "bg-warning/10 text-warning" },
-    sent: { label: "sent", cls: "bg-primary/10 text-primary" },
+    sent: { label: "confirming…", cls: "bg-primary/10 text-primary" },
     verified: { label: "paid", cls: "bg-primary/10 text-primary" },
     failed: { label: "retrying", cls: "bg-destructive/10 text-destructive" },
     blocked_no_wallet: { label: "needs wallet", cls: "bg-warning/10 text-warning" },

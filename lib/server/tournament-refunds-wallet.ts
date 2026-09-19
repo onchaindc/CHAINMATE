@@ -179,9 +179,15 @@ export async function claimRefundWithWalletTransaction(
     if (!refund) throw new RefundClaimError("no-refund", "No refund obligation for that player", 404);
     if (refund.status === "verified") return { refund, confirmations: 0 };
     if (refund.status === "dispatched") {
+      // Idempotent resume with the SAME hash (client retry, lost response);
+      // a different hash means a second send may exist — the first stands.
+      if (refund.refundTxHash === txHash) {
+        const fresh = await confirmDispatchedRefund(tournamentId, hostId, targetPlayerId);
+        return fresh;
+      }
       throw new RefundClaimError(
         "refund-in-flight",
-        "A refund transaction is already recorded — use Check status",
+        "A refund transaction is already recorded — use Check status; do not send again",
         409,
       );
     }
@@ -323,11 +329,33 @@ export async function claimRefundWithWalletTransaction(
     }
     const confirmations = height - blockNumber + 1;
     if (confirmations < REFUND_CONFIRMATIONS) {
-      throw new RefundClaimError(
-        "insufficient-confirmations",
-        `This transaction has ${Math.max(confirmations, 0)} confirmations, ${REFUND_CONFIRMATIONS} required. Wait a moment and press Check status again.`,
-        409,
-      );
+      // Below the verification threshold — but the identity gates all passed
+      // and the return is ON THE CHAIN with at least one confirmation. The
+      // fee has left the treasury; refusing to record it here kept the row
+      // 'owed' with the return button still showing, inviting a second
+      // payment. Commit the hash now (durable replay guard — this hash can
+      // never settle another refund) and let the confirmations sweep mark
+      // it 'verified' at threshold.
+      await txStore.insertConsumed({
+        network: intent.network,
+        txHash,
+        playerId: hostId,
+        kind: "refund",
+        tournamentId,
+        sender,
+        recipient,
+        amountLuna: amountLuna.toString(),
+        blockNumber,
+        confirmations,
+      });
+      const dispatched: RefundRecord = {
+        ...refund,
+        status: "dispatched",
+        refundTxHash: txHash,
+        lastError: null,
+      };
+      await persistRefund(tournamentId, dispatched);
+      return { refund: dispatched, confirmations };
     }
 
     // --- All gates passed. Consume the hash durably and record the refund.

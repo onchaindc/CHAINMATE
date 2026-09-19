@@ -216,6 +216,7 @@ before(async () => {
     "acct_wd1", "acct_wd2", "acct_wd3",
     "acct_rec1", "acct_rec2",
     "acct_stuck_payee", "acct_refund_me", "acct_refund_me2", "acct_delete_guard",
+    "acct_lowconf_w",
   ];
   for (const p of allPlayers) {
     await nimiqStore.setBindingForPlayer(p, {
@@ -754,6 +755,119 @@ test("a legacy stuck 'dispatching' prize is released and payable from the host w
     assert.equal(result.payout.payoutTxHash, prizeHash);
     const final = await store0.get(doc.id, payee);
     assert.equal(final?.status, "sent", "the prize is settled, no longer stuck");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.NIMIQ_RPC_URL;
+  }
+});
+
+/**
+ * A prize transaction with 1–7 confirmations must be RECORDED, not refused.
+ * The old behaviour threw 'insufficient confirmations' and left the row
+ * 'pending' with the pay button showing — hosts paid a second time chasing
+ * a transaction that was already finalising on-chain. Now the claim commits
+ * the hash (replay guard) at ≥1 confirmation and flips the row to 'sent';
+ * re-claiming the SAME hash resumes (idempotent) instead of erroring.
+ */
+test("a prize claim with 1 confirmation commits as sent — no second payment path", async () => {
+  const doc = await newTournament({
+    format: "arena",
+    maxPlayers: 4,
+    entryFeeLuna: FEE_LUNA,
+    prizePreset: "winner",
+  });
+  const [w] = ["acct_lowconf_w"];
+  // Host joins and pays too: a host-driven start refuses a paid event with
+  // unpaid entries.
+  await openAndJoin(doc.id, [HOST, w]);
+  await payEntry(doc.id, HOST);
+  await payEntry(doc.id, w);
+  const started = await engine.transitionTournament(doc.id, HOST, "in_progress");
+  assert.ok(started.ok, started.ok ? "" : started.error);
+  // Complete directly: the purse is planned on completion regardless of the
+  // format's game cadence.
+  const completed = await engine.transitionTournament(doc.id, HOST, "completed");
+  assert.ok(completed.ok, completed.ok ? "" : completed.error);
+  const finished = await engineDoc(doc.id);
+  assert.equal(finished.status, "completed");
+  const store0 = await import("@/lib/server/tournament-payouts");
+  const rows = await store0.listTournamentPayouts(doc.id);
+  assert.ok(rows.length > 0, "a purse was planned");
+  const payee = rows[0].playerId;
+  const prize = BigInt(rows[0].amountLuna);
+
+  const walletMod = await import("@/lib/server/tournament-payouts-wallet");
+  process.env.NIMIQ_RPC_URL = "http://127.0.0.1:1/rpc-mock";
+  seq += 1;
+  const earlyHash = `d${seq.toString().padStart(63, "0")}`;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const methodName = (() => {
+      try {
+        return String(JSON.parse(String(init?.body ?? "{}"))?.method ?? "");
+      } catch {
+        return "";
+      }
+    })();
+    if (methodName === "getBlockNumber") {
+      // Transaction mined at 995, tip at 995 → exactly 1 confirmation.
+      return new Response(JSON.stringify({ result: 995 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (methodName === "getTransactionByHash") {
+      return new Response(
+        JSON.stringify({
+          result: {
+            hash: earlyHash,
+            from: walletFor(HOST),
+            to: walletFor(payee),
+            value: prize.toString(),
+            blockNumber: 995,
+            executionResult: true,
+            networkId: 5,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return realFetch(input as never, init);
+  }) as typeof fetch;
+  const txStore = memoryTxStore();
+  try {
+    // 1 confirmation — well below the 8-confirmation verification gate.
+    const result = await walletMod.claimPayoutWithWalletTransaction(
+      doc.id,
+      HOST,
+      payee,
+      earlyHash,
+      { txStore },
+    );
+    assert.equal(result.payout.status, "sent", "the claim commits at 1 confirmation");
+    assert.equal(result.payout.payoutTxHash, earlyHash);
+    const settled = await store0.fastStorePayoutStore.get(doc.id, payee);
+    assert.equal(settled?.status, "sent", "the row is settled — pay button gone");
+
+    // Re-claiming the SAME hash is an idempotent resume, not an error: the
+    // client retry path must converge instead of telling the host to pay.
+    const again = await walletMod.claimPayoutWithWalletTransaction(
+      doc.id,
+      HOST,
+      payee,
+      earlyHash,
+      { txStore },
+    );
+    assert.ok(again.payout, "same-hash resume succeeds");
+
+    // A DIFFERENT hash for the same prize is refused — a second send is
+    // suspected, and the first transaction stands.
+    seq += 1;
+    const secondHash = `e${seq.toString().padStart(63, "0")}`;
+    await assert.rejects(
+      walletMod.claimPayoutWithWalletTransaction(doc.id, HOST, payee, secondHash, { txStore }),
+      /already has a transaction recorded/,
+    );
   } finally {
     globalThis.fetch = realFetch;
     delete process.env.NIMIQ_RPC_URL;

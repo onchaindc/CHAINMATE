@@ -66,7 +66,7 @@ export default function LeaderboardPage() {
   }, []);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+    <div className="shell px-4 py-12 sm:px-6 lg:py-16">
       <PageHeader
         eyebrow="Rankings"
         title="Leaderboard"

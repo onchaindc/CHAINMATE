@@ -157,6 +157,21 @@
     text-wrap: balance;
   }
 
+  /* App content width. Pages put their root on .shell instead of a capped
+     max-width: full width with normal padding on mobile, and about two
+     thirds of the viewport on desktop — wide screens stop wasting the
+     margins. The navbar and footer sit on the same container so every
+     surface lines up. */
+  .shell {
+    margin-inline: auto;
+    width: 100%;
+  }
+  @media (min-width: 1024px) {
+    .shell {
+      width: 66%;
+    }
+  }
+
   /* Subtle, theme-aware scrollbars */
   * {
     scrollbar-width: thin;
