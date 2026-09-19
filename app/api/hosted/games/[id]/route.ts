@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
   abortHostedGame,
+  arriveHostedGame,
   getHostedGame,
   joinHostedGame,
   offerDrawHostedGame,
@@ -65,6 +66,7 @@ interface ActionBody {
     | "abort"
     | "rematch"
     | "timeout"
+    | "arrive"
     | "summary";
   playerId?: string;
   move?: { from: string; to: string; promotion?: string };
@@ -132,6 +134,11 @@ export async function POST(req: NextRequest, { params }: Params) {
             return g;
           }),
         });
+      case "arrive":
+        // Check in as present for a tournament board. Server-side only:
+        // presence decides when the clock starts, so it can never be faked
+        // by writing arrivedAt into a poll response.
+        return NextResponse.json({ game: await arriveHostedGame(id, playerId) });
       case "summary":
         return NextResponse.json({ game: await summarizeHostedGame(id) });
       default:

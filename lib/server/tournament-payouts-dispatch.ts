@@ -78,6 +78,60 @@ const VSH_STALENESS_BLOCKS = 7_200; // 120 validity-window batches × 60 blocks 
 const PAYOUT_FEE_LUNA = 0n;
 
 /* ------------------------------------------------------------------ */
+/* Read-only endpoint probe                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Positive evidence that the configured payout endpoint can NEVER sign, so
+ * every stuck 'dispatching' row is provably dead and can be released to the
+ * host-wallet payment path without any double-payment risk:
+ *
+ *  - no/invalid signer configuration, or
+ *  - the endpoint does not implement the wallet dispatcher (a read-only
+ *    gateway such as api.nimiqscan.com has no keystore, so sendBasicTransaction
+ *    is as unavailable as isAccountUnlocked).
+ *
+ * Soundness of the release this gates: sendPayout checks the unlock state
+ * BEFORE any broadcast, so on an endpoint that cannot answer the keystore
+ * method, no broadcast ever happened — a WAL row written against it holds no
+ * in-flight transaction. The probe result is cached (positive only); a
+ * transport failure is NOT evidence and leaves the verdict uncached.
+ */
+let cannotSignVerdict: boolean | null = null;
+
+export async function payoutEndpointCannotSign(): Promise<boolean> {
+  if (cannotSignVerdict !== null) return cannotSignVerdict;
+  try {
+    const config = getNimiqPayoutConfig();
+    if (!config) {
+      cannotSignVerdict = true; // no signer configured at all
+      return true;
+    }
+    try {
+      await isAccountUnlocked(config.treasuryAddress, {
+        url: config.url,
+        basicAuth: config.basicAuth,
+        apiKey: config.apiKey,
+        timeoutMs: 8_000,
+      });
+      // A real node answered (unlocked or not): it has a keystore.
+      cannotSignVerdict = false;
+    } catch (err) {
+      if (
+        err instanceof NimiqRpcError &&
+        (String(err.code) === "-32601" || /method not/i.test(err.message))
+      ) {
+        cannotSignVerdict = true; // keystore methods absent → read-only gateway
+      }
+      // Any other failure (timeout, HTTP, DNS) proves nothing — stay undecided.
+    }
+  } catch {
+    cannotSignVerdict = true; // NimiqPayoutConfigError = misconfigured signer
+  }
+  return cannotSignVerdict ?? false;
+}
+
+/* ------------------------------------------------------------------ */
 /* Errors                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -201,7 +255,7 @@ export function buildRpcTreasurySigner(
             throw new PayoutDispatchError(
               "rpc-unavailable",
               methodShaped
-                ? "The configured payout endpoint cannot sign transactions (it is a read-only gateway). Payouts need NIMIQ_PAYOUT_RPC_URL pointing at a node whose keystore holds the treasury key, unlocked."
+                ? "This deployment's payout endpoint can't sign transactions, so prizes are paid from the host wallet instead."
                 : "Could not reach the payout node to check the treasury wallet",
             );
           }

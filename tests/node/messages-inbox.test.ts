@@ -27,6 +27,8 @@ type MessageEnvelope = MessagesModule.MessageEnvelope;
 
 let storage: typeof StorageModule;
 let messages: typeof MessagesModule;
+let admin: typeof import("@/lib/server/admin");
+let notify: typeof import("@/lib/server/notify");
 
 const INBOX_KEY = "chainmate:messages:inboxes";
 
@@ -50,6 +52,8 @@ before(async () => {
   });
   storage = await import("@/lib/server/storage");
   messages = await import("@/lib/server/messages");
+  admin = await import("@/lib/server/admin");
+  notify = await import("@/lib/server/notify");
 });
 
 /** Seed one player's inbox directly (the push path needs real friendships). */
@@ -165,6 +169,53 @@ test("markInboxRead clears unread without touching the messages", async () => {
   for (const envelope of inbox) {
     assert.ok(envelope.readAt !== null, "every envelope must carry a read stamp");
   }
+});
+
+test("the operator DMs anyone without friendship — full admin rights", async () => {
+  const ADMIN = "acct_admin_boss";
+  const STRANGER = "acct_stranger_1";
+  // Grant the seat the same way the dashboard does (first account through
+  // passcode setup). No Supabase here, so the friend gate would fail CLOSED
+  // for everyone — except the operator, which is exactly the contract.
+  const claimed = await admin.claimOperatorSeat(ADMIN);
+  assert.equal(claimed, true);
+  assert.equal(await admin.isAdminPlayer(ADMIN), true);
+
+  const res = await messages.sendDirectMessage(ADMIN, STRANGER, "Official hello");
+  assert.deepEqual(res, { ok: true });
+
+  // Delivered for real: the stranger's inbox holds the DM, and the official
+  // account never had a friendship row with anyone.
+  const inbox = await messages.inboxFor(STRANGER);
+  assert.ok(
+    inbox.some((m) => m.kind === "dm" && m.fromPlayerId === ADMIN && m.body === "Official hello"),
+  );
+
+  // A non-admin in the same position is still refused (the gate holds).
+  const Civ = "acct_civilian_1";
+  const denied = await messages.sendDirectMessage(Civ, STRANGER, "hey");
+  assert.equal(denied.ok, false);
+});
+
+test("the dashboard reply path delivers as ChainMate without any friendship", async () => {
+  const ADMIN = "acct_admin_boss"; // seat claimed by the previous test
+  const PLAYER = "acct_player_nofriend";
+  // Exactly what app/admin's Message button calls: reply → official account.
+  const res = await messages.replyToSupportMessage(ADMIN, PLAYER, "Moderation note");
+  assert.deepEqual(res, { ok: true });
+  const inbox = await messages.inboxFor(PLAYER);
+  assert.ok(
+    inbox.some((m) => m.kind === "dm" && m.body === "Moderation note"),
+    "the official reply never reached the player's inbox",
+  );
+
+  // The bell must ring: an official DM the player cannot see coming is the
+  // whole reason the message event exists. Ordinary player DMs stay silent.
+  const events = await notify.eventsFor(PLAYER);
+  const bellEvent = events.find((e) => e.type === "message");
+  assert.ok(bellEvent, "an official DM raised no notification event");
+  assert.equal(bellEvent.actorPlayerId, "chainmate");
+  assert.ok(events.filter((e) => e.type === "message").length === 1, "the event fired twice");
 });
 
 test("DMs fail closed without a real friendship (no Supabase)", async () => {

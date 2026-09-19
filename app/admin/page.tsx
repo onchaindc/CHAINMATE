@@ -26,6 +26,7 @@ import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { StatTiles } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
+import { formatNim } from "@/lib/nimiq/format";
 
 /**
  * ChainMate admin dashboard.
@@ -92,6 +93,23 @@ interface SupportMessage {
   readAt: number | null;
 }
 
+interface AdminPayoutLine {
+  playerId: string;
+  playerName: string | null;
+  payoutRank: number;
+  shareBps: number;
+  amountLuna: string;
+  status: string;
+  destinationAddress: string | null;
+}
+
+interface AdminRefundLine {
+  playerId: string;
+  playerName: string | null;
+  amountLuna: string;
+  status: string;
+}
+
 interface AdminTournamentRow {
   id: string;
   name: string;
@@ -102,6 +120,10 @@ interface AdminTournamentRow {
   paidEntries: number;
   prizePoolNim: string | null;
   entryFeeNim: string | null;
+  payoutStatus: string;
+  prizePreset: string | null;
+  payouts: AdminPayoutLine[];
+  refunds: AdminRefundLine[];
 }
 
 async function adminApi<T>(
@@ -232,7 +254,14 @@ export default function AdminPage() {
     return <PasscodeUnlock playerId={playerId} onUnlock={unlock} />;
   }
 
-  return <Dashboard playerId={playerId} passcodeToken={token} onLock={relock} />;
+  return (
+    <Dashboard
+      playerId={playerId}
+      passcodeToken={token}
+      onLock={relock}
+      onUnlock={unlock}
+    />
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -387,10 +416,14 @@ function Dashboard({
   playerId,
   passcodeToken,
   onLock,
+  /** Re-open a session without leaving the page when the server says the
+      dashboard locked (idle expiry, or a session lost between instances). */
+  onUnlock,
 }: {
   playerId: string;
   passcodeToken: string;
   onLock: () => void;
+  onUnlock: (token: string) => void;
 }) {
   const [bans, setBans] = useState<BanRecord[] | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
@@ -420,6 +453,7 @@ function Dashboard({
       const bansData = await adminApi<{ bans: BanRecord[]; names: Record<string, string> }>(
         "/api/admin/bans",
         playerId,
+        { headers: { "X-Admin-Session": passcodeToken } },
       );
       setBans(bansData.bans);
       setNames((prev) => ({ ...prev, ...bansData.names }));
@@ -432,6 +466,7 @@ function Dashboard({
       const accountsData = await adminApi<{ accounts: AdminAccount[]; totalUsers: number }>(
         "/api/admin/accounts",
         playerId,
+        { headers: { "X-Admin-Session": passcodeToken } },
       );
       setAccounts(accountsData.accounts);
       setTotalUsers(accountsData.totalUsers);
@@ -455,6 +490,7 @@ function Dashboard({
       const tourData = await adminApi<{ tournaments: AdminTournamentRow[] }>(
         "/api/admin/tournaments",
         playerId,
+        { headers: { "X-Admin-Session": passcodeToken } },
       );
       setTournaments(tourData.tournaments);
     } catch {
@@ -588,22 +624,40 @@ function Dashboard({
         }
       />
 
-      {/* Headline stat */}
+      {/* Headline stat. "…" until the first successful load — a failed or
+          still-loading request must not read as a confident zero. */}
       <StatTiles
         layout="three"
         className="animate-fade-in-up mt-6"
         tiles={[
-          { label: "Total users", value: totalUsers === null ? "0" : String(totalUsers) },
+          { label: "Total users", value: totalUsers === null ? "…" : String(totalUsers) },
           {
             label: "Active restrictions",
-            value: bans === null ? "0" : String(bans.length),
+            value: bans === null ? "…" : String(bans.length),
           },
           {
             label: "Support messages",
-            value: support === null ? "0" : String(support.filter((m) => m.readAt === null).length),
+            value:
+              support === null
+                ? "…"
+                : String(support.filter((m) => m.readAt === null).length),
           },
         ]}
       />
+
+      {/* The lock message has its own slot: it means "re-enter your code",
+          which is actionable, not a load failure. Anything else the periodic
+          refresh surfaces is an error, and shows as one. The dashboard
+          content HIDES while locked — rendering the unlock card inside the
+          rendered page stacked both on top of each other (the "leaking
+          over themselves" screenshot). */}
+      {error && error.includes("Dashboard locked") ? (
+        <div className="mt-4">
+          <PasscodeUnlock playerId={playerId} onUnlock={onUnlock} />
+        </div>
+      ) : (
+        <>
+          {error && <ErrorNote message={error} className="mt-4" />}
 
       {notice && (
         <p className="animate-fade-in-up mt-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground/90">
@@ -980,6 +1034,15 @@ function Dashboard({
                         </Button>
                       )}
                     </div>
+                    {(t.payouts.length > 0 || t.refunds.length > 0) && (
+                      <PrizeSettlement
+                        row={t}
+                        playerId={playerId}
+                        passcodeToken={passcodeToken}
+                        busy={busy}
+                        onDone={() => void load()}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -1106,6 +1169,333 @@ function Dashboard({
         {pendingTourAction?.action === "delete" &&
           "The tournament is removed entirely. Deletion is refused while players have paid entries: resolve refunds first."}
       </ConfirmDialog>
+        </>
+      )}
+    </div>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Prize & refund settlement — ChainMate is the sole distributor      */
+/* ------------------------------------------------------------------ */
+
+/** Short label for a payout/refund row status, in the console's quiet voice. */
+function settlementPill(status: string): { label: string; cls: string } {
+  const map: Record<string, { label: string; cls: string }> = {
+    pending: { label: "pending", cls: "bg-warning/10 text-warning" },
+    dispatching: { label: "sending…", cls: "bg-warning/10 text-warning" },
+    sent: { label: "confirming…", cls: "bg-primary/10 text-primary" },
+    verified: { label: "paid", cls: "bg-primary/10 text-primary" },
+    failed: { label: "retrying", cls: "bg-destructive/10 text-destructive" },
+    blocked_no_wallet: { label: "needs wallet", cls: "bg-warning/10 text-warning" },
+    // refunds:
+    owed: { label: "refund queued", cls: "bg-warning/10 text-warning" },
+    dispatched: { label: "returning", cls: "bg-primary/10 text-primary" },
+  };
+  return map[status] ?? { label: status, cls: "bg-secondary/50 text-muted-foreground" };
+}
+
+/** One prize row inside the settlement console (incl. address override). */
+function PayoutRow({
+  line,
+  working,
+  busy,
+  onPay,
+  onCheck,
+  onDestination,
+}: {
+  line: AdminPayoutLine;
+  working: string | null;
+  busy: boolean;
+  onPay: () => void;
+  onCheck: () => void;
+  onDestination: (address: string) => void;
+}) {
+  const pill = settlementPill(line.status);
+  const settled = line.status === "verified";
+  const [editing, setEditing] = useState(false);
+  const [address, setAddress] = useState("");
+
+  const actionable = !settled && !busy && working === null;
+
+  return (
+    <li className="flex flex-col gap-2 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="w-8 font-mono tabular-nums text-muted-foreground">{line.payoutRank}</span>
+        <span className="min-w-0 flex-1 truncate font-medium">{line.playerName ?? line.playerId}</span>
+        <span className="font-mono tabular-nums text-muted-foreground">{line.shareBps / 100}%</span>
+        <span className="font-mono tabular-nums font-semibold text-primary">{formatNim(BigInt(line.amountLuna))} NIM</span>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>
+          {pill.label}
+        </span>
+        {!settled && (line.status === "pending" || line.status === "failed" || line.status === "blocked_no_wallet") && (
+          <Button size="sm" disabled={!actionable} onClick={onPay}>
+            {working?.includes(line.playerId) ? "confirming…" : "pay"}
+          </Button>
+        )}
+        {!settled && (line.status === "sent" || line.status === "dispatching") && (
+          <Button size="sm" variant="outline" disabled={!actionable} onClick={onCheck}>
+            check status
+          </Button>
+        )}
+        {!settled && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!actionable}
+            onClick={() => {
+              setEditing((e) => !e);
+              setAddress("");
+            }}
+          >
+            address
+          </Button>
+        )}
+      </div>
+      {editing && (
+        <div className="flex items-center gap-1.5 pl-10">
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="NQ… destination address"
+            className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+          />
+          <Button
+            size="sm"
+            disabled={!address.trim() || working !== null}
+            onClick={() => {
+              onDestination(address.trim());
+              setEditing(false);
+            }}
+          >
+            save
+          </Button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The per-tournament settlement console, embedded under each paid event in
+ * the admin table: per-rank prize rows and refund obligations, each with
+ * pay/check-status (and an address override for prizes whose winner cannot
+ * be resolved). Payments go out through the operator's own Nimiq Pay wallet
+ * exactly like the host path did — the difference is WHO is accountable:
+ * ChainMate itself, in the ChainMate console.
+ */
+function PrizeSettlement({
+  row,
+  playerId,
+  passcodeToken,
+  busy,
+  onDone,
+}: {
+  row: AdminTournamentRow;
+  playerId: string;
+  passcodeToken: string;
+  busy: boolean;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  /** POST a payout action as the admin; passcode session rides the header. */
+  const payoutAction = async (
+    action: string,
+    targetPlayerId: string,
+    txHash?: string,
+    destinationAddress?: string,
+  ): Promise<Record<string, unknown>> => {
+    const token = getIdentityToken();
+    const res = await fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "X-Admin-Session": passcodeToken,
+      },
+      body: JSON.stringify({ playerId, action, targetPlayerId, txHash, destinationAddress }),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
+    if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
+    return data;
+  };
+
+  /** Shared wallet send: prepare → Nimiq Pay sheet → claim. */
+  const walletSend = async (
+    prepareAction: "wallet-prepare" | "refund-prepare",
+    claimAction: "wallet-claim" | "refund-claim",
+    targetPlayerId: string,
+    moved: string,
+  ) => {
+    const prep = (await payoutAction(prepareAction, targetPlayerId)) as {
+      intent: { recipientAddress: string; amountLuna: string };
+    };
+    const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
+    const { canonicalAddress } = await import("@/lib/nimiq/address");
+    const connected = await connectNimiq();
+    if (!connected.ok) throw new Error(connected.error.message);
+    const sent = await sendNimiqBasicTransaction(connected.value, {
+      recipient: canonicalAddress(prep.intent.recipientAddress),
+      value: BigInt(prep.intent.amountLuna),
+    });
+    if (!sent.ok) throw new Error(sent.error.message);
+    try {
+      await payoutAction(claimAction, targetPlayerId, sent.value);
+    } catch {
+      // The money has MOVED; the same hash re-claims once confirmations land.
+      setNotice(`${moved} (tx ${sent.value.slice(0, 10)}…) — still confirming. Re-press check status in a moment; do NOT send again.`);
+      try {
+        await payoutAction(claimAction, targetPlayerId, sent.value);
+        setNotice(null);
+      } catch {
+        /* guiding notice stays; never a second payment */
+      }
+    }
+    onDone();
+  };
+
+  const payPrize = async (targetPlayerId: string) => {
+    setWorking(`prize:${targetPlayerId}`);
+    setError(null);
+    setNotice(null);
+    try {
+      await walletSend("wallet-prepare", "wallet-claim", targetPlayerId, "Prize sent");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sending the prize failed");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const payRefund = async (targetPlayerId: string) => {
+    setWorking(`refund:${targetPlayerId}`);
+    setError(null);
+    setNotice(null);
+    try {
+      await walletSend("refund-prepare", "refund-claim", targetPlayerId, "Refund sent");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Returning the fee failed");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const checkStatus = async (action: "wallet-confirm" | "refund-confirm", targetPlayerId: string) => {
+    setWorking(`check:${targetPlayerId}`);
+    setError(null);
+    try {
+      await payoutAction(action, targetPlayerId);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Status check failed");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const setDestination = async (targetPlayerId: string, addr: string) => {
+    setWorking(`dest:${targetPlayerId}`);
+    setError(null);
+    try {
+      await payoutAction("wallet-destination", targetPlayerId, undefined, addr);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not set the address");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const poolLabel = row.prizePoolNim ? `${row.prizePoolNim} NIM` : "—";
+  const unsettled =
+    row.payouts.filter((p) => p.status !== "verified").length +
+    row.refunds.filter((r) => r.status !== "verified").length;
+
+  return (
+    <div className="w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-secondary/30 px-3 py-2 text-left text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+      >
+        Prizes &amp; refunds — pool {poolLabel}
+        {unsettled > 0 ? (
+          <span className="ml-auto font-mono normal-case tracking-normal text-warning">
+            {unsettled} unsettled
+          </span>
+        ) : (
+          <span className="ml-auto font-mono normal-case tracking-normal text-positive">
+            all settled
+          </span>
+        )}
+        <span aria-hidden className="text-muted-foreground">{open ? "▾" : "▸"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-2 space-y-2 rounded-md border border-border/60 p-3">
+          {error && <ErrorNote message={error} className="mb-2" />}
+          {notice && (
+            <p className="mb-2 rounded-md bg-secondary/40 px-3 py-2 text-2xs text-muted-foreground">
+              {notice}
+            </p>
+          )}
+
+          {row.payouts.length > 0 && (
+            <ul className="divide-y divide-border/50">
+              {row.payouts.map((p) => (
+                <PayoutRow
+                  key={p.playerId}
+                  line={p}
+                  working={working}
+                  busy={busy}
+                  onPay={() => void payPrize(p.playerId)}
+                  onCheck={() => void checkStatus("wallet-confirm", p.playerId)}
+                  onDestination={(a) => void setDestination(p.playerId, a)}
+                />
+              ))}
+            </ul>
+          )}
+
+          {row.refunds.length > 0 && (
+            <ul className="divide-y divide-border/50">
+              {row.refunds.map((r) => {
+                const pill = settlementPill(r.status);
+                const settled = r.status === "verified";
+                const actionable = !settled && !busy && working === null;
+                return (
+                  <li key={r.playerId} className="flex flex-wrap items-center gap-2 py-2 text-xs">
+                    <span className="w-8 font-mono tabular-nums text-muted-foreground">R</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">
+                      {r.playerName ?? r.playerId}
+                    </span>
+                    <span className="font-mono tabular-nums text-foreground/80">
+                      {formatNim(BigInt(r.amountLuna))} NIM
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>
+                      {pill.label}
+                    </span>
+                    {!settled && (r.status === "owed" || r.status === "failed") && (
+                      <Button size="sm" variant="outline" disabled={!actionable} onClick={() => void payRefund(r.playerId)}>
+                        {working === `refund:${r.playerId}` ? "confirming…" : "return fee"}
+                      </Button>
+                    )}
+                    {!settled && r.status === "dispatched" && (
+                      <Button size="sm" variant="ghost" disabled={!actionable} onClick={() => void checkStatus("refund-confirm", r.playerId)}>
+                        check status
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

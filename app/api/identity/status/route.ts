@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
   }
 
   const profile = await profileForUserId(data.user.id);
+
   if (!profile) {
     // Authenticated but never linked (e.g. the OTP was verified and the
     // guest → account upgrade hasn't finished yet). The app keeps playing
@@ -71,6 +72,35 @@ export async function GET(req: NextRequest) {
       username: null,
       playerId: null,
     });
+  }
+
+  /* Self-heal: a profile row whose picture vanished while the upload itself
+     still exists in storage (a profile-row rebuild during the guest →
+     account upgrade, a failed update, or any path that wrote avatar_url
+     back to null). The object is the source of truth — if `<player_id>.webp`
+     is in the bucket and the row points nowhere, re-point it at the same
+     public URL. One cheap existence check per sign-in, only when the row is
+     actually missing the URL. */
+  if (!profile.avatar_url) {
+    try {
+      const path = `${profile.player_id}.webp`;
+      const { data: objs } = await admin!.storage.from("avatars").list("", {
+        search: path,
+      });
+      if (objs && objs.some((o) => o.name === path)) {
+        const { data: pub } = admin!.storage.from("avatars").getPublicUrl(path);
+        const restored = `${pub.publicUrl}?v=${Date.now()}`;
+        const { error: healError } = await admin!
+          .from("profiles")
+          .update({ avatar_url: restored })
+          .eq("player_id", profile.player_id);
+        if (!healError) {
+          profile.avatar_url = restored;
+        }
+      }
+    } catch {
+      // Storage hiccup: serve the row as-is rather than failing sign-in.
+    }
   }
 
   return NextResponse.json({

@@ -227,7 +227,7 @@ export function SiteNav() {
                         {label}
                         {dmBadge !== null && (
                           <span
-                            className="flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1.5 font-mono text-2xs font-bold text-white"
+                            className="flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1.5 font-mono text-2xs font-bold text-white ring-1 ring-background/60"
                             aria-label={`${dmBadge} unread messages`}
                           >
                             {dmBadge > 9 ? "9+" : dmBadge}

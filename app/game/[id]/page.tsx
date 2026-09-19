@@ -15,7 +15,6 @@ import {
   RefreshCw,
   SkipBack,
   SkipForward,
-  Trophy,
   Users,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -42,13 +41,6 @@ import { describeResult } from "@/lib/game-result";
 import { AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type MobileTab = "moves" | "info";
-
-const MOBILE_TABS: { id: MobileTab; label: string }[] = [
-  { id: "moves", label: "Move history" },
-  { id: "info", label: "Match info" },
-];
-
 export default function GamePage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -66,6 +58,7 @@ export default function GamePage() {
     turnSide,
     myTurn,
     winnerSide,
+    optimistic,
     join,
     submitMove,
     submitAiMove,
@@ -75,6 +68,7 @@ export default function GamePage() {
     abort,
     rematch,
     resolveTimeout,
+    arrive,
     generateSummary,
   } = useGame(id);
 
@@ -211,14 +205,6 @@ export default function GamePage() {
     };
   }, [game?.id, game?.status, gameOver]); // eslint-disable-line react-hooks/exhaustive-deps -- key narrows the trigger
 
-  /* ------------------------------------------------------------------ */
-  /* Mobile: the match console shows one section at a time.              */
-  /* ------------------------------------------------------------------ */
-  const [mobileTab, setMobileTab] = useState<MobileTab>("moves");
-  useEffect(() => {
-    setMobileTab("moves");
-  }, [id]);
-
   /* Board control: flip the board (useful for spectators and for reviewing
      the game from the opponent's point of view). Local view state only. */
   const [flipped, setFlipped] = useState(false);
@@ -229,16 +215,31 @@ export default function GamePage() {
   /* Board colours and piece artwork, remembered across sessions per player. */
   const { boardTheme, pieceSet, setBoardTheme, setPieceSet } = useBoardPrefs();
 
+  /* The board shows the position at `ply` while REVIEWING a live game too —
+     that is the whole point of the Back button: a player who missed the
+     opponent's move rewinds to see it. Only replay mode (finished game) and
+     live review share this one derivation, so the rewind can never be a
+     no-op. */
   const boardFen = useMemo(() => {
-    if (replayMode && game && ply !== null) return fenAfterPly(game.moves, ply);
+    // Optimistic echo first: while the server round-trip is in flight the
+    // board ALREADY shows our move landed — the piece must never sit on its
+    // original square waiting for the network (that was the perceived lag).
+    if (optimistic && !reviewing) return optimistic.fen;
+    if (game && ply !== null && ply < game.moves.length) return fenAfterPly(game.moves, ply);
     return game?.fen ?? null;
-  }, [replayMode, game, ply]);
+  }, [optimistic, game, ply, reviewing]);
 
-  const replayLastMove = useMemo(() => {
-    if (!replayMode || !game || !ply) return null;
+  /* The last-move highlight follows the position on screen, live or rewound
+     (or the optimistic echo, which carries its own from/to). */
+  const shownLastMove = useMemo(() => {
+    if (optimistic && !reviewing) return optimistic.lastMove;
+    if (!game || ply === null || ply === 0 || ply > game.moves.length) {
+      const last = game?.moves[game.moves.length - 1];
+      return last ? { from: last.from, to: last.to } : null;
+    }
     const m = game.moves[ply - 1];
     return m ? { from: m.from, to: m.to } : null;
-  }, [replayMode, game, ply]);
+  }, [optimistic, game, ply, reviewing]);
 
   /* ------------------------------------------------------------------ */
   /* Real player data: ratings for both sides + this game's deltas.      */
@@ -295,11 +296,22 @@ export default function GamePage() {
      defeat the memo and bring the drag hitching back. These two hooks sit
      ABOVE the loading/not-found early returns: a hook after a conditional
      return breaks React's hook ordering on the loading→loaded transition
-     and fails the production build outright. */
+     and fails the production build outright.
+
+     The deps are the MOVE'S OWN VALUES, not `game`: the hosted store polls
+     every 2s and each poll yields a new `game` object, so depending on the
+     game object rebuilt `lastMove` — and re-rendered the whole board — on
+     every poll even when nothing changed. That was the tournament lag:
+     each re-render re-parses the position (new Chess(fen) three or four
+     times) right as a player is picking a piece. With primitive deps the
+     board re-renders only when the position or the last move really
+     changes. */
   const lastMove = useMemo(() => {
     const last = game?.moves[game.moves.length - 1];
     return last ? { from: last.from, to: last.to } : null;
-  }, [game]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- primitive deps by design; see note above
+  }, [game?.moves.length, game?.moves.at(-1)?.from, game?.moves.at(-1)?.to]);
+  void lastMove; // superseded by shownLastMove above — kept for the memo pattern note
 
   const handleBoardMove = useCallback(
     (from: string, to: string, promotion?: string) => {
@@ -321,11 +333,31 @@ export default function GamePage() {
     void resolveTimeout();
   }, [flagFallen, resolveTimeout]);
 
+  /* ------------------------------------------------------------------ */
+  /* Tournament presence: check in the moment a live tournament board is */
+  /* open. The server starts the clock only when BOTH players have       */
+  /* arrived (or the absence grace expires), so nobody sits down to a    */
+  /* half-drained clock. Casual games are unaffected — the server no-ops */
+  /* for them.                                                           */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!game || game.status !== "active" || !game.opponent || !mySide) return;
+    if (game.clockStartedAt) return;
+    void arrive();
+  }, [game?.id, game?.status, game?.clockStartedAt, mySide, arrive]);
+
+  /** The clock is gated on presence and at least one player is not in yet. */
+  const clockWaiting =
+    game?.status === "active" &&
+    Boolean(game?.opponent) &&
+    !game?.clockStartedAt &&
+    game?.arrivedAt !== undefined;
+
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 lg:py-5">
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="mx-auto w-full max-w-[640px] space-y-2.5 lg:max-w-[min(100%,80rem,max(22rem,calc(100dvh-var(--nav-h)-var(--board-chrome))))]">
+      <div className="shell flex flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="mx-auto w-full space-y-2.5">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="aspect-square w-full" />
             <Skeleton className="h-14 w-full" />
@@ -380,9 +412,20 @@ export default function GamePage() {
   const canJoinAsBlack = waiting && mySide === null && !challengeToSomeoneElse;
   /* Reviewing a past position mid-game locks the board: the input would
      otherwise target the live position while the player is looking at an
-     older one. Follow the moves back to live to keep playing. */
-  const interactive =
-    !waiting && !gameOver && !reviewing && mySide !== null && myTurn && busy !== "move";
+     older one. Follow the moves back to live to keep playing.
+
+     `busy !== "move"` is deliberately ABSENT now: with the optimistic echo
+     the piece lands visually the moment you drop it, so a slow server
+     round-trip must not freeze the board mid-turn — dragging again during
+     the POST just attempts the next move from the echoed position. */
+  const interactive = !waiting && !gameOver && !reviewing && mySide !== null && myTurn;
+  /**
+   * Premoves: while it is the opponent's move, own-piece clicks and drops
+   * queue a move that plays the instant the turn arrives. Live two-player
+   * games only — a spectator has no pieces, and replay/waiting have no
+   * next turn to queue into.
+   */
+  const allowPremove = !waiting && !gameOver && !reviewing && mySide !== null && !myTurn;
   const baseOrientation: "white" | "black" = mySide === "black" ? "black" : "white";
   const orientation: "white" | "black" = flipped
     ? baseOrientation === "white"
@@ -471,195 +514,12 @@ export default function GamePage() {
     />
   );
 
-  const gameInfo = (
-    <div className="border-t border-border/60">
-      <div className="px-4 py-2.5">
-        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Game info
-        </span>
-      </div>
-      <dl className="space-y-1.5 px-4 pb-3 text-xs">
-        {game.timeControl && (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Time control</dt>
-            <dd className="font-mono tabular-nums text-foreground/85">{game.timeControl}</dd>
-          </div>
-        )}
-        {game.visibility && (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Visibility</dt>
-            <dd className="capitalize text-foreground/85">{game.visibility}</dd>
-          </div>
-        )}
-        <div className="flex items-center justify-between">
-          <dt className="text-muted-foreground">Mode</dt>
-          <dd className="capitalize text-foreground/85">
-            {isAiGame ? "vs Computer" : "Online"}
-          </dd>
-        </div>
-        {game.endedAt && (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Ended</dt>
-            <dd className="tabular-nums text-foreground/85">
-              {new Date(game.endedAt).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </dd>
-          </div>
-        )}
-      </dl>
-    </div>
-  );
-
-  return (
-    /* The game screen is an app shell, not a document. On desktop it is exactly
-       one viewport tall — the board is sized off the viewport height (see
-       --board-chrome in globals.css) and the match console scrolls inside
-       itself — so a live game never scrolls the page out from under a player
-       mid-move. Below `lg` it falls back to normal document flow, because a
-       phone cannot fit a usable board and a readable console at once. */
-    <div className="mx-auto flex w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
-      {/* Header */}
-      <div className="mb-2 flex shrink-0 flex-wrap items-center gap-3">
-        <img src="/logo-mark.svg" alt="" className="h-6 w-6" />
-        <div>
-          <h1 className="font-display text-lg font-bold tracking-tight">
-            {gameOver ? "Match report" : "Chess match"}
-          </h1>
-          <p className="text-2xs text-muted-foreground">
-            {isAiGame ? "vs Computer" : "Online match"}
-            {game.timeControl ? ` · ${game.timeControl}` : ""}
-          </p>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
-          {spectator && <Badge variant="secondary">spectating</Badge>}
-          {/* Escape hatch — but BACK, never Home: a mis-click mid-game must
-              not eject a player to the landing page and cost them their
-              navigation trail. This returns to wherever they came from
-              (tournament page, play list, create form…). router.back() needs
-              history to exist, so it falls back to the play hub. */}
-          <button
-            type="button"
-            onClick={() => {
-              if (window.history.length > 1) router.back();
-              else router.push("/play");
-            }}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-            Back
-          </button>
-        </div>
-      </div>
-
-      {/* Action error banner + result strip. Their combined height is measured
-          (MeasuredBanners below) and subtracted from the board column's width
-          formula — without it an over-tall square clips the bottom rank (the
-          white pieces) in exactly the match-report view. */}
-      <MeasuredBanners>
-      {error && (
-        <div className="mb-3 flex shrink-0 items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-destructive">Something went wrong</p>
-            <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Persistent result — the modal is dismissible, this is not. It is the
-          page's own record of how the match ended, and it can bring the full
-          report back at any time. */}
-      {result && (
-        <div
-          className={cn(
-            "animate-fade-in-up mb-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-4 py-2.5",
-            result.won
-              ? "border-primary/40 bg-primary/10"
-              : result.lost
-                ? "border-negative/40 bg-negative/10"
-                : "border-border/70 bg-secondary/30",
-          )}
-        >
-          <Trophy
-            className={cn(
-              "h-4 w-4 shrink-0",
-              result.won ? "text-primary" : "text-muted-foreground",
-            )}
-            aria-hidden
-          />
-          <p className="text-sm font-semibold tracking-tight">
-            {result.verdict}
-            <span className="ml-1.5 font-normal text-muted-foreground">{result.reason}</span>
-          </p>
-          <p className="min-w-0 basis-full text-xs leading-snug text-muted-foreground sm:basis-auto">
-            {result.detail}
-          </p>
-          {!resultOpen && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="ml-auto shrink-0 text-xs"
-              onClick={() => setResultOpen(true)}
-            >
-              Full report
-            </Button>
-          )}
-        </div>
-      )}
-      </MeasuredBanners>
-
-      {/* Board and match console share one row on desktop: the board is a
-          square, so its size is capped by the space left over VERTICALLY (nav,
-          header, player cards, controls — see --board-chrome in globals.css).
-          Banners rendered above the board (result strip, error banner) eat
-          height the formula cannot see, which previously clipped the bottom
-          rank exactly in the match-report view — so the board column
-          measures them at runtime and publishes --board-banner, which the
-          width calc subtracts. The leftover width goes to the match console,
-          which scrolls inside itself. Below `lg` it stacks: a phone cannot
-          fit a usable board and a readable console at once. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-8">
-        {/* The board column's WIDTH is the viewport-height budget on desktop:
-            a square board can never be wider than the height it is allowed,
-            or it overflows the fold. The real chrome above/below the board
-            (player cards, controls, status lines) is MEASURED at runtime by
-            BoardChromeMeter below — the old hardcoded 14rem estimate was
-            ~3rem short of reality, which pushed the board's bottom rank
-            under the fold. Mobile stays width-driven. */}
-        <div
-          className="flex w-full min-w-0 flex-col gap-2 lg:h-full lg:w-[min(100%,80rem,max(22rem,var(--board-w,22rem)))] lg:flex-none"
-          ref={boardRef}
-        >
-          {/* Player cards follow the board, always. The side shown at the
-              BOTTOM of the board is `orientation` (react-chessboard puts that
-              colour's home rank nearest the viewer), so its card belongs
-              below the board and the opponent's above.
-
-              These used to be hardcoded black-on-top / white-on-bottom. The
-              board itself flipped correctly for Black, so a Black player saw
-              their own pieces at the bottom but their own name card at the
-              top — the two halves of the screen disagreed about who was who,
-              which reads as the whole board being the wrong way round. */}
-          {playerCardFor(orientation === "white" ? "black" : "white")}
-          <div data-board-root className="overflow-hidden rounded-md ring-1 ring-border/40">
-            <ChessBoard
-              fen={boardFen ?? game.fen}
-              orientation={orientation}
-              interactive={!replayMode && interactive}
-              inCheck={inCheck}
-              lastMove={replayMode ? replayLastMove : lastMove}
-              pieceSet={pieceSet}
-              onMove={handleBoardMove}
-              busy={busy === "move"}
-            />
-          </div>
-          {playerCardFor(orientation)}
-
+  /* Board + replay controls, defined once and mounted twice: under the
+     board on mobile, inside the match console on desktop — where the board
+     owns the whole column so the square can use the full viewport height.
+     CSS shows exactly one mount per breakpoint. */
+  const boardControls = (
+    <>
           {/* Board controls / replay controls — flip the board anytime */}
           {replayMode && game && (
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-card/40 px-2 py-1.5">
@@ -713,10 +573,16 @@ export default function GamePage() {
                     <span className="min-w-24 text-center font-mono text-xs tabular-nums text-muted-foreground">
                       {ply} / {game.moves.length}
                     </span>
+                    {/* Forward past the last played move IS live: no separate
+                        button, no special state — the board simply catches up
+                        and stays caught up (the snap effect above re-engages
+                        once ply === moves.length). */}
                     <Button
                       size="icon"
                       variant="ghost"
-                      onClick={() => setPly(ply === game.moves.length - 1 ? null : ply! + 1)}
+                      onClick={() =>
+                        setPly(ply! + 1 >= game.moves.length ? null : ply! + 1)
+                      }
                       aria-label="Next move"
                     >
                       <ChevronRight aria-hidden />
@@ -731,14 +597,9 @@ export default function GamePage() {
                       <SkipBack aria-hidden />
                     </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => setPly(null)}
-                    className="gap-1.5"
-                  >
-                    <SkipForward aria-hidden />
-                    Back to live
-                  </Button>
+                  <span className="text-2xs uppercase tracking-wider text-muted-foreground">
+                    reviewing move {ply} of {game.moves.length}
+                  </span>
                 </div>
               ) : (
               <>
@@ -755,7 +616,7 @@ export default function GamePage() {
                     aria-label="Review previous moves"
                   >
                     <SkipBack className="h-3.5 w-3.5" aria-hidden />
-                    Back
+                    Last move
                   </Button>
                   <Button
                     variant="ghost"
@@ -871,6 +732,8 @@ export default function GamePage() {
                     ? "This is a private challenge between two players."
                     : game.status === "active" && mySide === null
                     ? "Spectating: the game updates live."
+                    : clockWaiting
+                    ? "The clock starts when both players are at the board."
                     : game.status === "active" && drawSupported && drawOfferFromMe
                       ? "Draw offered: waiting for your opponent's reply."
                       : game.status === "active" && drawSupported && drawOfferFromOpponent
@@ -887,6 +750,182 @@ export default function GamePage() {
             )}
             </div>
           )}
+    </>
+  );
+
+  const gameInfo = (
+    <div className="border-t border-border/60">
+      <div className="px-4 py-2.5">
+        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Game info
+        </span>
+      </div>
+      <dl className="space-y-1.5 px-4 pb-3 text-xs">
+        {game.timeControl && (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Time control</dt>
+            <dd className="font-mono tabular-nums text-foreground/85">{game.timeControl}</dd>
+          </div>
+        )}
+        {game.visibility && (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Visibility</dt>
+            <dd className="capitalize text-foreground/85">{game.visibility}</dd>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">Mode</dt>
+          <dd className="capitalize text-foreground/85">
+            {isAiGame ? "vs Computer" : "Online"}
+          </dd>
+        </div>
+        {game.endedAt && (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Ended</dt>
+            <dd className="tabular-nums text-foreground/85">
+              {new Date(game.endedAt).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+
+  return (
+    /* The game screen is an app shell, not a document. On desktop it is exactly
+       one viewport tall — the board is sized off the viewport height (see
+       --board-chrome in globals.css) and the match console scrolls inside
+       itself — so a live game never scrolls the page out from under a player
+       mid-move. Below `lg` it falls back to normal document flow, because a
+       phone cannot fit a usable board and a readable console at once. */
+    <div className="shell flex flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
+      {/* Header — deliberately bare: no logo, no title. The board IS the
+          page; everything else was noise. The right cluster keeps the live
+          status, the spectator badge and (only after the game ends) Back. */}
+      <div className="mb-2 flex shrink-0 flex-wrap items-center gap-3">
+        <div className="min-h-8 min-w-0 flex-1">
+          {!gameOver && (
+            <p className="truncate text-2xs text-muted-foreground">
+              {isAiGame ? "vs Computer" : "Online match"}
+              {game.timeControl ? ` · ${game.timeControl}` : ""}
+            </p>
+          )}
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {!gameOver && <StatusBar game={game} turnSide={turnSide} inCheck={inCheck} />}
+          {spectator && <Badge variant="secondary">spectating</Badge>}
+          {/* Escape hatch — only once the game is OVER. A live Back button
+              invites rage-quitting by accident mid-game; after the result it
+              is the natural way out. BACK, never Home, and it returns to
+              wherever they came from (tournament page, play list, create
+              form…). router.back() needs history to exist, so it falls back
+              to the play hub. */}
+          {gameOver && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.history.length > 1) router.back();
+                else router.push("/play");
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              Back
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Action error banner. Reserved above the board; the board meter
+          measures the column's viewport position directly, so everything
+          above it (nav, header, this banner) is budgeted without a separate
+          measurement pass. The banner slot keeps a min height so an error
+          appearing or clearing never shifts the board (the "page jumps"
+          complaint). */}
+      {/* Action errors render as an overlay toast instead of a layout row:
+          a banner appearing above the board used to shove the square down
+          and resize it mid-game (the "page jumps" complaint). A toast
+          changes nothing about the board's budget. */}
+      {error && (
+        <div
+          role="alert"
+          className="pointer-events-none fixed inset-x-3 bottom-3 z-40 sm:left-auto sm:max-w-sm"
+        >
+          <div className="animate-fade-in-up flex items-start gap-2.5 rounded-md border border-destructive/30 bg-card/95 px-3 py-2 shadow-elevation-3 backdrop-blur">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-destructive">Something went wrong</p>
+              <p className="mt-0.5 text-xs leading-snug text-destructive/90">{error}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Persistent result lives INSIDE the end-game popup only — the old
+          always-on strip was a second, redundant report box. Its slot keeps a
+          min height so the layout is identical live vs finished. */}
+      <div className="min-h-0.5 shrink-0" aria-hidden />
+      {/* Board and match console share one row on desktop. The board column
+          takes the shell's full width; the SQUARE is capped by the height the
+          column's non-board chrome (player cards, controls, banners) leaves —
+          measured at runtime, never estimated. The console fills what's left
+          and scrolls inside itself. Below `lg` it stacks: moves live directly
+          under the board, full width, at every breakpoint. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row lg:gap-6">
+        {/* The board column is width-driven at every breakpoint. Its height
+            budget (viewport − header − its own chrome) is measured by
+            BoardChromeMeter and published as --board-w, which the square
+            reads — so the board is as big as the screen allows and never a
+            pixel taller than the fold. The column reserves the error banner's
+            height above it (outside this column, in the shell), so the
+            banner's appearance can never shift the square. */}
+        {/* The board column hugs its square: w-full only while stacked (the
+            column IS the width below lg). At lg, w-full claimed a flex basis
+            of 100%, and with the console's flex-1 (basis 0) the shrink math
+            collapsed the CONSOLE to zero width — nothing ever appeared
+            beside the board. lg:w-auto lets it shrink-to-fit --board-w and
+            hand the leftover width to the console. */}
+        <div
+          className="flex w-full min-w-0 flex-col items-center gap-2 lg:w-auto"
+          ref={boardRef}
+        >
+          {/* Player cards sit at both ends of the board, like every chess
+              site: the opponent above the square, you below it. The side at
+              the BOTTOM is `orientation` (react-chessboard puts that colour's
+              home rank nearest the viewer), so its card belongs below. */}
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+            {playerCardFor(orientation === "white" ? "black" : "white")}
+          </div>
+          <div
+            data-board-root
+            className="w-full overflow-hidden rounded-md ring-1 ring-border/40"
+            style={{ maxWidth: "var(--board-w, 36rem)" }}
+          >
+            <ChessBoard
+              fen={boardFen ?? game.fen}
+              orientation={orientation}
+              interactive={!replayMode && interactive}
+              inCheck={inCheck}
+              lastMove={shownLastMove}
+              pieceSet={pieceSet}
+              allowPremove={allowPremove}
+              onMove={handleBoardMove}
+              busy={false}
+            />
+          </div>
+          <div className="w-full" style={{ maxWidth: "var(--board-w, 36rem)" }}>
+            {playerCardFor(orientation)}
+          </div>
+
+          {/* Board controls (mobile position). Desktop renders the same block
+              inside the match console — the board column stays nothing but the
+              square, so --board-w can hand it the full viewport height. */}
+          <div className="lg:hidden">{boardControls}</div>
         </div>
 
         <BoardChromeMeter columnRef={boardRef} />
@@ -894,7 +933,15 @@ export default function GamePage() {
         {/* Match console — beside the board on desktop, filling the leftover
             width; below the board on mobile. It scrolls inside itself so the
             page never scrolls a live game out from under the player. */}
-        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[60rem] lg:flex-1 lg:overflow-y-auto lg:pb-1">
+        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-3 lg:h-full lg:max-w-[26rem] lg:flex-none lg:overflow-y-auto lg:pb-1">
+          {/* Desktop: the board column is nothing but the square, so the
+              cards, controls and moves live here — opponent on top, you at
+              the bottom, mirroring the board. This is what buys the square
+              its full viewport-height budget. */}
+          <div className="hidden w-full min-w-0 flex-col gap-3 lg:flex">
+            {boardControls}
+            {movesSection}
+          </div>
           {waiting && mySide === "white" && (
             <WaitingPanel
               gameId={game.id}
@@ -908,55 +955,42 @@ export default function GamePage() {
             </div>
           )}
 
-          <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
-            <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
-              <span className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {!gameOver && game.status === "active" && (
+          {/* A quiet container only while playing — after the game the moves
+              + summary ARE the report, so the extra box header went away. */}
+          {!gameOver && (
+            <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
+              <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+                <span className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   <span className="relative flex h-1.5 w-1.5" aria-hidden>
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
                   </span>
-                )}
-                {gameOver ? "Match report" : "Match"}
-              </span>
-              <span className="font-mono text-xs tabular-nums text-foreground/80">
-                {replayMode ? `Move ${Math.min(ply ?? 0, game.moves.length)}` : `Move ${moveNumber}`}
-              </span>
+                  Match
+                </span>
+                <span className="font-mono text-xs tabular-nums text-foreground/80">
+                  Move {moveNumber}
+                </span>
+              </div>
             </div>
+          )}
 
-            {/* Mobile: one section at a time */}
-            <div className="flex gap-1 border-b border-border/60 px-2 py-1.5 lg:hidden">
-              {MOBILE_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setMobileTab(tab.id)}
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    mobileTab === tab.id
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+          {/* The move history lives under the board (see the board column);
+              this console carries the info and chat. */}
+          {gameInfo}
 
-            {movesSection}
-            {gameInfo}
-
-            {/* Two humans talking while they play — spectators and AI games
-                never see this (the component renders null). */}
-            <GameChat
-              gameId={game.id}
-              enabled={!isAiGame && !spectator && !canJoinAsBlack && game.opponent !== ""}
-            />
-          </div>
+          {/* Two humans talking while they play — spectators and AI games
+              never see this (the component renders null). */}
+          <GameChat
+            gameId={game.id}
+            enabled={!isAiGame && !spectator && !canJoinAsBlack && game.opponent !== ""}
+          />
         </div>
       </div>
 
-      {/* Post-game result modal — appears the moment the game ends */}
+      {/* Post-game result modal — appears the moment the game ends. The
+          tournamentId prop is what kills the rematch button: the modal swaps
+          its actions for "Back to tournament", because the bracket decides
+          what happens next, not the players. */}
       {gameOver && resultOpen && (
         <EndGameModal
           game={game}
@@ -964,6 +998,7 @@ export default function GamePage() {
           myPlayerId={myId}
           mySide={mySide}
           analyzing={false}
+          tournamentId={game.tournamentId}
           onRematch={
             // TOURNAMENT GAMES NEVER OFFER A REMATCH: the event's bracket
             // decides what happens next (next round, or the event is over
@@ -1001,62 +1036,18 @@ export default function GamePage() {
 }
 
 /**
- * Wraps the banners that render between the page header and the board and
- * publishes their combined height as the `--board-banner` custom property on
- * the document root. The board column's width formula subtracts it, so an
- * over-tall square can never clip the bottom rank (the white pieces) in the
- * match-report view — the exact bug that showed up only after a game ended.
+ * Publishes the board square's true budget as `--board-w` (px) on the
+ * document root — the column and board read it as their max width.
  *
- * A small separate component rather than an effect in the page body: the page
- * has early returns (loading / game-missing), and an effect there would run
- * conditionally — a rules-of-hooks violation. Placed here it always runs.
- */
-function MeasuredBanners({ children }: { children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    /* On the document root, not on this element: the board column is a
-       SIBLING of these banners, and custom properties only inherit downward —
-       a var set here would read as its 0rem fallback where it is consumed. */
-    const root = el.ownerDocument.documentElement;
-    const publish = () => {
-      root.style.setProperty("--board-banner", `${el.scrollHeight / 16}rem`);
-    };
-    publish();
-    const ro = new ResizeObserver(publish);
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      root.style.removeProperty("--board-banner");
-    };
-  }, []);    return <div ref={ref}>{children}</div>;
-  }
-
-/**
- * Publishes the board column's real chrome (every row except the board
- * itself: player cards, controls, status lines) as `--board-chrome-dyn` on
- * the document root. The column's width formula reads that var, so the
- * board is sized from what the chrome ACTUALLY occupies rather than an
- * estimate: the static 14rem budget drifted several rem below reality as
- * rows were added (spectate line, review controls), and a square 3rem too
- * tall ends up under the fold. Re-measures whenever a row resizes.
- *
- * Takes the column ref rather than wrapping it: the column is a direct flex
- * child, and a wrapper div would break that layout while measuring the
- * wrong element. Renders nothing.
- *
- * Also publishes the authoritative board width itself: the square is capped
- * by the column's MEASURED height (its `lg:h-full` makes that the real
- * viewport budget minus everything else in the page — header, banners, the
- * column's own chrome). Sizing the square from a calc() ESTIMATE of that
- * budget was always a few pixels short: page padding, the header row and
- * the gap between columns were unaccounted, so the bottom rank (the white
- * pieces) clipped under the fold on exactly the screens in the bug report.
- * The loop is self-stabilising: a smaller board shrinks the chrome rows
- * wrapped beside it, which re-measures to a slightly larger width, at most
- * once or twice per layout change.
+ * Desktop: the square is min(66vw, the column's measured height budget) —
+ * a square can never be wider than the height the screen gives it, or the
+ * bottom rank clips under the fold. The height side is el.clientHeight (the
+ * column is flex-stretched to the row's height, so that IS the viewport
+ * budget) minus the live-measured chrome (player cards, controls, move
+ * strip, banners), never an estimate that drifts as rows are added.
+ * Mobile: width-driven — the board fills the column like any phone layout
+ * expects; no viewport-height budget and no 66vw cap apply there.
+ * Re-measures on resize and on any content change; renders null.
  */
 function BoardChromeMeter({
   columnRef,
@@ -1068,29 +1059,53 @@ function BoardChromeMeter({
     if (!el) return;
     const root = el.ownerDocument.documentElement;
     const publish = () => {
-      let chrome = 0;
-      for (const child of Array.from(el.children)) {
-        if (child.hasAttribute("data-board-root")) continue;
-        chrome += child.getBoundingClientRect().height;
+      const vw = root.clientWidth;
+      const row = el.parentElement;
+      // Desktop = the flex row lays out horizontally (lg:flex-row); below lg
+      // it stacks and the page scrolls normally.
+      const desktop = row
+        ? getComputedStyle(row).flexDirection.startsWith("row")
+        : vw >= 1024;
+
+      let budget: number;
+      if (desktop) {
+        // The column is STRETCHED to the row's height, so el.clientHeight is
+        // the true viewport budget regardless of how tall its content is —
+        // comparing the row's rect to the column's never fires (they are the
+        // same box), which is how the board recently grew past the fold.
+        // Budget = that height − every non-board row (player cards, controls,
+        // move strip) − the gaps between rows, capped at 66vw.
+        let chrome = 0;
+        let visibleRows = 0;
+        for (const child of Array.from(el.children)) {
+          if (child.hasAttribute("data-board-root")) continue;
+          // display:none children (the mobile-only chrome on desktop) occupy
+          // nothing and must not eat budget — their rects read as 0 but the
+          // old gap count still charged for them.
+          if ((child as HTMLElement).offsetHeight === 0) continue;
+          chrome += child.getBoundingClientRect().height;
+          visibleRows += 1;
+        }
+        const gaps = visibleRows * 8;
+        budget = Math.min(vw * 0.66, Math.max(352, el.clientHeight - chrome - gaps));
+      } else {
+        // Mobile is width-driven: the board fills the column — the 66vw cap
+        // is a desktop layout notion and shrank the phone board to two thirds
+        // of the screen.
+        budget = el.clientWidth || vw;
       }
-      // Column gaps (gap-2 = 0.5rem) between every row, board included.
-      const gaps = Math.max(0, el.children.length - 1) * 8;
-      root.style.setProperty("--board-chrome-dyn", `${(chrome + gaps) / 16}rem`);
-      // The square's true budget: what the column actually is, less what the
-      // non-board rows actually occupy. Floor at the formula's 22rem minimum
-      // so a transient measure never collapses the board.
-      if (el.clientHeight > 0) {
-        const budget = Math.max(352, el.clientHeight - chrome - gaps);
-        root.style.setProperty("--board-w", `${budget}px`);
+      if (Number.isFinite(budget) && budget > 0) {
+        root.style.setProperty("--board-w", `${Math.round(budget)}px`);
       }
     };
     publish();
     const ro = new ResizeObserver(publish);
     for (const child of Array.from(el.children)) ro.observe(child);
     ro.observe(el);
+    window.addEventListener("resize", publish);
     return () => {
       ro.disconnect();
-      root.style.removeProperty("--board-chrome-dyn");
+      window.removeEventListener("resize", publish);
       root.style.removeProperty("--board-w");
     };
   }, [columnRef]);

@@ -17,7 +17,7 @@
  */
 
 import { getGameStorage } from "@/lib/server/storage";
-import { usernameForPlayer } from "@/lib/server/admin";
+import { isAdminPlayer, usernameForPlayer } from "@/lib/server/admin";
 import { listFriendIds, profileForPlayerId } from "@/lib/supabase/db";
 
 const MESSAGES_KEY = "chainmate:messages:inboxes";
@@ -173,19 +173,25 @@ export async function inboxForDisplay(playerId: string): Promise<InboxMessage[]>
 
 /**
  * Friends-only DMs. Returns the ids this player may open a conversation
- * with: mutual accepted friendships (either direction of the request).
+ * with: mutual accepted friendships (either direction of the request),
+ * plus the official ChainMate account — a moderation reply or announcement
+ * that lands in your inbox must be visible in your thread list, or the
+ * player can never answer it (the exact mobile bug: the send gate allows
+ * the official account, but this allowlist hid its thread from the list).
  * Guests have no friendships, so they naturally cannot DM until they make
  * an account and add someone.
  */
 export async function dmAllowedPeers(playerId: string): Promise<Set<string>> {
+  const peers = new Set<string>([CHAINMATE_ID]);
   try {
     const ids = await listFriendIds(playerId);
-    return new Set(ids);
+    for (const id of ids) peers.add(id);
+    return peers;
   } catch {
     // Friends are unavailable (accounts not configured): fail CLOSED for the
-    // gate so a messaging outage never opens DMs to strangers. The inbox
-    // itself stays readable.
-    return new Set();
+    // friend gate so a messaging outage never opens DMs to strangers. The
+    // official account stays allowed regardless — it is not a stranger.
+    return peers;
   }
 }
 
@@ -256,11 +262,29 @@ export async function sendDirectMessage(
   if (!text) return { ok: false, error: "Message is empty" };
   if (text.length > 2000) return { ok: false, error: "Message is too long (2000 characters max)" };
   if (fromPlayerId === toPlayerId) return { ok: false, error: "You cannot message yourself" };
-  // Friends-only DMs, enforced HERE on every send. Server-side, so a crafted
-  // POST with an arbitrary toPlayerId can never reach a stranger's inbox.
-  const allowed = await dmAllowedPeers(fromPlayerId);
-  if (!allowed.has(toPlayerId)) {
-    return { ok: false, error: "You can only message players you are friends with. Add them first, then chat." };
+  // The operator (admin) messages anyone — full rights, no friendship
+  // required. The OFFICIAL account (ChainMate support replies) carries the
+  // same authority: nobody can sign in as it, and gating its replies on its
+  // own friendship list is what bounced admin messages with "add them
+  // first, then chat". Checked BEFORE the friend gate; see dmAllowedPeers
+  // for the fail-closed reasoning behind the gate itself.
+  if (fromPlayerId === CHAINMATE_ID || (await isAdminPlayer(fromPlayerId))) {
+    // fall through to delivery
+  } else {
+    // Friends-only DMs, enforced HERE on every send. Server-side, so a
+    // crafted POST with an arbitrary toPlayerId can never reach a stranger's
+    // inbox.
+    const allowed = await dmAllowedPeers(fromPlayerId);
+    if (!allowed.has(toPlayerId)) {
+      return { ok: false, error: "You can only message players you are friends with. Add them first, then chat." };
+    }
+  }
+  // The recipient's block shield outranks everything else (official account
+  // included): a block exists precisely to stop unwanted messages, so the
+  // moderation gate is the LAST authority before delivery.
+  const { actorIsBlockedBy } = await import("@/lib/server/blocks");
+  if (await actorIsBlockedBy(fromPlayerId, toPlayerId)) {
+    return { ok: false, error: "You can't message this player." };
   }
   const fromName = await displayNameFor(fromPlayerId);
   const sentAt = Date.now();
@@ -287,6 +311,19 @@ export async function sendDirectMessage(
     sentAt,
     readAt: sentAt,
   });
+
+  // Official/admin outreach rings the bell. A moderation reply that only
+  // exists inside /messages is invisible — the player has no reason to open
+  // a thread they do not know exists. Ordinary player-to-player DMs stay
+  // bell-silent: their badge lives on the Messages entry alone.
+  if (fromPlayerId === CHAINMATE_ID) {
+    const { notifyDirectMessage } = await import("@/lib/server/notify");
+    await notifyDirectMessage(
+      fromPlayerId,
+      toPlayerId,
+      text.length > 80 ? `${text.slice(0, 80)}…` : text,
+    ).catch(() => undefined);
+  }
   return { ok: true };
 }
 
@@ -418,6 +455,12 @@ export async function replyToSupportMessage(
   if (!(await isAdminPlayer(adminPlayerId))) {
     return { ok: false, error: "Not found" };
   }
+  // The envelope is FROM the official ChainMate account, but the permission
+  // is the OPERATOR's — checked above. sendDirectMessage must never re-apply
+  // the friends gate to ChainMate itself (the old behaviour): an official
+  // reply to a player who wasn't (yet) a friend of the ChainMate account
+  // bounced with "add them first, then chat", which is exactly the report
+  // this module exists to fix.
   return sendDirectMessage(CHAINMATE_ID, toPlayerId, body);
 }
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { Loader2, Play, RotateCcw, Sparkles, Trophy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
 import { describeResult } from "@/lib/game-result";
@@ -30,8 +30,12 @@ interface EndGameModalProps {
       call sites keep compiling. */
   analyzing?: boolean;
   onGenerateSummary?: () => void;
-  /** One-click rematch against the same opponent (hosted human games). */
+  /** One-click rematch against the same opponent (hosted human games).
+   *  NEVER offered for tournament matches — the bracket decides what
+   *  happens next. */
   onRematch?: () => Promise<void>;
+  /** Tournament match: the result hands the player back to the event. */
+  tournamentId?: string;
   onReplay: () => void;
   onClose: () => void;
 }
@@ -51,6 +55,7 @@ export function EndGameModal({
   stats,
   myPlayerId,
   mySide,
+  tournamentId,
   onRematch,
   onReplay,
   onClose,
@@ -160,7 +165,9 @@ export function EndGameModal({
         className="animate-fade-in-up max-h-[92vh] w-full overflow-y-auto rounded-t-xl border border-border/70 bg-card p-5 shadow-elevation-3 sm:max-w-md sm:rounded-xl sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        {/* Header — the verdict is the hero, the congratulation (or its
+            gentle inverse) sits right under it. This is where the old
+            always-on page report strip now lives. */}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
@@ -176,18 +183,29 @@ export function EndGameModal({
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">{reason}</p>
             <p className="mt-1.5 text-xs leading-snug text-muted-foreground/90">{detail}</p>
+            {won && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                Well played — the win is yours.
+              </p>
+            )}
           </div>
           <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close result" className="shrink-0">
             <X className="h-4 w-4" aria-hidden />
           </Button>
         </div>
 
-        {/* Players + rating changes */}
-        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-secondary/30 px-4 py-3">
+        {/* Players + rating changes — borderless rows over a soft tint, the
+            app's modern surface language, instead of a boxed grid. */}
+        <div className="mt-4 space-y-2 rounded-lg bg-secondary/25 px-4 py-3">
           {playerCell("white")}
-          <span className="shrink-0 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-            vs
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="h-px flex-1 bg-border/50" aria-hidden />
+            <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+              vs
+            </span>
+            <span className="h-px flex-1 bg-border/50" aria-hidden />
+          </div>
           {playerCell("black")}
         </div>
 
@@ -260,7 +278,17 @@ export function EndGameModal({
             <Play aria-hidden />
             Replay
           </Button>
-          {onRematch ? (
+          {/* A tournament match flows back into the event — the bracket, not
+              the players, decides what happens next. No rematch, no "play
+              again", no casual next game from inside the popup. */}
+          {tournamentId ? (
+            <Link href={`/tournaments/${tournamentId}`} className="flex-1">
+              <Button className="w-full">
+                <Trophy aria-hidden />
+                Back to tournament
+              </Button>
+            </Link>
+          ) : onRematch ? (
             <Button
               className="flex-1"
               disabled={rematching}

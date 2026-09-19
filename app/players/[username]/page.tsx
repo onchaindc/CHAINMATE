@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { AchievementGrid } from "@/components/game/achievement-grid";
 import { GameRow } from "@/components/game/game-row";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
@@ -73,14 +74,6 @@ export default function PublicPlayerPage() {
   const store = useMemo(() => getStore("hosted") as HostedGameStore, []);
   const viewerId = identity.playerId;
   const isMe = player !== null && player.playerId === viewerId;
-
-  const names = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const info of Object.values(players)) {
-      if (info.name) map[info.id] = info.name;
-    }
-    return map;
-  }, [players]);
 
   /**
    * Rating change per game, for the history rows.
@@ -328,6 +321,14 @@ export default function PublicPlayerPage() {
         className="mt-4 [animation-delay:100ms]"
       />
 
+      {/* Achievements — same trophy card as the owner's profile, so a
+          visitor sees the shelf, not just the totals. */}
+      {stats && (
+        <div className="mt-4 animate-fade-in-up [animation-delay:110ms]">
+          <AchievementGrid stats={stats} />
+        </div>
+      )}
+
       {/* Friends */}
       <div className="mt-10 animate-fade-in-up [animation-delay:120ms]">
         <SectionLabel aside={friends.length > 0 ? String(friends.length) : undefined}>
@@ -386,7 +387,7 @@ export default function PublicPlayerPage() {
                   game={game}
                   me={viewerId}
                   delta={deltas.get(game.id) ?? null}
-                  names={names}
+                  players={players}
                 />
               ))}
             </div>

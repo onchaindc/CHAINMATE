@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Award,
   BarChart3,
   Check,
+  Globe,
   LifeBuoy,
   Loader2,
   Palette,
   Send,
+  UserRound,
   Users,
+  X,
 } from "lucide-react";
 import { Panel } from "@/components/ui/panel";
 import { Button } from "@/components/ui/button";
@@ -30,6 +33,7 @@ import {
   type PieceSetId,
 } from "@/lib/board-prefs";
 import { ACHIEVEMENTS } from "@/lib/achievements";
+import { COUNTRIES } from "@/lib/countries";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
@@ -143,6 +147,22 @@ export function SettingsList({ stats }: { stats: PlayerStats | null }) {
 
   return (
     <Panel>
+      <Row
+        icon={UserRound}
+        label="Username"
+        hint="3–20 characters · letters, numbers, underscores"
+      >
+        <SettingsUsernameEditor />
+      </Row>
+
+      <Row
+        icon={Globe}
+        label="Country"
+        hint="Shown as a flag beside your name across the app"
+      >
+        <SettingsCountryEditor />
+      </Row>
+
       <Row
         icon={LifeBuoy}
         label="Support"
@@ -288,6 +308,232 @@ export function SettingsPageContent({ stats }: { stats: PlayerStats | null }) {
       <div className="mt-3">
         <SettingsList stats={stats} />
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Profile identity editors — moved here from the profile page          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Username editing, in Settings. The profile page stays a read-only summary;
+ * everything that CHANGES the account lives behind the gear.
+ *
+ * State and availability check are the profile page's editor verbatim — the
+ * server route (/api/players/me POST with { username }) is unchanged.
+ */
+function SettingsUsernameEditor() {
+  const identity = useIdentity();
+  const currentUsername = identity.username;
+  const [editing, setEditing] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [state, setState] = useState<"idle" | "checking" | "ok" | "taken">("idle");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const canEdit = !identity.isGuest && identity.linked;
+
+  useEffect(() => {
+    if (!editing) return;
+    if (newName.trim().length < 3 || newName.trim().toLowerCase() === currentUsername.toLowerCase()) {
+      setState("idle");
+      return;
+    }
+    if (checkTimer.current) clearTimeout(checkTimer.current);
+    setState("checking");
+    checkTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/identity/username?value=${encodeURIComponent(newName.trim())}`);
+        if (!res.ok) {
+          setState("idle");
+          return;
+        }
+        const data = (await res.json()) as { available?: boolean };
+        setState(data.available ? "ok" : "taken");
+      } catch {
+        setState("idle");
+      }
+    }, 400);
+    return () => {
+      if (checkTimer.current) clearTimeout(checkTimer.current);
+    };
+  }, [editing, newName, currentUsername]);
+
+  const save = async () => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed.length < 3) {
+      setError("Username must be at least 3 characters.");
+      return;
+    }
+    if (trimmed.toLowerCase() === currentUsername.toLowerCase()) {
+      setEditing(false);
+      return;
+    }
+    if (state === "taken") {
+      setError("That username is already taken.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const token = getIdentityToken();
+      const res = await fetch("/api/players/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ playerId: identity.playerId, username: trimmed }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Failed to update username.");
+      await identity.refresh();
+      setSuccess(true);
+      setEditing(false);
+      setTimeout(() => setSuccess(false), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update username.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!canEdit) {
+    return (
+      <span className="text-2xs text-muted-foreground">
+        {identity.isGuest ? "Create an account to pick a name" : "Finish account setup first"}
+      </span>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <span className="flex items-center gap-2">
+        <span className="font-mono text-sm text-foreground">{currentUsername}</span>
+        {success && <span className="text-2xs text-positive">Saved</span>}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setEditing(true);
+            setNewName(currentUsername);
+            setError(null);
+            setSuccess(false);
+          }}
+        >
+          Edit
+        </Button>
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-64">
+      <div className="flex gap-2">
+        <Input
+          autoFocus
+          value={newName}
+          maxLength={20}
+          onChange={(e) => {
+            setNewName(e.target.value.replace(/[^A-Za-z0-9_]/g, ""));
+            setState("idle");
+            setError(null);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && !saving && void save()}
+          className="text-sm"
+          aria-label="New username"
+        />
+        <Button size="icon" disabled={saving || newName.trim().length < 3} onClick={() => void save()} aria-label="Save username">
+          {saving ? <Loader2 className="animate-spin" aria-hidden /> : <Check aria-hidden />}
+        </Button>
+        <Button size="icon" variant="ghost" onClick={() => setEditing(false)} aria-label="Cancel">
+          <X aria-hidden />
+        </Button>
+      </div>
+      {state === "ok" && <p className="text-2xs text-positive">Available</p>}
+      {state === "taken" && <p className="text-2xs text-destructive">That username is taken</p>}
+      {state === "checking" && <p className="text-2xs text-muted-foreground">Checking…</p>}
+      {error && <p className="text-2xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/** Country editing, in Settings — a plain select, saved to the server. */
+function SettingsCountryEditor() {
+  const identity = useIdentity();
+  const [value, setValue] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (identity.status === "loading" || !identity.playerId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profile = await (getStore("hosted") as HostedGameStore).myProfile(identity.playerId);
+        if (!cancelled) {
+          setValue(profile.stats.country ?? "");
+          setLoaded(true);
+        }
+      } catch {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [identity.status, identity.playerId]);
+
+  const save = async (next: string) => {
+    setValue(next);
+    setSaving(true);
+    setError(null);
+    try {
+      const token = getIdentityToken();
+      const res = await fetch("/api/players/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ playerId: identity.playerId, country: next || null }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Couldn't save your country. Try again.");
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save your country. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full items-center gap-2 sm:w-auto">
+      <select
+        value={loaded ? value : ""}
+        disabled={saving || !loaded || identity.isGuest}
+        onChange={(e) => void save(e.target.value)}
+        aria-label="Country"
+        className="min-w-40 flex-1 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors focus:border-primary/50 disabled:opacity-60 sm:min-w-52 sm:flex-none"
+      >
+        <option value="">No country</option>
+        {COUNTRIES.map((c) => (
+          <option key={c.code} value={c.code}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      {saved && <span className="text-2xs text-positive">Saved</span>}
+      {error && <span className="text-2xs text-destructive">{error}</span>}
     </div>
   );
 }

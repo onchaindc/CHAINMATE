@@ -16,32 +16,30 @@ interface MoveHistoryProps {
   onSelectPly?: (ply: number) => void;
 }
 
+/**
+ * The move list, laid out HORIZONTALLY: one compact strip under the board
+ * (full width of the board container, edges aligned), moves flowing left to
+ * right as chips — "12. Nf3 Nc6" reads on one line instead of eating a
+ * column. It scrolls vertically only when a very long game outgrows its
+ * two-row cap, and never scrolls the page itself.
+ */
 export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  /** Keep the newest move visible: walk to it whenever a move lands. */
+  const tailRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
-    // Scroll the moves list internally only — never the page. A scrollIntoView
-    // here would yank the whole window on mobile (the list sits below the
-    // board), which is exactly the jump users saw after every move.
-    const el = containerRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    // Scroll the strip internally only — never the page. A scrollIntoView on
+    // the window here would yank the whole page on mobile after every move.
+    tailRef.current?.scrollIntoView({ block: "nearest", inline: "end", behavior: "smooth" });
   }, [moves.length]);
 
-  const pairs: { number: number; white?: MoveRecord; black?: MoveRecord }[] = [];
-  for (let i = 0; i < moves.length; i += 2) {
-    pairs.push({
-      number: i / 2 + 1,
-      white: moves[i],
-      black: moves[i + 1],
-    });
-  }
-
   /** One move, as a button when the board can be moved to it and text when not. */
-  const moveCell = (move: MoveRecord | undefined, ply: number) => {
-    if (!move) return null;
+  const moveCell = (move: MoveRecord) => {
+    const ply = move.number - 1;
     const current = ply === currentPly;
     const className = cn(
-      "inline-block w-full rounded px-1.5 py-0.5 text-left font-mono tabular-nums transition-colors",
+      "shrink-0 rounded px-1.5 py-0.5 font-mono text-xs tabular-nums transition-colors",
       current && "bg-primary/15 font-semibold text-primary",
       onSelectPly && !current && "hover:bg-secondary hover:text-foreground",
     );
@@ -62,50 +60,43 @@ export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps
     );
   };
 
-  return (
-    <div className="border-t border-border/60">
-      <div className="flex items-center justify-between px-4 py-2.5">
-        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Move history
-        </span>
-        <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-          {onSelectPly && moves.length > 0 ? "click to review" : `${moves.length} ply`}
-        </span>
-      </div>
+  const moveNumber = Math.floor(moves.length / 2) + 1;
 
-      {pairs.length === 0 ? (
-        <p className="px-4 pb-4 text-center text-xs text-muted-foreground">
-          No moves yet. White opens the game.
+  return (
+    <div className="w-full">
+      <div
+        ref={containerRef}
+        className="max-h-20 overflow-y-auto rounded-md bg-secondary/25 px-2.5 py-1.5"
+      >
+        {moves.length === 0 ? (
+          <p className="py-0.5 text-center font-mono text-xs text-muted-foreground">
+            No moves yet — White opens.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+            {moves.map((move, i) => (
+              <span key={move.number} className="flex shrink-0 items-center gap-1">
+                {/* The move number sits before White's move of each pair —
+                    desktop only. On a phone the strip is narrow and the
+                    ordinals cost more width than the SANs they label. */}
+                {i % 2 === 0 && (
+                  <span className="hidden shrink-0 font-mono text-2xs tabular-nums text-muted-foreground lg:inline">
+                    {Math.floor(i / 2) + 1}.
+                  </span>
+                )}
+                {moveCell(move)}
+                {i === moves.length - 1 && (
+                  <span ref={tailRef} aria-hidden className="w-px" />
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {moves.length > 0 && (
+        <p className="mt-0.5 hidden px-1 text-right font-mono text-2xs tabular-nums text-muted-foreground lg:block">
+          move {moveNumber} · {moves.length} ply{onSelectPly ? " · click to review" : ""}
         </p>
-      ) : (
-        <div
-          ref={containerRef}
-          className="max-h-56 overflow-y-auto px-2 pb-2 lg:max-h-72"
-        >
-          <table className="w-full text-sm">
-            <tbody>
-              {pairs.map((pair, idx) => {
-                const whitePly = pair.white ? pair.white.number - 1 : -1;
-                const blackPly = pair.black ? pair.black.number - 1 : -1;
-                return (
-                  <tr key={pair.number} className={cn(idx % 2 === 1 && "bg-secondary/30")}>
-                    <td className="w-9 py-0.5 pl-3 pr-1 font-mono text-xs tabular-nums text-muted-foreground">
-                      {pair.number}.
-                    </td>
-                    <td className="w-[42%] py-0.5">
-                      {pair.white ? (
-                        moveCell(pair.white, whitePly)
-                      ) : (
-                        <span className="text-muted-foreground/40">—</span>
-                      )}
-                    </td>
-                    <td className="w-[42%] py-0.5">{moveCell(pair.black, blackPly)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
       )}
     </div>
   );

@@ -28,6 +28,7 @@ import {
   getTransactionByHash,
   getBlockNumber,
   getAccountByAddress,
+  getTransactionsByAddress,
   NimiqRpcError,
 } from "@/lib/server/nimiq/rpc";
 import { canonicalAddress } from "@/lib/nimiq/address";
@@ -38,6 +39,7 @@ import {
 import {
   getLinkedWallet,
 } from "@/lib/server/nimiq/service";
+import { isAdminPlayer } from "@/lib/server/admin";
 import {
   fastStorePayoutStore,
   withPayoutLock,
@@ -81,31 +83,66 @@ export async function preparePayoutClaim(
 ): Promise<PayoutClaimIntent> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) throw new PayoutClaimError("not-found", "Tournament not found", 404);
-  if (doc.creatorId !== hostId) {
-    throw new PayoutClaimError("not-host", "Only the host can send prizes", 403);
+  if (doc.creatorId !== hostId && !(await isAdminPlayer(hostId))) {
+    // ChainMate (the platform admin) is the sole prize distributor and may
+    // act on any event; a host may still act on their own.
+    throw new PayoutClaimError("not-host", "Only ChainMate or the host can send prizes", 403);
   }
   if (doc.status !== "completed") {
     throw new PayoutClaimError("not-completed", "Prizes can be sent only after the tournament completes", 409);
   }
 
   const store: PayoutStore = fastStorePayoutStore;
-  const payout = await store.get(tournamentId, targetPlayerId);
+  let payout = await store.get(tournamentId, targetPlayerId);
   if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
   if (payout.status === "sent" || payout.status === "verified") {
     throw new PayoutClaimError("already-sent", "This prize has already been sent", 409);
   }
   if (payout.status === "dispatching") {
-    throw new PayoutClaimError(
-      "dispatch-in-flight",
-      "An automatic payout dispatch was started for this prize. Use Check status to resolve it first.",
-      409,
-    );
+    // A WAL row can only be released when no transaction can possibly be
+    // in flight from it. On a signing node, dispatch re-broadcasts the
+    // recorded intent (recovery) and must NOT be bypassed — the host-wallet
+    // path refuses, and the sweep resolves the row. But on a read-only
+    // endpoint (or a missing signer) nothing was ever broadcast: the row is
+    // dead weight that blocks this prize forever with "send in progress" —
+    // the exact stuck state legacy tournaments (pre-release fix) are in.
+    // sendPayout's unlock pre-check guarantees no broadcast occurred on an
+    // endpoint that cannot sign, so releasing here is provably safe. The
+    // release lives in PREPARE (not only in the claim) because prepare is
+    // what both the UI's "pay from wallet" entry point and the claim itself
+    // hit first — a release that runs only after prepare could never run.
+    const { payoutEndpointCannotSign } = await import("@/lib/server/tournament-payouts-dispatch");
+    if (!(await payoutEndpointCannotSign())) {
+      throw new PayoutClaimError(
+        "dispatch-in-flight",
+        "An automatic payout dispatch is in flight on the signing node. Use Check status to resolve it first.",
+        409,
+      );
+    }
+    const released: PayoutRecord = {
+      ...payout,
+      status: "failed",
+      failureReason: "Auto-dispatch unavailable on a read-only endpoint, released for host-wallet payment",
+    };
+    await store.upsert(released);
+    const { mirrorPayouts } = await import("@/lib/server/tournament-payouts");
+    await mirrorPayouts(tournamentId, [released]).catch(() => undefined);
+    payout = released; // the claim below proceeds against the released row
   }
 
-  // Destination: the winner's CURRENT linked wallet (the planning record's
-  // snapshot can be stale after a re-link — the live binding is the truth).
+  // Destination precedence:
+  //   1. the winner's CURRENT linked wallet — the live binding is the truth
+  //      after a re-link (and a binding mirrored to Supabase is now recovered
+  //      even on a cold instance, which is what used to read "needs wallet");
+  //   2. the plan-time destination — the address snapshot recorded when the
+  //      payout was planned (resolved correctly THEN, and better than
+  //      refusing when a cold instance cannot see the binding now);
+  //   3. an ADMIN-set destination lives in the same snapshot field, so it
+  //      falls out of rule 2 naturally.
+  // Only when NEITHER resolves is the prize genuinely unpayable.
   const wallet = await getLinkedWallet(targetPlayerId).catch(() => null);
-  if (!wallet) {
+  const destination = wallet?.address ?? payout.destinationAddress ?? null;
+  if (!destination) {
     throw new PayoutClaimError(
       "winner-no-wallet",
       "The winner has no linked Nimiq wallet yet — they must link one to receive the prize",
@@ -116,10 +153,140 @@ export async function preparePayoutClaim(
   return {
     tournamentId,
     playerId: targetPlayerId,
-    recipientAddress: wallet.address,
+    recipientAddress: destination,
     amountLuna: payout.amountLuna,
     network: NIMIQ_NETWORK,
   };
+}
+
+/**
+ * Discover a prize payment the host ALREADY SENT, from their wallet's
+ * transaction history, and settle the row with it.
+ *
+ * Why this exists: legacy tournaments from before the host-wallet path
+ * released their rows carry a payout the host may have paid out-of-band —
+ * pressing Nimiq Pay and sending 20 NIM directly — with no hash ever
+ * recorded server-side. The row sat at 'sending…' forever even though the
+ * money had long landed. Wallet history lists the host's real outgoing
+ * transactions, so a Check-status that scans it turns "stuck forever" into
+ * "settled in one click" — with every identity gate of a manual claim
+ * (network, sender, recipient, exact amount, executed, replay guard)
+ * enforced by the same claim this calls. Nothing is trusted from the
+ * history entry itself except the hash to look up.
+ *
+ * Returns null when no matching payment exists (NOT an error — the host
+ * may simply not have paid yet).
+ */
+export async function discoverWalletPayout(
+  tournamentId: string,
+  hostId: string,
+  targetPlayerId: string,
+  deps: { store?: PayoutStore; txStore?: NimiqTxStore; max?: number } = {},
+): Promise<PayoutClaimResult | null> {
+  const store = deps.store ?? fastStorePayoutStore;
+  const payout = await store.get(tournamentId, targetPlayerId);
+  if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
+  if (payout.status === "sent" || payout.status === "verified") {
+    return confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store });
+  }
+
+  // The wire facts a real payment must match (this also runs the usual
+  // prepare gates and releases a dead 'dispatching' row).
+  const intent = await preparePayoutClaim(tournamentId, hostId, targetPlayerId);
+  const txStore = deps.txStore ?? fastStoreTxStore;
+
+  const hostWallet = await getLinkedWallet(hostId).catch(() => null);
+  if (!hostWallet) return null;
+
+  let history: Awaited<ReturnType<typeof getTransactionsByAddress>> = [];
+  try {
+    history = await getTransactionsByAddress(hostWallet.address, deps.max ?? 40, {
+      timeoutMs: 10_000,
+    });
+  } catch {
+    return null; // history is an optimisation, never a hard gate
+  }
+
+  const hostCanonical = canonicalAddress(hostWallet.address);
+  const winnerCanonical = canonicalAddress(intent.recipientAddress);
+  const expected = BigInt(intent.amountLuna);
+  const { nimiqNetworkId } = await import("@/lib/nimiq/config");
+  const wantNetwork = nimiqNetworkId(intent.network);
+
+  // Newest first; the first EXACT match (recipient + exact amount, from the
+  // host's own wallet) is the prize. Each candidate is re-verified by the
+  // claim itself — the history entry contributes nothing but the hash.
+  for (const entry of history) {
+    const hash = String(entry.hash ?? "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) continue;
+    if (Number(entry.confirmations ?? 0) < 1) continue;
+    if (canonicalAddress(String(entry.from ?? "")) !== hostCanonical) continue;
+    if (canonicalAddress(String(entry.to ?? "")) !== winnerCanonical) continue;
+    let value: bigint;
+    try {
+      value = BigInt(entry.value);
+    } catch {
+      continue;
+    }
+    if (value !== expected) continue;
+
+    try {
+      return await claimPayoutWithWalletTransaction(tournamentId, hostId, targetPlayerId, hash, {
+        store,
+        txStore,
+      });
+    } catch (err) {
+      // A hash already consumed by ANOTHER settlement (the duplicate-send
+      // case) is not this prize — keep scanning older sends.
+      if (err instanceof PayoutClaimError && err.kind === "already-claimed") continue;
+      throw err;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a prize row to its true state — the ONE action behind every
+ * "Check status" button:
+ *   sent/verified      → refresh confirmations toward verified
+ *   dispatching w/hash → verify the recorded broadcast on-chain
+ *   anything else      → scan the host's wallet history for an unrecorded
+ *                        payment (discover) and settle it if found
+ * Never broadcasts, never pays twice: the replay guard holds for every
+ * path. Returns null only when the row is genuinely still owed.
+ */
+export async function resolvePayoutRow(
+  tournamentId: string,
+  hostId: string,
+  targetPlayerId: string,
+  deps: { store?: PayoutStore; txStore?: NimiqTxStore } = {},
+): Promise<PayoutClaimResult | null> {
+  const store = deps.store ?? fastStorePayoutStore;
+  const payout = await store.get(tournamentId, targetPlayerId);
+  if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
+  if (payout.status === "sent" || payout.status === "verified") {
+    return confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store });
+  }
+  if (payout.status === "dispatching" && payout.payoutTxHash) {
+    const { verifyOutgoingPayout } = await import("@/lib/server/tournament-payouts-dispatch");
+    const verified = await verifyOutgoingPayout(tournamentId, targetPlayerId, { store });
+    return { payout: verified, confirmations: 0 };
+  }
+  const found = await discoverWalletPayout(tournamentId, hostId, targetPlayerId, deps);
+  if (found) return found;
+  // Still owed — surface WHY the row cannot settle, so the host knows the
+  // next action instead of re-pressing the same button.
+  if (payout.status === "dispatching") {
+    const { payoutEndpointCannotSign } = await import("@/lib/server/tournament-payouts-dispatch");
+    if (!(await payoutEndpointCannotSign())) {
+      throw new PayoutClaimError(
+        "dispatch-in-flight",
+        "The automatic payout is still in flight on the signing node — try again in a moment",
+        409,
+      );
+    }
+  }
+  return null;
 }
 
 export interface PayoutClaimResult {
@@ -143,6 +310,22 @@ export async function claimPayoutWithWalletTransaction(
     throw new PayoutClaimError("invalid-hash", "Transaction hash must be 64 hex characters");
   }
 
+  // A settled row must resume (or refuse a second hash) BEFORE prepare —
+  // prepare throws 'already-sent' for it, which would dead-end the client's
+  // retry instead of converging.
+  const preStore = deps.store ?? fastStorePayoutStore;
+  const pre = await preStore.get(tournamentId, targetPlayerId).catch(() => null);
+  if (pre && (pre.status === "verified" || (pre.status === "sent" && pre.payoutTxHash))) {
+    if (pre.status === "verified" || pre.payoutTxHash === txHash) {
+      return confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store: preStore });
+    }
+    throw new PayoutClaimError(
+      "already-sent",
+      "This prize already has a transaction recorded — use Check status; do not send again",
+      409,
+    );
+  }
+
   // Same preparation gates (host, completed, unsettled) — then the plan.
   const intent = await preparePayoutClaim(tournamentId, hostId, targetPlayerId);
 
@@ -153,8 +336,32 @@ export async function claimPayoutWithWalletTransaction(
     const payout = await store.get(tournamentId, targetPlayerId);
     if (!payout) throw new PayoutClaimError("no-payout", "No planned prize for that player", 404);
     if (payout.status === "verified") return { payout, confirmations: 0 };
-    if (payout.status === "sent" || payout.status === "dispatching") {
-      throw new PayoutClaimError("already-sent", "This prize already has a transaction in flight", 409);
+    if (payout.status === "sent") {
+      // Idempotent resume: re-claiming with the SAME hash is the client's
+      // retry path (a lost response, a reload mid-confirmation) — converge
+      // on the current state instead of erroring. A DIFFERENT hash means
+      // the host may have paid twice: refuse, the first transaction stands.
+      if (payout.payoutTxHash === txHash) {
+        const fresh = await confirmSentWalletPayout(tournamentId, hostId, targetPlayerId, { store });
+        return fresh;
+      }
+      throw new PayoutClaimError(
+        "already-sent",
+        "This prize already has a transaction recorded — use Check status; do not send again",
+        409,
+      );
+    }
+    if (payout.status === "dispatching") {
+      // preparePayoutClaim already ran the read-only probe and either
+      // released the row (to 'failed', status above) or refused. Reaching
+      // here still 'dispatching' means a signing node owns the row: the
+      // dispatch may genuinely be mid-flight — recovery, not replacement,
+      // is the safe action.
+      throw new PayoutClaimError(
+        "dispatch-in-flight",
+        "An automatic payout dispatch is in flight on the signing node. Use Check status to resolve it first.",
+        409,
+      );
     }
 
     // --- durable replay guard: one hash can settle exactly one prize, ever.
@@ -299,15 +506,43 @@ export async function claimPayoutWithWalletTransaction(
     }
     const confirmations = height - blockNumber + 1;
     if (confirmations < PAYOUT_CONFIRMATIONS) {
-      throw new PayoutClaimError(
-        "insufficient-confirmations",
-        `This transaction has ${Math.max(confirmations, 0)} confirmations, ${PAYOUT_CONFIRMATIONS} required. Wait a moment and press Check status again.`,
-        409,
-      );
+      // Below the verification threshold — but the transaction has passed
+      // every identity gate (network, host sender, winner recipient, exact
+      // amount, executed) and sits ON THE CHAIN with at least one
+      // confirmation. The money has moved; refusing to record it here kept
+      // the row 'pending' with the pay button still showing, and hosts paid
+      // a SECOND time chasing a payment that was already finalising. So:
+      // commit the hash now — the durable replay guard makes any further
+      // claim with this hash impossible — mark the payout 'sent', and let
+      // confirmSentWalletPayout advance it to 'verified' at 8.
+      await txStore.insertConsumed({
+        network: intent.network,
+        txHash,
+        playerId: hostId,
+        kind: "verification", // outgoing settlements are not entries
+        tournamentId,
+        sender,
+        recipient,
+        amountLuna: amountLuna.toString(),
+        blockNumber,
+        confirmations,
+      });
+      const sent: PayoutRecord = {
+        ...payout,
+        status: "sent",
+        payoutTxHash: txHash,
+        sentAt: Date.now(),
+        failureReason: null,
+        destinationAddress: intent.recipientAddress,
+      };
+      await store.upsert(sent);
+      const { mirrorPayouts } = await import("@/lib/server/tournament-payouts");
+      await mirrorPayouts(tournamentId, [sent]).catch(() => undefined);
+      return { payout: sent, confirmations };
     }
 
-    // --- All gates passed. Consume the hash durably (replay guard) and mark
-    // the payout sent with the real hash.
+    // --- All gates passed at threshold. Consume the hash durably (replay
+    // guard) and mark the payout sent with the real hash.
     await txStore.insertConsumed({
       network: intent.network,
       txHash,
@@ -345,8 +580,8 @@ export async function confirmSentWalletPayout(
 ): Promise<PayoutClaimResult> {
   const doc = await getTournamentDoc(tournamentId);
   if (!doc) throw new PayoutClaimError("not-found", "Tournament not found", 404);
-  if (doc.creatorId !== hostId) {
-    throw new PayoutClaimError("not-host", "Only the host can manage prizes", 403);
+  if (doc.creatorId !== hostId && !(await isAdminPlayer(hostId))) {
+    throw new PayoutClaimError("not-host", "Only ChainMate or the host can manage prizes", 403);
   }
   const store = deps.store ?? fastStorePayoutStore;
   const payout = await store.get(tournamentId, targetPlayerId);

@@ -27,6 +27,14 @@ function formatEntryFee(luna: string): string {
   }
 }
 
+/** Share line for a prize preset: what the top places take home. */
+function presetShareLabel(preset: TournamentSummary["prizePreset"]): string | null {
+  if (preset === "top3") return "60/25/15";
+  if (preset === "top5") return "45/25/15/10/5";
+  if (preset === "winner") return "winner takes all";
+  return null;
+}
+
 const STATUS_LABEL: Record<TournamentStatus, string> = {
   draft: "Draft",
   registration: "Open",
@@ -74,20 +82,32 @@ export default function TournamentsPage() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const open = (tournaments ?? []).filter((t) => t.status === "registration");
-  const running = (tournaments ?? []).filter(
-    (t) => t.status === "in_progress" || t.status === "locked",
+  const all = tournaments ?? [];
+  const now = Date.now();
+  // Four clean sections, newest-relevant first: what you can join, what's
+  // running, what's scheduled, what's over. A tournament never appears in
+  // two sections.
+  const open = all.filter((t) => t.status === "registration");
+  const running = all.filter((t) => t.status === "in_progress" || t.status === "locked");
+  const upcoming = all.filter(
+    (t) =>
+      t.status === "draft" &&
+      t.scheduledStartAt != null &&
+      t.scheduledStartAt > now,
   );
-  const done = (tournaments ?? []).filter(
-    (t) => t.status === "completed" || t.status === "cancelled" || t.status === "draft",
+  const past = all.filter(
+    (t) =>
+      !open.includes(t) &&
+      !running.includes(t) &&
+      !upcoming.includes(t),
   );
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+    <div className="shell px-4 py-12 sm:px-6 lg:py-16">
       <PageHeader
         eyebrow="Compete"
         title="Tournaments"
-        description="Free community events. Join while registration is open, play on real ChainMate boards, climb the standings."
+        description="Join while registration is open and climb the standings."
         actions={
           <Link
             href="/tournaments/create"
@@ -119,7 +139,8 @@ export default function TournamentsPage() {
           {[
             { label: "Open for registration", live: true, list: open },
             { label: "Running now", live: true, list: running },
-            { label: "Past & upcoming", live: false, list: done },
+            { label: "Upcoming", live: false, list: upcoming },
+            { label: "Past", live: false, list: past },
           ]
             .filter((g) => g.list.length > 0)
             .map((group, gi) => (
@@ -128,7 +149,7 @@ export default function TournamentsPage() {
                 className="animate-fade-in-up"
                 style={{ animationDelay: `${gi * 60}ms` }}
               >
-                <SectionLabel live={group.live && group.label !== "Past & upcoming"}>
+                <SectionLabel live={group.live}>
                   {group.label}
                 </SectionLabel>
                 <div className="mt-3 space-y-2.5">
@@ -213,6 +234,20 @@ function TournamentCard({
               <span className="inline-flex items-center gap-1">
                 <Coins className="h-3 w-3" aria-hidden />
                 Free
+              </span>
+            )}
+            {/* The pool, where there is one: live verified pool (when the
+                server has resolved entries) or the entry fee × field, plus
+                the preset split so players see what 1st/2nd/3rd get. */}
+            {t.entryFeeLuna && t.entryFeeLuna !== "0" && (
+              <span className="inline-flex items-center gap-1 text-primary">
+                <Trophy className="h-3 w-3" aria-hidden />
+                {t.verifiedPoolLuna && t.verifiedPoolLuna !== "0"
+                  ? `${formatEntryFee(t.verifiedPoolLuna)} NIM pool`
+                  : `up to ${formatEntryFee((BigInt(t.entryFeeLuna) * BigInt(Math.max(t.playerCount, 1))).toString())} NIM pool`}
+                {presetShareLabel(t.prizePreset) &&
+                  t.prizePreset !== "winner" &&
+                  ` · ${presetShareLabel(t.prizePreset)}`}
               </span>
             )}
             {hostName && <span className="truncate">Host: {hostName}</span>}

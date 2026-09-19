@@ -82,8 +82,11 @@ export function CaptureTray({ fen, side, pieceSet, className }: CaptureTrayProps
             <span
               key={`${type}-${i}`}
               /* Overlapped slightly: a long tray of eight pawns would otherwise
-                 push the rating and the clock out of a narrow card. */
-              className="-ml-0.5 h-4 w-4 shrink-0 first:ml-0"
+                 push the rating and the clock out of a narrow card. A soft
+                 halo lifts the artwork off the dark card — the black pieces
+                 are near-black on a near-black tray, and without it the tray
+                 reads as an empty row of smudges. */
+              className="-ml-0.5 h-4 w-4 shrink-0 first:ml-0 [&>svg]:drop-shadow-[0_0_2px_hsl(var(--piece-light)/0.55)]"
             >
               {Piece ? <Piece /> : null}
             </span>

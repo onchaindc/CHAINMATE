@@ -111,6 +111,7 @@ function fullDoc(partial: {
     minPlayers: null,
     startedAt: null,
     completedAt: null,
+    nextRoundAt: null,
     currentRound: 0,
     totalRounds: 0,
     winnerId: null,

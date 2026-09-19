@@ -44,7 +44,8 @@ import { cn } from "@/lib/utils";
  * placeholder, and no new endpoints were added for it.
  */
 
-const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
+/** Quick-play pool. Everything here parses everywhere via lib/clocks. */
+const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0"] as const;
 
 /** Live feed and unfinished games move on their own, so this refreshes. */
 const POLL_MS = 10_000;
@@ -68,7 +69,7 @@ export function Lobby() {
   const match = useMatchmaking();
   const [data, setData] = useState<LobbyData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [timeControl, setTimeControl] = useState<string>("10 + 0");
+  const [timeControl, setTimeControl] = useState<string>("5 + 0");
   const [challenging, setChallenging] = useState<string | null>(null);
 
   const playerId = identity.playerId;
@@ -145,6 +146,22 @@ export function Lobby() {
     }
     for (const info of Object.values(data?.players ?? {})) {
       if (info.name) map[info.id] = info.name;
+    }
+    return map;
+  }, [data?.players, data?.friends]);
+
+  /** Full player info (names + avatars) for the game rows, with friends
+      folded in so a fresh friend's row still has a face. */
+  const mergedPlayers = useMemo(() => {
+    const map: Record<string, PlayerInfo> = { ...(data?.players ?? {}) };
+    for (const f of data?.friends ?? []) {
+      map[f.playerId] = {
+        id: f.playerId,
+        name: f.username,
+        rating: f.rating,
+        country: f.country,
+        avatarUrl: f.avatarUrl,
+      };
     }
     return map;
   }, [data?.players, data?.friends]);
@@ -241,7 +258,7 @@ export function Lobby() {
                 {resume.length > 1 && (
                   <div className="mt-4 divide-y divide-border/50 border-t border-border/60 pt-1">
                     {resume.slice(1).map((g) => (
-                      <GameRow key={g.id} game={g} me={playerId} names={names} />
+                      <GameRow key={g.id} game={g} me={playerId} players={mergedPlayers} />
                     ))}
                   </div>
                 )}
@@ -255,7 +272,7 @@ export function Lobby() {
                 </p>
 
                 <div
-                  className="mt-4 grid max-w-md grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                  className="mt-4 grid max-w-md grid-cols-4 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
                   role="radiogroup"
                   aria-label="Time control"
                 >
@@ -377,7 +394,7 @@ export function Lobby() {
                       game={g}
                       me={playerId}
                       delta={deltas.get(g.id) ?? null}
-                      names={names}
+                      players={mergedPlayers}
                     />
                   ))}
                 </div>
@@ -398,13 +415,11 @@ export function Lobby() {
             className="[animation-delay:60ms]"
           />
 
-          {/* Friends — a known opponent beats a random one. */}
+          {/* Friends — a known opponent beats a random one. The list itself is
+              the affordance: every name links to a profile, so a separate
+              "Manage" chrome link next to the heading was noise. */}
           <section className="animate-fade-in-up [animation-delay:120ms]">
-            <SectionLabel
-              aside={<Link href="/profile" className="hover:text-foreground">Manage</Link>}
-            >
-              Friends
-            </SectionLabel>
+            <SectionLabel>Friends</SectionLabel>
             <div className="mt-3 overflow-hidden rounded-lg border border-border/70 bg-card/50">
               {data === null ? (
                 <LoadingRows rows={2} />
@@ -428,11 +443,34 @@ export function Lobby() {
                     const name = guestDisplayName(f.username);
                     return (
                       <li key={f.playerId} className="flex items-center gap-2.5 px-3 py-2">
-                        <PlayerAvatar name={name} size="sm" />
+                        {/* The real picture when one exists — the friends list
+                            is where faces are expected. */}
+                        {!f.isGuest && f.username ? (
+                          <Link
+                            href={`/players/${encodeURIComponent(f.username)}`}
+                            className="shrink-0"
+                            aria-label={`${name}'s profile`}
+                          >
+                            <PlayerAvatar name={name} avatarUrl={f.avatarUrl} size="sm" />
+                          </Link>
+                        ) : (
+                          <PlayerAvatar name={name} avatarUrl={f.avatarUrl} size="sm" />
+                        )}
                         <div className="min-w-0 flex-1">
                           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                             <CountryFlag code={f.country} />
-                            <span className="truncate">{name}</span>
+                            {!f.isGuest && f.username ? (
+                              /* The name IS the profile link — clicking a
+                                 friend's name goes to their profile. */
+                              <Link
+                                href={`/players/${encodeURIComponent(f.username)}`}
+                                className="truncate underline-offset-2 hover:underline"
+                              >
+                                {name}
+                              </Link>
+                            ) : (
+                              <span className="truncate">{name}</span>
+                            )}
                           </p>
                           <p className="font-mono text-2xs tabular-nums text-muted-foreground">
                             {f.rating}

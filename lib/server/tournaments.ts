@@ -326,6 +326,7 @@ export async function createTournament(
     cancelReason: null,
     startedAt: null,
     completedAt: null,
+    nextRoundAt: null,
     currentRound: 0,
     totalRounds: 0,
     winnerId: null,
@@ -437,6 +438,14 @@ async function transitionTournamentInner(
     // transitionTournament only ever arrives from the HOST (the actor check
     // above), so this door may refuse on unpaid entries; the time-driven
     // callers below pass "authority" and drop them instead.
+    //
+    // Idempotent: if the event is ALREADY running, the host's click succeeds
+    // — it may have raced the auto-start sweep or a double-click, and "the
+    // tournament was already started elsewhere" read like a catastrophic
+    // desync to a host staring at a working event. Return the live doc.
+    if (doc.status === "in_progress") {
+      return { ok: true, doc };
+    }
     return startTournamentNow(doc, "host");
   }
 
@@ -505,6 +514,29 @@ function totalRoundsFor(doc: TournamentDocument, playerCount: number): number {
   if (doc.format === "knockout") return knockoutRoundCount(playerCount);
   if (doc.format === "swiss") return doc.swissRounds ?? SWISS_DEFAULT_ROUNDS;
   return 0; // arena has no rounds
+}
+
+/**
+ * Intermission between rounds (Swiss / knockout): after a round's LAST game
+ * ends, the next round is scheduled this many milliseconds later rather than
+ * dealt instantly. Players get a breather, the tournament page shows a
+ * round-ended banner with a countdown, and nobody finds a fresh board dealt
+ * while they were reading the result. The NEXT round's clock does not start
+ * until both players arrive anyway (see arriveHostedGame) — the two
+ * mechanisms compound instead of stacking waits.
+ *
+ * Overridable via TOURNAMENT_ROUND_INTERMISSION_MS (ms) — tests run with 0
+ * so progression stays synchronous under `bun test`.
+ */
+export const ROUND_INTERMISSION_MS = parseIntermissionMs();
+
+function parseIntermissionMs(): number {
+  const raw = process.env.TOURNAMENT_ROUND_INTERMISSION_MS;
+  if (raw != null && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  return 60_000;
 }
 
 /* ------------------------------------------------------------------ */
@@ -618,10 +650,18 @@ async function startTournamentNow(
         .eq("id", doc.id)
         .maybeSingle();
       if (mirrorRow?.status === "in_progress") {
+        // The durable mirror says the event IS running while the live doc
+        // lags — a half-started wedge. Heal it by adopting the mirror's
+        // status instead of failing: the fixtures exist (the mirror moved
+        // only when the start committed), so the host sees a working event.
         const healed = await transitionTournamentStatus(doc.id, "in_progress", doc.status);
         if (!healed) {
-          // Another instance is starting it right now — report the race honestly.
-          return { ok: false, error: "The tournament was already started elsewhere" };
+          // Another instance is healing the same wedge right now; from this
+          // caller's chair the event simply started — say so.
+          const fresh = await getTournamentDoc(doc.id);
+          if (fresh) fresh.status = "in_progress";
+          if (fresh) return { ok: true, doc: fresh };
+          return { ok: true, doc };
         }
       }
     }
@@ -656,12 +696,20 @@ async function startTournamentNow(
     }
   }
   const won = await transitionTournamentStatus(doc.id, doc.status, "in_progress");
-  if (!won) return { ok: false, error: "The tournament was already started elsewhere" };
+  if (!won) {
+    // Lost the cross-instance race: another caller started the event a
+    // millisecond earlier. That is SUCCESS for this caller — the event they
+    // clicked Start on is running. Report it as such (idempotent start).
+    const fresh = await getTournamentDoc(doc.id);
+    if (fresh && fresh.status === "in_progress") return { ok: true, doc: fresh };
+    return { ok: false, error: "The tournament could not be started — try again" };
+  }
 
   doc.status = "in_progress";
   doc.startedAt = Date.now();
   doc.totalRounds = totalRoundsFor(doc, activeEntryCount(doc));
   doc.currentRound = 0;
+  doc.nextRoundAt = null;
   doc.standings = recomputeStandings(doc);
   await writeTournamentDoc(doc);
 
@@ -839,6 +887,10 @@ export async function runTournamentMaintenance(): Promise<void> {
       }
       if (doc.status === "in_progress") {
         await withTournamentLock(doc.id, () => finalizeArenaIfDue(doc));
+        // Intermission: deal a scheduled round whose break has elapsed. Runs
+        // before progression so a due round is never pre-empted by a sweep
+        // that would see the previous round as "complete but not advanced".
+        await withTournamentLock(doc.id, () => fireDueRoundIfScheduled(doc).catch(() => undefined));
         // Stale-round recovery: a crash between a result landing and round
         // generation (or between the last game of a final round and
         // completion) must not leave the event frozen. ensureNextRoundInner
@@ -1118,6 +1170,53 @@ export async function deleteTournament(
     const thirdPartyPaid = doc.entries.some(
       (e) => e.paid && e.leftAt === undefined && e.playerId !== doc.creatorId,
     );
+    // OUTSTANDING REFUNDS BLOCK DELETION — for admins too. Deleting the
+    // document destroys the refund ledger, and an erased obligation reads
+    // as "nothing owed" to every reconciliation path: it is the one way
+    // players' fees can silently vanish. Materialise anything missing
+    // first (an admin-cancelled event may never have had rows written),
+    // then require every refund to be verified before the record goes.
+    let refundsOutstanding = false;
+    if (isPaidTournamentDoc(doc)) {
+      try {
+        const paid = await listPaidEntries(tournamentId);
+        if (paid.length > 0) {
+          doc.refunds = doc.refunds ?? {};
+          for (const p of paid) {
+            if (!doc.refunds[p.playerId]) {
+              doc.refunds[p.playerId] = {
+                playerId: p.playerId,
+                entryTxHash: p.txHash,
+                amountLuna: p.amountLuna.toString(),
+                status: "owed",
+                refundTxHash: null,
+                attempts: 0,
+                lastError: null,
+                createdAt: Date.now(),
+                verifiedAt: null,
+              };
+            }
+          }
+          refundsOutstanding = Object.values(doc.refunds).some((r) => r.status !== "verified");
+          if (refundsOutstanding) {
+            await writeTournamentDoc(doc);
+            doc.payoutStatus = "refund_required";
+            await writeTournamentDoc(doc);
+          }
+        }
+      } catch {
+        // Ledger unavailable: treat as outstanding and refuse — never
+        // destroy a document that MIGHT owe money.
+        refundsOutstanding = isPaidTournamentDoc(doc);
+      }
+    }
+    if (refundsOutstanding) {
+      return {
+        ok: false,
+        error:
+          "Entry-fee refunds are still outstanding. Return every fee (each player's row on the tournament page) before deleting.",
+      };
+    }
     const hostMayDelete =
       doc.creatorId === playerId &&
       !thirdPartyPaid &&
@@ -1790,7 +1889,7 @@ async function maybeProgressAfterResult(tournamentId: string): Promise<void> {
     }
     // Every match resolved — build the next round. Byes can make
     // winners.length odd: an odd winner gets a free pass (documented).
-    await ensureNextRoundInner(tournamentId);
+    await scheduleNextRoundAfterIntermission(tournamentId);
     return;
   }
 
@@ -1807,8 +1906,50 @@ async function maybeProgressAfterResult(tournamentId: string): Promise<void> {
       await completeTournamentInner(tournamentId, null);
       return;
     }
-    await ensureNextRoundInner(tournamentId);
+    await scheduleNextRoundAfterIntermission(tournamentId);
   }
+}
+
+/**
+ * A round just finished but more rounds remain: schedule the next one after
+ * the intermission instead of dealing it on top of the result screen.
+ * Idempotent: a second call (race, retry, the maintenance sweep) sees the
+ * scheduled instant already set and leaves it alone.
+ */
+async function scheduleNextRoundAfterIntermission(tournamentId: string): Promise<void> {
+  const doc = await getTournamentDoc(tournamentId);
+  if (!doc || doc.status !== "in_progress") return;
+  const remaining =
+    doc.format === "swiss"
+      ? (doc.swissRounds ?? SWISS_DEFAULT_ROUNDS) - doc.currentRound
+      : doc.totalRounds - doc.currentRound;
+  if (remaining <= 0) {
+    // No rounds left — this was the final one; complete now (standings win).
+    await completeTournamentInner(tournamentId, null);
+    return;
+  }
+  if (doc.nextRoundAt != null) return; // already scheduled
+  doc.nextRoundAt = Date.now() + ROUND_INTERMISSION_MS;
+  await writeTournamentDoc(doc);
+  // Zero intermission (tests, or an instant-flow deployment): fire the round
+  // right here so progression never depends on the maintenance sweep running.
+  if (ROUND_INTERMISSION_MS === 0) {
+    await fireDueRoundIfScheduled(doc);
+  }
+}
+
+/**
+ * Fire a scheduled round whose intermission has elapsed (lock held).
+ * Idempotent: clears the instant BEFORE generation so a concurrent sweep
+ * cannot double-deal; ensureNextRoundInner is itself a no-op when the round
+ * is already open.
+ */
+async function fireDueRoundIfScheduled(doc: TournamentDocument): Promise<void> {
+  if (doc.status !== "in_progress") return;
+  if (doc.nextRoundAt == null || Date.now() < doc.nextRoundAt) return;
+  doc.nextRoundAt = null;
+  await writeTournamentDoc(doc);
+  await ensureNextRoundInner(doc.id).catch(() => undefined);
 }
 
 /**
@@ -1927,6 +2068,8 @@ export async function getTournamentDetail(
   myActiveGameId: string | null;
   entryNames: Record<string, string>;
   payouts?: TournamentPayoutLine[];
+  /** True verified prize pool in luna (paid events) — the ledger sum. */
+  verifiedPoolLuna?: string | null;
   refunds?: TournamentRefundLine[];
 } | null> {
   await openDueTournaments();
@@ -1992,6 +2135,11 @@ export async function getTournamentDetail(
     }
   }
 
+  // The true verified pool travels with every paid detail payload — the UI
+  // header uses it instead of summing payout rows (which under-reports when
+  // the field is shorter than the preset's rank count).
+  const verifiedPool = await verifiedPrizePoolOf(doc).catch(() => 0n);
+
   // Refund lines for paid events (cancel / leave-before-lock) — UI-safe.
   let refunds: TournamentRefundLine[] | undefined;
   if (doc.refunds && Object.keys(doc.refunds).length > 0) {
@@ -2017,6 +2165,7 @@ export async function getTournamentDetail(
     myActiveGameId: myMatch?.gameId ?? null,
     entryNames,
     payouts,
+    verifiedPoolLuna: verifiedPool > 0n ? verifiedPool.toString() : null,
   };
 }
 
@@ -2037,6 +2186,10 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
     startedAt: doc.startedAt,
     completedAt: doc.completedAt,
     createdAt: doc.createdAt,
+    /** Intermission countdown: the instant the next round will be dealt. */
+    nextRoundAt: doc.nextRoundAt ?? null,
+    /** Client-side mirror of ROUND_INTERMISSION_MS (UI copy uses it). */
+    roundIntermissionMs: ROUND_INTERMISSION_MS,
     currentRound: doc.format === "arena" ? undefined : doc.currentRound || undefined,
     totalRounds: doc.format === "arena" ? undefined : doc.totalRounds || undefined,
     winnerId: doc.winnerId,
@@ -2052,6 +2205,20 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
   };
 }
 
+/**
+ * The TRUE verified prize pool for a paid tournament — the exact sum of
+ * verified entry consumptions, read fresh from the ledger. The payout rows'
+ * sum is NOT the pool: with a short field (4 players in a top-5 event) the
+ * last rank has nobody to pay, and summing only the created rows reported
+ * "380 NIM" for a 400 NIM pool — the shortfall was real money correctly
+ * unallocated, not missing. The card and the purse header show this number.
+ */
+export async function verifiedPrizePoolOf(doc: TournamentDocument): Promise<bigint> {
+  if (!doc.entryFeeLuna || doc.entryFeeLuna === "0") return 0n;
+  const { getVerifiedPrizePool } = await import("@/lib/server/tournament-economy");
+  return getVerifiedPrizePool(doc.id);
+}
+
 export async function listTournaments(opts?: {
   status?: TournamentStatus;
   limit?: number;
@@ -2061,7 +2228,13 @@ export async function listTournaments(opts?: {
   const summaries: TournamentSummary[] = [];
   const playerIds = new Set<string>();
   for (const doc of docs) {
-    summaries.push(summaryOf(doc, activeEntryCount(doc)));
+    const summary = summaryOf(doc, activeEntryCount(doc));
+    // True verified pool for paid events, so tournament cards can show the
+    // real purse (never a client-side estimate).
+    if (doc.entryFeeLuna && doc.entryFeeLuna !== "0") {
+      summary.verifiedPoolLuna = (await verifiedPrizePoolOf(doc).catch(() => 0n)).toString();
+    }
+    summaries.push(summary);
     playerIds.add(doc.creatorId);
     if (doc.winnerId) playerIds.add(doc.winnerId);
   }

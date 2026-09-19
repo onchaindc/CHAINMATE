@@ -18,6 +18,8 @@
  */
 
 import { getGameStorage } from "@/lib/server/storage";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseConfigured } from "@/lib/supabase/config";
 import { profileForPlayerId } from "@/lib/supabase/db";
 
 const BANS_KEY = "chainmate:admin:bans";
@@ -34,6 +36,23 @@ const PASSCODE_KEY = "chainmate:admin:passcode";
    session cannot open the operator's console. */
 
 import { createHash, randomBytes } from "node:crypto";
+import type { NextRequest } from "next/server";
+
+/**
+ * The dashboard's passcode token, from wherever the caller put it: the
+ * `X-Admin-Session` header (the idiomatic GET channel), the `token` query
+ * parameter, or the JSON body's `passcodeToken`. Every admin endpoint
+ * validates the session through passcodeSessionValid with THIS value, so
+ * a GET that forgets to pass it fails closed — the dashboard shows the
+ * unlock card instead of pretending the data is empty.
+ */
+export function adminSessionToken(req: NextRequest): string | null {
+  const header = req.headers.get("x-admin-session");
+  if (header) return header;
+  const query = req.nextUrl.searchParams.get("token");
+  if (query) return query;
+  return null;
+}
 
 export interface PasscodeGate {
   ok: boolean;
@@ -76,50 +95,100 @@ export async function setPasscode(code: string, confirm: string): Promise<Passco
   const salt = randomBytes(16).toString("hex");
   const record: PasscodeRecord = { salt, hash: hashPasscode(code, salt) };
   await getGameStorage().set(PASSCODE_KEY, JSON.stringify(record));
-  const token = randomBytes(24).toString("hex");
-  passcodeSessions.set(token, Date.now() + SESSION_TTL_MS);
-  return { ok: true, token };
+  return { ok: true, token: await mintSession() };
 }
 
 /** 30 minutes of idleness re-locks the console. */
 const SESSION_TTL_MS = 30 * 60 * 1000;
-const passcodeSessions = new Map<string, number>();
 
-function pruneSessions(): void {
-  const now = Date.now();
-  for (const [token, expires] of passcodeSessions) {
-    if (expires < now) passcodeSessions.delete(token);
+/* Sessions live in the durable game store (the same store the salted hash and
+   the bans map use) — NOT in process memory. An in-memory Map minted the
+   token on whichever server instance served the unlock, and every OTHER
+   instance then failed validation: the dashboard randomly flipped to the
+   lock screen mid-session, the accounts endpoint answered 423, and that
+   423's message landed in the operator's own error banner. On serverless
+   hosting the durable store is the only storage all instances share. */
+const SESSIONS_KEY = "chainmate:admin:passcode-sessions";
+
+type SessionMap = Record<string, number>;
+
+let sessionWriteChain: Promise<unknown> = Promise.resolve();
+function withSessionLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = sessionWriteChain.then(fn, fn);
+  sessionWriteChain = run.catch(() => undefined);
+  return run;
+}
+
+async function readSessions(): Promise<SessionMap> {
+  const raw = await getGameStorage().get(SESSIONS_KEY);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as SessionMap;
+  } catch {
+    return {};
   }
 }
 
-/** Verify the code and mint a fresh 30-minute session token. */
+function pruneSessions(map: SessionMap): SessionMap {
+  const now = Date.now();
+  const out: SessionMap = {};
+  for (const [token, expires] of Object.entries(map)) {
+    if (expires >= now) out[token] = expires;
+  }
+  return out;
+}
+
+/** Mint a fresh 30-minute session token, durably. */
+async function mintSession(): Promise<string> {
+  const token = randomBytes(24).toString("hex");
+  await withSessionLock(async () => {
+    const map = pruneSessions(await readSessions());
+    map[token] = Date.now() + SESSION_TTL_MS;
+    await getGameStorage().set(SESSIONS_KEY, JSON.stringify(map));
+  });
+  return token;
+}
+
+/**
+ * Verify the code and mint a fresh 30-minute session token.
+ *
+ * Reading the passcode record BEFORE pruning/minting keeps a failed attempt
+ * from touching the session store at all.
+ */
 export async function verifyPasscode(code: string): Promise<PasscodeGate> {
   const record = await readPasscode();
   if (!record) return { ok: false, error: "No passcode is set yet" };
-  pruneSessions();
   if (hashPasscode(code, record.salt) !== record.hash) {
     return { ok: false, error: "Wrong code" };
   }
-  const token = randomBytes(24).toString("hex");
-  passcodeSessions.set(token, Date.now() + SESSION_TTL_MS);
-  return { ok: true, token };
+  return { ok: true, token: await mintSession() };
 }
 
-/** Slide the session forward; false once it expired (re-ask for the code). */
-export function passcodeSessionValid(token: string | null): boolean {
+/**
+ * Slide the session forward; false once it expired (re-ask for the code).
+ * The sliding expiry write rides the same lock as minting, so a validate
+ * racing an unlock can never resurrect a pruned token.
+ */
+export async function passcodeSessionValid(token: string | null): Promise<boolean> {
   if (!token) return false;
-  pruneSessions();
-  const expires = passcodeSessions.get(token);
-  if (expires === undefined || expires < Date.now()) {
-    passcodeSessions.delete(token);
-    return false;
-  }
-  passcodeSessions.set(token, Date.now() + SESSION_TTL_MS);
-  return true;
+  return withSessionLock(async () => {
+    const map = pruneSessions(await readSessions());
+    const expires = map[token];
+    if (expires === undefined) return false;
+    map[token] = Date.now() + SESSION_TTL_MS;
+    await getGameStorage().set(SESSIONS_KEY, JSON.stringify(map));
+    return true;
+  });
 }
 
-export function invalidatePasscodeSession(token: string | null): void {
-  if (token) passcodeSessions.delete(token);
+export async function invalidatePasscodeSession(token: string | null): Promise<void> {
+  if (!token) return;
+  await withSessionLock(async () => {
+    const map = await readSessions();
+    if (!(token in map)) return;
+    delete map[token];
+    await getGameStorage().set(SESSIONS_KEY, JSON.stringify(map));
+  });
 }
 
 export interface BanRecord {
@@ -237,7 +306,31 @@ function withBanLock<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function getBan(playerId: string): Promise<BanRecord | null> {
   const bans = await readBans();
-  return bans[playerId] ?? null;
+  const local = bans[playerId] ?? null;
+  if (local) return local;
+  // Cold-start recovery: a fresh serverless instance has an empty fast
+  // store, which used to silently LIFT every restriction — a restricted
+  // account could wait out a redeploy and play again. The durable mirror
+  // (0017) is authority-backed (service key), so a recovered row is as
+  // trustworthy as the original. Healed into the fast store so every
+  // later read stays local.
+  if (!supabaseConfigured()) return null;
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("admin_bans")
+    .select("player_id, reason, banned_by, banned_at")
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const recovered: BanRecord = {
+    playerId: data.player_id,
+    reason: data.reason,
+    bannedBy: data.banned_by,
+    bannedAt: Date.parse(String(data.banned_at)) || 0,
+  };
+  await getGameStorage().set(BANS_KEY, JSON.stringify({ ...bans, [playerId]: recovered }));
+  return recovered;
 }
 
 export async function listBans(): Promise<BanRecord[]> {
@@ -260,6 +353,7 @@ export async function banPlayer(
     };
     bans[playerId] = record;
     await getGameStorage().set(BANS_KEY, JSON.stringify(bans));
+    await mirrorBan(record);
     return record;
   });
 }
@@ -270,8 +364,39 @@ export async function unbanPlayer(playerId: string): Promise<boolean> {
     if (!bans[playerId]) return false;
     delete bans[playerId];
     await getGameStorage().set(BANS_KEY, JSON.stringify(bans));
+    await deleteBanMirror(playerId);
     return true;
   });
+}
+
+/* Durable mirror (supabase/migrations/0017): the ban ledger survives cold
+   starts. Best-effort — a mirror failure logs and moves on, the fast store
+   remains the runtime source of truth while it is warm. */
+
+function reportBanMirrorError(scope: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[admin] ${scope} mirror failed: ${message}`);
+}
+
+async function mirrorBan(record: BanRecord): Promise<void> {
+  if (!supabaseConfigured()) return;
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  const { error } = await admin.from("admin_bans").upsert({
+    player_id: record.playerId,
+    reason: record.reason,
+    banned_by: record.bannedBy,
+    banned_at: new Date(record.bannedAt).toISOString(),
+  });
+  if (error) reportBanMirrorError("ban upsert", error);
+}
+
+async function deleteBanMirror(playerId: string): Promise<void> {
+  if (!supabaseConfigured()) return;
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  const { error } = await admin.from("admin_bans").delete().eq("player_id", playerId);
+  if (error) reportBanMirrorError("ban delete", error);
 }
 
 export interface BanGate {

@@ -44,6 +44,12 @@ before(async () => {
   delete process.env.NEXT_PUBLIC_SUPABASE_URL;
   delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Hermetic round progression: the engine's intermission defaults to 60s
+  // between rounds, but these suites assert progression synchronously. Pin
+  // the documented test contract BEFORE the first import —
+  // ROUND_INTERMISSION_MS is captured at module load, and hosted.ts
+  // statically pulls the engine in.
+  process.env.TOURNAMENT_ROUND_INTERMISSION_MS = "0";
   hosted = await import("@/lib/server/hosted");
   engine = await import("@/lib/server/tournaments");
   store = await import("@/lib/server/tournament-store");

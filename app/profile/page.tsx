@@ -3,18 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { UserRound, Gamepad2, Globe } from "lucide-react";
+import { Settings, Gamepad2, UserRound } from "lucide-react";
 import { RequireProfile } from "@/components/auth/require-profile";
 import { Button } from "@/components/ui/button";
 import { GameRow } from "@/components/game/game-row";
 import { AchievementGrid } from "@/components/game/achievement-grid";
 import { NimiqWalletCard } from "@/components/profile/nimiq-wallet-card";
 import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header";
-import { AvatarUploadCard } from "@/components/profile/avatar-upload-card";
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { GuestBanner } from "@/components/auth/guest-banner";
-import { COUNTRIES } from "@/lib/countries";
 import { SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
@@ -43,6 +41,7 @@ const ACCOUNT_DELETION_ENABLED = false;
 
 function ProfileContent() {
   const identity = useIdentity();
+  const router = useRouter();
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [games, setGames] = useState<GameState[] | null>(null);
   const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
@@ -61,8 +60,6 @@ function ProfileContent() {
   // guest id otherwise.
   const playerId = identity.playerId;
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
-  const hostedStore = useMemo(() => getStore("hosted") as HostedGameStore, []);
-  const [savingCountry, setSavingCountry] = useState(false);
 
   /**
    * Rating change per game, for the history rows.
@@ -140,8 +137,23 @@ function ProfileContent() {
         ratingDelta={stats?.ratingHistory?.[0]?.change ?? null}
         isGuest={identity.isGuest}
         avatarUrl={identity.avatarUrl ?? stats?.avatarUrl}
+        editableAvatar
         joinedAt={stats?.createdAt}
         badges={stats && provisional && <ProfileBadge>Provisional</ProfileBadge>}
+        /* The gear sits at the top right of the profile: everything that
+            CHANGES the account (username, country, board, wallet) lives in
+            Settings, one click from the summary. */
+        actions={
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Open settings"
+            title="Settings"
+            onClick={() => router.push("/settings")}
+          >
+            <Settings className="h-4 w-4" aria-hidden />
+          </Button>
+        }
         description={
           identity.isGuest
             ? "Guest: casual play, nothing is saved. Sign up for a permanent record."
@@ -160,73 +172,17 @@ function ProfileContent() {
       <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
       {/* ============ LEFT COLUMN — the main contents ============ */}
       <div className="min-w-0 space-y-6">
-      {/* Optional country — editable, shown as a flag next to the name */}
-      <Panel className="flex animate-fade-in-up items-center gap-3 px-4 py-3 [animation-delay:60ms]">
-        <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        <label
-          htmlFor="country"
-          className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground"
-        >
-          Country
-        </label>
-        <select
-          id="country"
-          value={country ?? ""}
-          disabled={savingCountry}
-          onChange={(e) => {
-            const value = e.target.value;
-            setSavingCountry(true);
-            void hostedStore
-              .setCountry(value || null)
-              .then((next) =>
-                setStats((prev) => (prev ? { ...prev, country: next.country } : prev)),
-              )
-              .catch(() => setError("Couldn't save your country. Try again."))
-              .finally(() => setSavingCountry(false));
-          }}
-          className="min-w-0 flex-1 rounded-md border border-border/70 bg-secondary/40 px-2.5 py-1.5 text-sm text-foreground outline-none transition-colors focus:border-primary/50"
-        >
-          <option value="">No country</option>
-          {COUNTRIES.map((c) => (
-            <option key={c.code} value={c.code}>
-              {/* Native <option> renders text only, so no flag component here.
-                  The name alone reads correctly on every platform — an emoji
-                  flag would degrade to bare letters beside it on Windows. */}
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </Panel>
-
-      {/* Username — editable for authenticated users */}
+      {/* Username/country editing moved to Settings — the profile stays a
+          read-only summary with one gear icon leading to the controls. */}
       {!identity.isGuest && !identity.linked && (
         <ErrorNote
           tone="warning"
-          className="mt-6"
           message="Account not linked to a profile yet: sign out and back in to finish setup."
         />
       )}
 
-      {!identity.isGuest && identity.linked && (
-        <ProfileUsernameEditor
-          currentUsername={identity.username}
-          playerId={playerId}
-          onUpdated={(newName) => {
-            setStats((prev) => (prev ? { ...prev, username: newName } : prev));
-            // Sync the identity context so the header and profile display
-            // the new name immediately without requiring a full page refresh.
-            void identity.refresh();
-          }}
-        />
-      )}
-
-      {error && <ErrorNote message={error} className="mt-6" />}
-
       {/* Nimiq wallet binding — real provider flow, server-verified link. */}
       <NimiqWalletCard playerId={playerId} />
-
-      {/* Profile picture — inline camera on the avatar + remove option. */}
-      <AvatarUploadCard className="animate-fade-in-up [animation-delay:70ms]" />
 
       {/* Stats */}
       <StatTiles
@@ -307,7 +263,7 @@ function ProfileContent() {
                     /* Local games are never rated, so they hold the column open
                        with a blank rather than claiming a delta of zero. */
                     delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                    names={game.backend === "local" ? undefined : names}
+                    players={game.backend === "local" ? undefined : players}
                   />
                 ))}
               </div>
@@ -477,119 +433,3 @@ function ConfirmDeleteInput({
   );
 }
 
-function ProfileUsernameEditor({
-  currentUsername,
-  playerId,
-  onUpdated,
-}: {
-  currentUsername: string;
-  playerId: string;
-  onUpdated: (name: string) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [usernameState, setUsernameState] = useState<"idle" | "checking" | "ok" | "taken">("idle");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (newName.trim().length < 3 || newName.trim().toLowerCase() === currentUsername.toLowerCase()) {
-      setUsernameState("idle");
-      return;
-    }
-    if (checkTimer.current) clearTimeout(checkTimer.current);
-    setUsernameState("checking");
-    checkTimer.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/identity/username?value=${encodeURIComponent(newName.trim())}`);
-        if (!res.ok) { setUsernameState("idle"); return; }
-        const data = (await res.json()) as { available?: boolean };
-        setUsernameState(data.available ? "ok" : "taken");
-      } catch { setUsernameState("idle"); }
-    }, 400);
-    return () => { if (checkTimer.current) clearTimeout(checkTimer.current); };
-  }, [newName, currentUsername]);
-
-  const save = async () => {
-    const trimmed = newName.trim();
-    if (trimmed.length < 3) { setError("Username must be at least 3 characters."); return; }
-    if (trimmed.toLowerCase() === currentUsername.toLowerCase()) { setEditing(false); return; }
-    if (usernameState === "taken") { setError("That username is already taken."); return; }
-    setSaving(true);
-    setError(null);
-    try {
-      const token = getIdentityToken();
-      const res = await fetch("/api/players/me", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ playerId, username: trimmed }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(body.error ?? "Failed to update username.");
-      onUpdated(trimmed);
-      setSuccess(true);
-      setEditing(false);
-      setTimeout(() => setSuccess(false), 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update username.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!editing) {
-    return (
-      <div className="mt-4 flex animate-fade-in-up items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3 [animation-delay:80ms]">
-        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Username</span>
-        <span className="flex-1 font-mono text-sm text-foreground">{currentUsername}</span>
-        {success && (
-          <span className="text-2xs text-primary">Saved</span>
-        )}
-        <button
-          type="button"
-          onClick={() => { setEditing(true); setNewName(currentUsername); setError(null); setSuccess(false); }}
-          className="text-2xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Edit
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-4 rounded-lg border border-border/70 bg-card/50 p-4 animate-fade-in-up [animation-delay:80ms]">
-      <label htmlFor="edit-username" className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {currentUsername ? "Edit Username" : "Set Username"}
-      </label>
-      <div className="mt-1.5 flex items-center gap-2">
-        <Input
-          id="edit-username"
-          autoFocus
-          value={newName}
-          maxLength={20}
-          onChange={(e) => { setNewName(e.target.value.replace(/[^A-Za-z0-9_]/g, "")); setUsernameState("idle"); setError(null); }}
-          onKeyDown={(e) => e.key === "Enter" && !saving && void save()}
-          className="flex-1"
-        />
-        <Button size="sm" onClick={() => void save()} disabled={saving || newName.trim().length < 3}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-          Cancel
-        </Button>
-      </div>
-      {usernameState === "ok" && <p className="mt-1 text-2xs text-primary">Available</p>}
-      {usernameState === "taken" && <p className="mt-1 text-2xs text-destructive">That username is taken</p>}
-      {usernameState === "checking" && <p className="mt-1 text-2xs text-muted-foreground">Checking…</p>}
-      {error && <p className="mt-1 text-2xs text-destructive">{error}</p>}
-      <p className="mt-1 text-2xs text-muted-foreground">
-        3–20 characters · letters, numbers, underscores.
-      </p>
-    </div>
-  );
-}

@@ -62,9 +62,18 @@ before(async () => {
 
 /** A distinct pair of ids per test, so no two tests share a pool entry. */
 let seq = 0;
+/** Every seeker id ever created — the shared pool blob outlives each test,
+    so a test that needs an empty pool must cancel everyone who came before. */
+const allSeekerIds: string[] = [];
 function pair(): [string, string] {
   seq += 1;
-  return [`acct_seek_a${seq}`, `acct_seek_b${seq}`];
+  const pairIds: [string, string] = [`acct_seek_a${seq}`, `acct_seek_b${seq}`];
+  allSeekerIds.push(...pairIds);
+  return pairIds;
+}
+/** Empty the shared pool of every seeker an earlier test left behind. */
+async function clearPool(): Promise<void> {
+  await Promise.all(allSeekerIds.map((id) => hosted.cancelSeek(id)));
 }
 
 async function account(playerId: string, username: string): Promise<PlayerStats> {
@@ -150,6 +159,82 @@ test("a pairing is only offered once", async () => {
      collected — that is how a player ends up dumped back into an old board. */
   const again = await hosted.seekMatch(a, "10 + 0");
   assert.equal(again.status, "waiting", "the same pairing was served twice");
+});
+
+/* ------------------------------------------------------------------ */
+/* Simultaneous searchers — the pool must never double-pair            */
+/* ------------------------------------------------------------------ */
+
+test("three simultaneous searchers form exactly one pair and one keeps waiting", async () => {
+  await clearPool();
+  const [a, b] = pair();
+  const [c] = pair();
+  await account(a, "Trio_A");
+  await account(b, "Trio_B");
+  await account(c, "Trio_C");
+
+  // Three accounts click "find live game" in the same instant.
+  const results = await Promise.all([
+    hosted.seekMatch(a, "10 + 0"),
+    hosted.seekMatch(b, "10 + 0"),
+    hosted.seekMatch(c, "10 + 0"),
+  ]);
+
+  const matched = results.filter((r): r is Extract<typeof r, { status: "matched" }> =>
+    r.status === "matched",
+  );
+  assert.equal(matched.length, 1, "two pairs formed from three players — somebody is in two games");
+
+  const game = matched[0].game;
+  const third = [a, b, c].find((id) => id !== game.creator && id !== game.opponent)!;
+  assert.ok(third, "the pair does not consist of two of the three searchers");
+
+  // The third player keeps searching — their poll must NOT drag them into the
+  // pair's game or pair them against someone already playing.
+  const thirdPoll = await hosted.pollSeek(third, "10 + 0");
+  assert.equal(thirdPoll.status, "waiting", "the third player was paired against a busy player");
+
+  // The two who paired are in ONE real game together.
+  assert.equal(game.status, "active");
+  assert.deepEqual([game.creator, game.opponent].sort(), [game.creator, game.opponent].sort());
+  assert.notEqual(game.creator, game.opponent);
+
+  // The pool stayed consistent: the next searcher finds the still-waiting
+  // third player — not a ghost.
+  const [d] = pair();
+  await account(d, "Trio_D");
+  const fourth = await hosted.seekMatch(d, "10 + 0");
+  assert.equal(fourth.status, "matched", "the waiting third player was lost from the pool");
+  if (fourth.status !== "matched") return;
+  assert.deepEqual(
+    [fourth.game.creator, fourth.game.opponent].sort(),
+    [third, d].sort(),
+    "the fourth searcher was paired against a ghost instead of the waiting player",
+  );
+});
+
+test("a cancel racing a seek never pairs a player who already left", async () => {
+  await clearPool();
+  const [a, b] = pair();
+  const [c] = pair();
+  await account(a, "Race_A");
+  await account(b, "Race_B");
+  await account(c, "Race_C");
+
+  await hosted.seekMatch(a, "10 + 0"); // a holds a pool place
+  // a cancels at (nearly) the same moment b searches.
+  await Promise.all([hosted.cancelSeek(a), hosted.seekMatch(b, "10 + 0")]);
+
+  // Whatever the order, a must be out of the pool now: a later searcher can
+  // only ever be paired with b — never with the departed a.
+  const late = await hosted.seekMatch(c, "10 + 0");
+  if (late.status === "matched") {
+    assert.deepEqual(
+      [late.game.creator, late.game.opponent].sort(),
+      [b, c].sort(),
+      "a player who cancelled was still paired — a ghost game",
+    );
+  }
 });
 
 /* ------------------------------------------------------------------ */

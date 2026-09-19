@@ -117,8 +117,11 @@ const config: Config = {
         nav: "var(--nav-h)",
       },
       keyframes: {
+        /* A quarter-second, four-pixel settle — content arrives instead of
+           performing. The old 0.4s/8px slide read as sluggish on every
+           page load; this one is barely a breath. */
         "fade-in-up": {
-          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
         "pulse-soft": {
@@ -127,7 +130,7 @@ const config: Config = {
         },
       },
       animation: {
-        "fade-in-up": "fade-in-up 0.4s ease-out both",
+        "fade-in-up": "fade-in-up 0.24s cubic-bezier(0.22, 1, 0.36, 1) both",
         "pulse-soft": "pulse-soft 2s ease-in-out infinite",
       },
     },

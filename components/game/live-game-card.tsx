@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Crown } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
@@ -48,20 +48,12 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <span className="flex min-w-0 items-center gap-2 text-sm">
-            {/* The player's real face when they uploaded one, the white-side
-                crown disc otherwise (the piece tokens, not zinc — see the
-                colour note on the disc below). */}
+            {/* The player's real face when they uploaded one, the side-coloured
+                user disc otherwise (see side-avatar.tsx for why not a crown). */}
             {white.avatarUrl ? (
               <PlayerAvatar name={whiteName} avatarUrl={white.avatarUrl} size="xs" className="shrink-0" />
             ) : (
-              <span
-                aria-hidden
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/25 bg-piece-light text-piece-dark"
-              >
-                {/* Lucide crown, not ♔ — the Unicode chess glyphs have no font
-                    on Windows and rendered as an empty box. */}
-                <Crown className="h-3 w-3" aria-hidden />
-              </span>
+              <SideAvatar side="white" className="h-5 w-5" iconClassName="h-3 w-3" />
             )}
             <CountryFlag code={white.country} />
             <span className="truncate font-medium text-foreground/90">{whiteName}</span>
@@ -78,12 +70,7 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
             {black.avatarUrl ? (
               <PlayerAvatar name={blackName} avatarUrl={black.avatarUrl} size="xs" className="shrink-0" />
             ) : (
-              <span
-                aria-hidden
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-piece-outline/40 bg-piece-dark text-piece-light"
-              >
-                <Crown className="h-3 w-3" aria-hidden />
-              </span>
+              <SideAvatar side="black" className="h-5 w-5" iconClassName="h-3 w-3" />
             )}
             <CountryFlag code={black.country} />
             <span className="truncate font-medium text-foreground/90">{blackName}</span>

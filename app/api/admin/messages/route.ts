@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Everything below requires BOTH identity and a live passcode session.
-    if (!passcodeSessionValid(body.passcodeToken ?? null)) {
+    if (!(await passcodeSessionValid(body.passcodeToken ?? null))) {
       return NextResponse.json(
         { error: "Dashboard locked: enter the passcode again" },
         { status: 423 },

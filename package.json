@@ -10,7 +10,7 @@
     "start": "next start -H 0.0.0.0",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/node/register.mjs --test \"tests/node/*.test.ts\""
+    "test": "TOURNAMENT_ROUND_INTERMISSION_MS=0 node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/node/register.mjs --test \"tests/node/*.test.ts\""
   },
   "dependencies": {
     "@nimiq/mini-app-sdk": "^0.1.0",

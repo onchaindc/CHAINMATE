@@ -292,7 +292,39 @@ export async function getPlayerStats(playerId: string): Promise<PlayerStats> {
   const raw = await getGameStorage().get(`${STATS_PREFIX}${playerId}`);
   if (raw) {
     try {
-      return JSON.parse(raw) as PlayerStats;
+      const cached = JSON.parse(raw) as PlayerStats;
+      // The definitional predicate (acct_… = account) applied to the CACHED
+      // blob too: a stats record written before the account existed — or by
+      // an older build — still says isGuest: true with no username, and
+      // every friends-list row built from it rendered the name as dead
+      // text with no profile link. Heal the blob once from the profile row
+      // (one bounded read only while the blob is actually wrong), so the
+      // cache can never permanently downgrade a real account.
+      const accountShaped = playerId.startsWith("acct_");
+      if (accountShaped && (cached.isGuest || !cached.username)) {
+        if (supabaseConfigured()) {
+          try {
+            const row = await profileForPlayerId(playerId);
+            if (row?.username) {
+              const healed: PlayerStats = {
+                ...cached,
+                username: row.username,
+                isGuest: false,
+                avatarUrl: cached.avatarUrl ?? row.avatar_url ?? null,
+                country: cached.country ?? row.country ?? undefined,
+              };
+              await getGameStorage().set(
+                `${STATS_PREFIX}${playerId}`,
+                JSON.stringify(healed),
+              );
+              return healed;
+            }
+          } catch {
+            // fall through to the cached blob — chess never waits on Supabase
+          }
+        }
+      }
+      return cached;
     } catch {
       // corrupted record — fall through to the database
     }
@@ -804,6 +836,20 @@ async function resolveTimeout(game: GameState): Promise<GameState> {
 }
 
 /**
+ * Per-game read throttle for the durable mirror. Every client polls every 2s,
+ * and each of those GETs used to also round-trip Supabase for a game whose
+ * fast copy was already present — two players plus a spectator is 30+ mirror
+ * reads a minute for a board where NOTHING moved. That constant traffic is
+ * what made the game feel slow: every poll competed for the same network
+ * budget as the moves themselves. Instead, remember the updatedAt we last
+ * confirmed against the mirror and only re-read when the fast copy moves past
+ * it (a write happened since) or the fast copy went missing (fresh instance).
+ * A single write still reaches the mirror on the first poll after it, so the
+ * durable copy stays correct — the writes all go through here anyway.
+ */
+const mirrorSyncedAt = new Map<string, number>();
+
+/**
  * True when `remote` actually carries something `local` doesn't: another move, a
  * settled result, an opponent who sat down, or simply a later write. Used to
  * decide whether the durable copy is worth adopting — writing back an identical
@@ -847,19 +893,112 @@ export async function getHostedGame(id: string): Promise<GameState | null> {
     // both sides write to, so for a game still in progress it wins whenever it
     // is ahead. Finished games are skipped: they never move again, and this
     // runs on every poll.
-    try {
-      const remote = await gameSnapshotById(id);
-      if (remote && !isStaleGameState(game, remote) && isNewerGameState(game, remote)) {
-        game = remote;
-        await writeGame(remote);
+    //
+    // But an unchanged game does not need the mirror re-read on every poll:
+    // remember the updatedAt the mirror last confirmed for this game and only
+    // look again once the fast copy has moved past it (a write happened) or
+    // the fast copy vanished (this is a fresh instance that has never seen a
+    // mirror confirmation). See the mirrorSyncedAt note above.
+    const synced = mirrorSyncedAt.get(id) ?? 0;
+    const moved = (game.updatedAt ?? 0) > synced;
+    if (moved) {
+      try {
+        const remote = await gameSnapshotById(id);
+        if (remote) {
+          if (!isStaleGameState(game, remote) && isNewerGameState(game, remote)) {
+            game = remote;
+            await writeGame(remote);
+          }
+          // Confirmed: the mirror now agrees with at least this version, so
+          // future polls skip the round-trip until the next write.
+          mirrorSyncedAt.set(id, Math.max(game.updatedAt ?? 0, remote.updatedAt ?? 0));
+        }
+      } catch {
+        // Best-effort: the local copy is still playable.
       }
-    } catch {
-      // Best-effort: the local copy is still playable.
     }
   }
   if (!game) return null;
-  // A flag fall may have happened since the last write — settle it now.
-  return resolveTimeout(game);
+  // Presence (tournament clock gate) and then a flag fall may both have
+  // become due since the last write — settle them on every read.
+  const presence = resolvePresence(game);
+  if (presence !== game) await writeGame(presence);
+  return resolveTimeout(presence);
+}
+
+/**
+ * Presence window for tournament matches: once both players have checked in
+ * the clock starts immediately; otherwise an absent player gets this grace
+ * before the clock starts anyway (the event cannot stall forever on someone
+ * who never opens the board).
+ */
+export const PRESENCE_GRACE_MS = 60_000;
+
+function sideOfPlayer(game: GameState, playerId: string): "white" | "black" | null {
+  if (game.creator === playerId) return "white";
+  if (game.opponent === playerId) return "black";
+  return null;
+}
+
+/**
+ * Check in as PRESENT for this game. Tournament boards are created with the
+ * game already active — the clock must not start running until both players
+ * have actually arrived. Arrival is recorded server-side (the client can
+ * never fake it), and when both sides are present the clock's start instant
+ * is stamped. Casual games without the field are untouched: their behaviour
+ * is unchanged.
+ *
+ * Idempotent: arriving twice keeps the first arrival.
+ */
+export async function arriveHostedGame(id: string, playerId: string): Promise<GameState> {
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("Game not found");
+  if (game.status !== "active" || game.opponent === "") return game;
+  const side = sideOfPlayer(game, playerId);
+  if (!side) return game; // spectators can never affect presence
+
+  const arrived = { ...(game.arrivedAt ?? {}) };
+  const now = Date.now();
+  if (game.clockStartedAt) return game; // already running — nothing to do
+  if (!arrived[side]) {
+    arrived[side] = now;
+    await writeGame({ ...game, arrivedAt: arrived, updatedAt: now });
+  }
+  const other = side === "white" ? "black" : "white";
+  const bothHere = Boolean(arrived.white) && Boolean(arrived.black);
+  const firstArrival = Math.min(arrived.white ?? Infinity, arrived.black ?? Infinity);
+  const due = bothHere || (arrived[side] && now - firstArrival >= PRESENCE_GRACE_MS);
+  if (due) {
+    const next: GameState = {
+      ...game,
+      arrivedAt: arrived,
+      clockStartedAt: now,
+      updatedAt: now,
+    };
+    await writeGame(next);
+    return next;
+  }
+  return { ...game, arrivedAt: arrived };
+}
+
+/**
+ * Lazy presence resolution on every read: a player who never arrives must
+ * not freeze the event, so after the grace window the clock starts on its
+ * own (from the moment the grace expired — the absent player still loses
+ * nothing they were present for, and the waiting player is not punished
+ * either: the clock only starts burning once it exists).
+ */
+function resolvePresence(game: GameState): GameState {
+  if (game.status !== "active" || !game.opponent || game.clockStartedAt || game.arrivedAt === undefined) {
+    return game;
+  }
+  const now = Date.now();
+  const first = Math.min(game.arrivedAt.white ?? Infinity, game.arrivedAt.black ?? Infinity);
+  if (first === Infinity) return game;
+  if (now - first >= PRESENCE_GRACE_MS) {
+    return { ...game, clockStartedAt: now, updatedAt: now };
+  }
+  return game;
 }
 
 export async function joinHostedGame(id: string, playerId: string): Promise<GameState> {
@@ -891,6 +1030,14 @@ export async function submitHostedMove(
 ): Promise<GameState> {
   const game = await getHostedGame(id);
   if (!game) throw new Error("Game not found");
+  // Moving IS arriving: the first real move settles presence and starts the
+  // clock if the grace has run its course (or the opponent is also there).
+  if (!game.clockStartedAt && game.arrivedAt !== undefined) {
+    const side = sideOfPlayer(game, playerId);
+    if (side && !game.arrivedAt[side]) {
+      await arriveHostedGame(id, playerId).catch(() => undefined);
+    }
+  }
   const res = applyMoveToGame(game, playerId, from, to, promotion);
   if (!res.ok) throw new Error(res.error);
   let next: GameState = stampMoveTime(res.game);
@@ -1759,6 +1906,38 @@ export async function seekMatch(
     }
   }
 
+  return withSeekLock(() => seekMatchLocal(playerId, timeControl, now));
+}
+
+/**
+ * Serialise every mutation of the LOCAL seek pool.
+ *
+ * The local pool is a single JSON blob read, modified and written back with
+ * awaits in between (rating lookups, game creation). Two seek requests that
+ * interleave can both read the same waiting player, both pair with them, and
+ * each write a pool without the other's pairing — one opponent ends up
+ * ghosted in a game nobody joined, and the same player can be handed to two
+ * searchers at once. Three players clicking Search in the same instant is
+ * exactly this race. The durable pool needs none of this: its claim is a
+ * single conditional UPDATE. This chain gives the local fallback the same
+ * safety — each seek's read-pair-write completes before the next begins, so
+ * of three simultaneous searchers one pair forms and the third keeps
+ * searching.
+ */
+let seekChain: Promise<unknown> = Promise.resolve();
+function withSeekLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = seekChain.then(fn, fn);
+  // The chain never rejects: a failed seek must not poison the next one.
+  seekChain = run.catch(() => undefined);
+  return run;
+}
+
+/** The local-pool body of seekMatch — always entered under withSeekLock. */
+async function seekMatchLocal(
+  playerId: string,
+  timeControl: string | undefined,
+  now: number,
+): Promise<SeekResult> {
   // A pairing may already exist for us — made by the other side's seek, or by
   // our own earlier call whose response never made it back. Always honour it
   // instead of starting a second game.
@@ -1854,9 +2033,11 @@ export async function cancelSeek(playerId: string): Promise<void> {
       // Best-effort: an abandoned row ages out of the pool on its own.
     }
   }
-  const seekers = await readSeekers();
-  await writeSeekers(seekers.filter((s) => s.playerId !== playerId));
-  await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`).catch(() => {});
+  await withSeekLock(async () => {
+    const seekers = await readSeekers();
+    await writeSeekers(seekers.filter((s) => s.playerId !== playerId));
+    await getGameStorage().delete(`${SEEK_RESULT_PREFIX}${playerId}`).catch(() => {});
+  });
 }
 
 /* ------------------------------------------------------------------ */

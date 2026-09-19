@@ -186,6 +186,14 @@ export interface TournamentSummary {
   scheduledEndAt?: number | null;
   startedAt: number | null;
   completedAt: number | null;
+  /**
+   * Intermission countdown: the instant the next round will be dealt (Swiss
+   * / knockout). Set the moment a round's last game ends; null when none is
+   * pending. The UI shows a round-ended banner with this countdown.
+   */
+  nextRoundAt?: number | null;
+  /** Server's intermission length, so the UI copy never disagrees with it. */
+  roundIntermissionMs?: number;
   createdAt: number;
   /** Formats that run rounds expose this while in progress. */
   currentRound?: number;
@@ -201,6 +209,8 @@ export interface TournamentSummary {
   /**
    * Live verified prize pool in luna (paid tournaments only; the exact sum
    * of verified entry payments, recomputed server-side on every read).
+   * Detail payloads carry the true ledger sum — NOT the sum of payout rows,
+   * which under-reports when the field is shorter than the preset's ranks.
    */
   verifiedPoolLuna?: string | null;
   /** Server-stored cancellation reason ("Not enough players…", host note…). */

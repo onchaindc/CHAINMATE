@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import {
+  adminSessionToken,
   banPlayer,
   isAdminPlayer,
   passcodeSessionValid,
@@ -41,7 +42,7 @@ async function guard(req: NextRequest, claimed: string, passcodeToken: string | 
   if (!(await isAdminPlayer(acting.playerId))) {
     return { ok: false as const, error: "Not found", status: 404 };
   }
-  if (!passcodeSessionValid(passcodeToken)) {
+  if (!(await passcodeSessionValid(passcodeToken))) {
     return { ok: false as const, error: "Dashboard locked: enter the passcode again", status: 423 };
   }
   return { ok: true as const, playerId: acting.playerId };
@@ -49,10 +50,16 @@ async function guard(req: NextRequest, claimed: string, passcodeToken: string | 
 
 /** GET /api/admin/accounts?playerId=…&token=… — list + headline count. */
 export async function GET(req: NextRequest) {
+  // The passcode session rides the header/query like every POST; a GET
+  // without a valid session means LOCKED (423, the dashboard shows the
+  // unlock card) — never an empty database that reads as "0 users".
+  const passcodeToken =
+    req.nextUrl.searchParams.get("token") ??
+    req.headers.get("x-admin-session");
   const guardRes = await guard(
     req,
     req.nextUrl.searchParams.get("playerId") ?? "",
-    req.nextUrl.searchParams.get("token"),
+    passcodeToken,
   );
   if (!guardRes.ok) {
     return NextResponse.json({ error: guardRes.error }, { status: guardRes.status });

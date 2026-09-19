@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { Chess, type Square } from "chess.js";
 import { PIECE_RENDERERS, pieceRenderer } from "@/components/game/piece-sets";
@@ -18,6 +18,14 @@ interface ChessBoardProps {
   busy?: boolean;
   /** Which piece artwork to draw — the player's remembered choice. */
   pieceSet?: PieceSetId;
+  /**
+   * Queue a premove while it is the opponent's turn: clicks and drops on
+   * your own pieces record the intended move and play it the instant the
+   * turn arrives (or vanish silently if it became illegal — pinned, etc.).
+   * Off during replay/review/waiting, where there is no next turn to queue
+   * for.
+   */
+  allowPremove?: boolean;
 }
 
 const PROMOTION_PIECES = ["q", "r", "b", "n"] as const;
@@ -35,6 +43,7 @@ const BOARD = {
   lastMove: "hsl(var(--board-accent) / 0.30)",
   selected: "hsl(var(--board-accent) / 0.45)",
   check: "hsl(var(--board-check) / 0.50)",
+  premove: "hsl(var(--board-accent) / 0.35)",
   legal:
     "radial-gradient(circle, hsl(var(--board-accent) / 0.65) 0 20%, hsl(var(--board-accent) / 0.15) 38%, transparent 42%)",
 } as const;
@@ -86,9 +95,39 @@ const ChessBoardMemo = memo(function ChessBoardInner({
   onMove,
   busy,
   pieceSet = DEFAULT_PIECE_SET,
+  allowPremove = false,
 }: ChessBoardProps) {
   const [selected, setSelected] = useState<Square | null>(null);
   const [pending, setPending] = useState<{ from: string; to: string } | null>(null);
+  /** The queued premove — plays the moment the turn arrives. */
+  const [premove, setPremove] = useState<{ from: Square; to: Square; promotion?: string } | null>(null);
+
+  /**
+   * Premove playback: the fen flip (opponent's move arriving) is the trigger.
+   * The move is validated against the LIVE position — an illegal premove
+   * (pin, captured piece, blocked path) is dropped silently, exactly like
+   * every major chess site; a legal one is submitted immediately, so one
+   * click during the opponent's clock is already the move.
+   */
+  useEffect(() => {
+    if (!premove || !interactive) return;
+    const queued = premove;
+    setPremove(null);
+    try {
+      const chess = new Chess(fen);
+      const piece = chess.get(queued.from);
+      const legal = piece
+        ? chess
+            .moves({ square: queued.from, verbose: true })
+            .some((m) => m.to === queued.to)
+        : false;
+      if (!legal) return;
+      const promo = piece?.type === "p" && (queued.to[1] === "8" || queued.to[1] === "1");
+      void onMove(queued.from, queued.to, promo ? (queued.promotion ?? "q") : undefined);
+    } catch {
+      /* stale board state — drop the premove */
+    }
+  }, [fen, interactive, premove, onMove]);
 
   const legalTargets = useMemo(() => {
     try {
@@ -121,14 +160,23 @@ const ChessBoardMemo = memo(function ChessBoardInner({
     (from: string, to: string, promotion?: string) => {
       setSelected(null);
       setPending(null);
+      setPremove(null);
       void onMove(from, to, promotion);
     },
     [onMove],
   );
 
+  /** The colour this viewer plays — the side NOT to move while waiting. */
+  const myColor = useMemo(() => {
+    try {
+      return new Chess(fen).turn() === "w" ? "b" : "w";
+    } catch {
+      return null;
+    }
+  }, [fen]);
+
   const handleSquareClick = useCallback(
     ({ square }: { square: string }) => {
-      if (!interactive || busy) return;
       const sq = square as Square;
 
       if (pending) {
@@ -136,7 +184,7 @@ const ChessBoardMemo = memo(function ChessBoardInner({
         return;
       }
 
-      if (selected && legalTargets.has(sq)) {
+      if (interactive && selected && legalTargets.has(sq)) {
         if (needsPromotion) {
           setPending({ from: selected, to: sq });
         } else {
@@ -145,11 +193,49 @@ const ChessBoardMemo = memo(function ChessBoardInner({
         return;
       }
 
+      // Premove queueing: while it is the opponent's turn, clicking own
+      // piece then a destination records the intent (with a light sanity
+      // check — own piece, and for pawns a straight push or capture shape
+      // is not required; legality is re-checked at playback).
+      if (!interactive && allowPremove && !busy) {
+        if (selected) {
+          try {
+            const chess = new Chess(fen);
+            const piece = chess.get(selected);
+            if (piece && myColor && piece.color === myColor) {
+              const promo = piece.type === "p" && (sq[1] === "8" || sq[1] === "1");
+              setPremove({ from: selected, to: sq, promotion: promo ? "q" : undefined });
+              setSelected(null);
+              return;
+            }
+          } catch {
+            /* fall through to plain selection */
+          }
+        }
+        try {
+          const chess = new Chess(fen);
+          const piece = chess.get(sq);
+          if (piece && myColor && piece.color === myColor) {
+            setSelected(sq);
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
+        setSelected(null);
+        return;
+      }
+
+      if (!interactive || busy) {
+        setSelected(null);
+        return;
+      }
+
       try {
         const chess = new Chess(fen);
         const piece = chess.get(sq);
-        const myColor = chess.turn();
-        if (piece && piece.color === myColor) {
+        const color = chess.turn();
+        if (piece && piece.color === color) {
           setSelected(sq);
         } else {
           setSelected(null);
@@ -158,13 +244,34 @@ const ChessBoardMemo = memo(function ChessBoardInner({
         setSelected(null);
       }
     },
-    [interactive, busy, selected, legalTargets, needsPromotion, fen, attemptMove],
+    [interactive, busy, allowPremove, selected, legalTargets, needsPromotion, fen, myColor, attemptMove],
   );
 
   const handlePieceDrop = useCallback(
     ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }) => {
-      if (!interactive || busy || !targetSquare) return false;
-      if (sourceSquare === targetSquare) return false;
+      if (!targetSquare || sourceSquare === targetSquare) return false;
+
+      // Premove by drag: same queue as click-click, checked at playback.
+      if ((!interactive || busy) && allowPremove) {
+        try {
+          const chess = new Chess(fen);
+          const piece = chess.get(sourceSquare as Square);
+          if (piece && myColor && piece.color === myColor) {
+            const promo = piece.type === "p" && (targetSquare[1] === "8" || targetSquare[1] === "1");
+            setPremove({
+              from: sourceSquare as Square,
+              to: targetSquare as Square,
+              promotion: promo ? "q" : undefined,
+            });
+            setSelected(null);
+          }
+        } catch {
+          /* ignore */
+        }
+        return false; // the board prop re-asserts the real position
+      }
+
+      if (!interactive || busy) return false;
       try {
         const chess = new Chess(fen);
         const move = chess.move({
@@ -183,7 +290,7 @@ const ChessBoardMemo = memo(function ChessBoardInner({
         return false;
       }
     },
-    [interactive, busy, fen, attemptMove],
+    [interactive, busy, allowPremove, fen, myColor, attemptMove],
   );
 
   const squareStyles = useMemo(() => {
@@ -191,6 +298,10 @@ const ChessBoardMemo = memo(function ChessBoardInner({
     if (lastMove) {
       styles[lastMove.from] = { backgroundColor: BOARD.lastMove };
       styles[lastMove.to] = { backgroundColor: BOARD.lastMove };
+    }
+    if (premove) {
+      styles[premove.from] = { backgroundColor: BOARD.premove };
+      styles[premove.to] = { backgroundColor: BOARD.premove };
     }
     if (selected) {
       styles[selected] = { backgroundColor: BOARD.selected };
@@ -224,16 +335,24 @@ const ChessBoardMemo = memo(function ChessBoardInner({
         options={{
           position: fen || START_FEN,
           boardOrientation: orientation,
-          animationDurationInMs: 200,
+          /* Fast and perceptible: ~90ms reads as instant at one-click pace
+             but still shows the slide. Anything longer starts to read as
+             lag when the players are moving quickly. */
+          animationDurationInMs: 90,
+          showAnimations: true,
           showNotation: true,
-          allowDragging: interactive && !busy,
+          allowDragging: (interactive || (allowPremove && !busy)) && !pending,
           squareStyles,
           canDragPiece: ({ square }) => {
-            if (!interactive || busy || !square) return false;
+            if (pending || (busy && !allowPremove)) return false;
+            if (!square) return false;
             try {
               const chess = new Chess(fen);
               const piece = chess.get(square as Square);
-              return !!piece && piece.color === chess.turn();
+              if (!piece) return false;
+              if (interactive) return piece.color === chess.turn();
+              // Premove dragging: own pieces only.
+              return !!(allowPremove && myColor && piece.color === myColor);
             } catch {
               return false;
             }

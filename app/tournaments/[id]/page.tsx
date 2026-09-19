@@ -4,11 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowRight,
   CalendarClock,
   CheckCircle2,
   Coins,
   Crown,
+  Info,
   Loader2,
   Radio,
   RefreshCw,
@@ -90,6 +90,7 @@ export default function TournamentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<TournamentAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Set while the self-serve prize-address save is in flight. */
   const [payoutBusy, setPayoutBusy] = useState<string | null>(null);
   /** Leave confirmation (paid events warn about forfeiting the entry). */
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -220,81 +221,6 @@ export default function TournamentDetailPage() {
     }
   }, [stillJoined, entry.pendingTxHash]);
 
-  /** Host-only payout dispatch/verify — crash-safe on the server. */
-  const runPayoutAction = async (action: "dispatch" | "verify" | "wallet-confirm", targetPlayerId: string) => {
-    if (!detail || payoutBusy) return;
-    setPayoutBusy(`${action}:${targetPlayerId}`);
-    setActionError(null);
-    try {
-      await tournamentApi.payoutAction(id, identity.playerId, action, targetPlayerId);
-      await load();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Payout action failed");
-    } finally {
-      setPayoutBusy(null);
-    }
-  };
-
-  /**
-   * HOST-WALLET PRIZE PAYMENT — the zero-infrastructure treasury.
-   *
-   * 1. Ask the server for the exact wire facts (winner's linked address +
-   *    exact prize luna) — the host never types an address.
-   * 2. Open Nimiq Pay through the proven wallet wrapper; the host confirms
-   *    the send in the wallet's native sheet.
-   * 3. Submit the returned hash: the server verifies it on-chain (exists,
-   *    network, host sender, winner recipient, exact amount, executed, not
-   *    already claimed) and marks the prize paid.
-   */
-  const sendPrizeFromWallet = async (targetPlayerId: string) => {
-    if (payoutBusy) return;
-    setPayoutBusy(`wallet:${targetPlayerId}`);
-    setActionError(null);
-    try {
-      const prep = (await tournamentApi.payoutAction(
-        id,
-        identity.playerId,
-        "wallet-prepare",
-        targetPlayerId,
-      )) as { intent: { recipientAddress: string; amountLuna: string; network: string } };
-      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
-      const { canonicalAddress } = await import("@/lib/nimiq/address");
-      const { parseNim } = await import("@/lib/nimiq/format");
-
-      const connected = await connectNimiq();
-      if (!connected.ok) throw new Error(connected.error.message);
-      const sent = await sendNimiqBasicTransaction(connected.value, {
-        recipient: canonicalAddress(prep.intent.recipientAddress),
-        value: BigInt(prep.intent.amountLuna),
-      });
-      if (!sent.ok) throw new Error(sent.error.message);
-
-      setPayoutBusy(`wallet-claim:${targetPlayerId}`);
-      try {
-        await tournamentApi.payoutAction(
-          id,
-          identity.playerId,
-          "wallet-claim",
-          targetPlayerId,
-          sent.value,
-        );
-        await load();
-      } catch (claimErr) {
-        // The money has MOVED at this point — the hash is shown so the host
-        // can retry the claim (Check status) without ever paying twice.
-        setActionError(
-          `Payment sent (tx ${sent.value.slice(0, 10)}…) but verification is not finished: ${
-            claimErr instanceof Error ? claimErr.message : "claim failed"
-          }. Press “Check status” on this prize in a moment — you will NOT pay again.`,
-        );
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Sending the prize failed");
-    } finally {
-      setPayoutBusy(null);
-    }
-  };
-
   /**
    * Reload recovery: if the player paid (a pending tx is stored) but left
    * during the confirmation window, resume verification for the SAME hash —
@@ -325,6 +251,46 @@ export default function TournamentDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, resumeChecked, identity.playerId]);
+
+  /**
+   * One quiet host-side heal: for every unfinished prize, ask the server to
+   * resolve the row to its true state — it discovers a payment the host
+   * already sent (the legacy "sending… forever" rows) and settles it with
+   * full on-chain identity gates, or advances confirmations. Runs once per
+   * load while something is still owed; never sends, never pays twice.
+   */
+  /** Quiet status refresh for ADMIN viewers: for every unsettled prize,
+      ask the server to resolve the row to its true state — it discovers a
+      payment the operator already sent and settles it with full on-chain
+      identity gates, or advances confirmations. Admin-only now (ChainMate
+      disburses); a host viewer simply skips this. Runs once per load while
+      something is still owed; never sends, never pays twice. */
+  const prizeHealRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !detail ||
+      !isAdmin ||
+      !detail.payouts?.length ||
+      !identity.playerId
+    ) {
+      return;
+    }
+    const owed = detail.payouts.filter((p) => p.status !== "verified");
+    if (owed.length === 0) return;
+    const key = `${id}:${owed.map((p) => p.playerId + p.status).join("|")}`;
+    if (prizeHealRef.current === key) return;
+    prizeHealRef.current = key;
+    void (async () => {
+      for (const p of owed) {
+        try {
+          await tournamentApi.payoutAction(id, identity.playerId, "wallet-confirm", p.playerId);
+        } catch {
+          /* nothing to settle yet; the buttons and the next load still cover it */
+        }
+      }
+      await load();
+    })();
+  }, [detail, isAdmin, identity.playerId, id, load]);
 
   if (notFound) {
     return (
@@ -452,12 +418,9 @@ export default function TournamentDetailPage() {
                 Find opponent
               </Button>
             )}
-            {detail.myActiveGameId && (
-              <Link href={`/game/${detail.myActiveGameId}`} className={cn(buttonVariants({ size: "sm" }))}>
-                Resume game
-                <ArrowRight aria-hidden />
-              </Link>
-            )}
+            {/* No "Resume game" here: the live match banner below IS the
+                one clear way into an active game — a second button saying
+                the same thing read as a stuck/lagging state. */}
           </div>
         }
       />
@@ -484,8 +447,29 @@ export default function TournamentDetailPage() {
         </Link>
       )}
 
+      {/* ---------- ROUND ENDED — intermission before the next one ---------- */}
+      {s.status === "in_progress" &&
+        s.nextRoundAt != null &&
+        s.nextRoundAt > Date.now() && (
+        <div
+          className="animate-fade-in-up mt-4 flex items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3.5"
+          role="status"
+        >
+          <Timer className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">
+              Round {s.currentRound ?? "—"} has ended
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Standings are updated. Round {s.currentRound != null ? s.currentRound + 1 : "—"} starts
+              in <IntermissionCountdown at={s.nextRoundAt} /> — the page updates by itself.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ---------- Facts strip ---------- */}
-      <div className="animate-fade-in-up mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border/70 bg-card/40 px-4 py-3 font-mono text-xs tabular-nums text-muted-foreground [animation-delay:40ms]">
+      <div className="animate-fade-in-up mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-xs tabular-nums text-muted-foreground [animation-delay:40ms]">
         <span
           className={cn(
             "inline-flex items-center gap-1.5 font-sans text-2xs font-semibold uppercase tracking-wider",
@@ -560,7 +544,7 @@ export default function TournamentDetailPage() {
                   </p>
                   <ul className="mt-1.5 divide-y divide-border/40 rounded-md border border-border/50">
                     {detail.refunds.map((r) => (
-                      <li key={r.playerId} className="flex items-center gap-3 px-3 py-2 text-sm">
+                      <li key={r.playerId} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
                         <span className="min-w-0 flex-1 truncate">{nameOf(detail, r.playerId)}</span>
                         <span className="font-mono text-xs tabular-nums text-foreground/80">
                           {displayNim(r.amountLuna)} NIM
@@ -588,41 +572,93 @@ export default function TournamentDetailPage() {
         </div>
       )}
 
-      {actionError && <ErrorNote message={actionError} className="mt-4" />}
+      {/* ---------- Outstanding refunds on LIVE/finished events ---------- */}
+      {/* A refund obligation can exist on a COMPLETED event too: a player
+          left during registration and their verified fee was queued for
+          return, then the event played out. The cancelled banner above only
+          renders for cancelled events — without this block the completed
+          event showed the "refund required" aggregate with NOTHING to look
+          at or settle. Same list, same actions, no red banner. */}
+      {s.status !== "cancelled" && detail.refunds && detail.refunds.length > 0 && (
+        <section className="animate-fade-in-up mt-8">
+          <SectionLabel>Entry fee refunds</SectionLabel>
+          <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
+            Fees queued for return from players who left before the event
+            locked. Prizes and refunds settle independently.
+          </p>
+          <Panel className="mt-3">
+            <ul className="divide-y divide-border/50">
+              {detail.refunds.map((r) => (
+                <li key={r.playerId} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">
+                    {nameOf(detail, r.playerId)}
+                    {r.playerId === identity.playerId && (
+                      <span className="ml-1.5 text-2xs uppercase tracking-wider text-primary">you</span>
+                    )}
+                  </span>
+                  <span className="font-mono text-xs tabular-nums text-foreground/80">
+                    {displayNim(r.amountLuna)} NIM
+                  </span>
+                  <span
+                    className={cn(
+                      "text-2xs font-semibold uppercase tracking-wider",
+                      r.status === "verified" && "text-positive",
+                      r.status === "dispatched" && "text-primary",
+                      (r.status === "owed" || r.status === "failed") && "text-warning",
+                    )}
+                  >
+                    {r.status === "owed" && "refund queued"}
+                    {r.status === "dispatched" && "returning"}
+                    {r.status === "verified" && "refunded"}
+                    {r.status === "failed" && "retrying"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </section>
+      )}
 
-      {/* ---------- Payment confirmation (the receipt) ---------- */}
+      {/* An auto-dispatch note is guidance, not a failure: this deployment
+          pays prizes from the host wallet by design, so it gets a quiet
+          one-liner in the notice tone instead of a red alarm box. */}
+      {actionError &&
+        (actionError.includes("can't sign transactions") ? (
+          <p className="mt-4 flex items-center gap-2 rounded-md bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            This deployment pays prizes from the host wallet — use the buttons under each prize.
+          </p>
+        ) : (
+          <ErrorNote message={actionError} className="mt-4" />
+        ))}
+
+      {/* ---------- Payment confirmation (the receipt). One line, said once:
+          the headline and the amount. No repeated sentence under it. ---------- */}
       {isPaid && (justConfirmed || pendingRejoin) && (
         <div
-          className={cn(
-            "animate-fade-in-up mt-4 rounded-lg border px-4 py-3.5",
-            pendingRejoin
-              ? "border-warning/40 bg-warning/5"
-              : "border-primary/40 bg-primary/10",
-          )}
           role="status"
+          className={cn(
+            "animate-fade-in-up mt-3 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm font-semibold tracking-tight",
+            pendingRejoin ? "bg-warning/10 text-warning"            : "bg-destructive/10 text-destructive",
+          )}
         >
-          <div className="flex items-center gap-3">
-            {pendingRejoin ? (
-              <Coins className="h-5 w-5 shrink-0 text-warning" aria-hidden />
-            ) : (
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" aria-hidden />
-            )}
-            <div className="min-w-0">
-              <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold tracking-tight">
-                {pendingRejoin
-                  ? "Uncredited payment"
-                  : "Payment confirmed: you're in!"}
-                <span className="font-mono tabular-nums text-foreground/80">
-                  {displayNim(entryFeeLuna)} NIM
-                </span>
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                {pendingRejoin
-                  ? `This transfer is on-chain but has no seat attached right now. Verify it below (that never charges again) or rejoin with a new payment. It is not refunded automatically: the ${displayNim(entryFeeLuna)} NIM stays in the treasury until support resolves it.`
-                  : `${displayNim(entryFeeLuna)} NIM received from your linked wallet and verified on-chain. Your seat is secured.`}
-              </p>
-            </div>
-          </div>
+          {pendingRejoin ? (
+            <Coins className="h-4 w-4 shrink-0" aria-hidden />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+          )}
+          {pendingRejoin ? (
+            <span>
+              Payment seen — not credited yet. Verify it below; you won&rsquo;t be charged again.
+            </span>
+          ) : (
+            <span>
+              Payment confirmed — you&rsquo;re in
+              <span className="ml-2 font-mono font-semibold tabular-nums text-foreground/80">
+                {displayNim(entryFeeLuna)} NIM
+              </span>
+            </span>
+          )}
         </div>
       )}
 
@@ -757,8 +793,18 @@ export default function TournamentDetailPage() {
           <div className="mt-3 space-y-4">
             {[...detail.rounds].reverse().map((round) => (
               <div key={round.index}>
-                <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {round.label}
+                  {!round.open && (
+                    <span className="rounded bg-secondary/60 px-1.5 py-0.5 font-sans text-2xs tracking-normal text-muted-foreground">
+                      ended
+                    </span>
+                  )}
+                  {round.open && s.status === "in_progress" && (
+                    <span className="inline-flex items-center gap-1 font-sans text-2xs tracking-normal text-primary">
+                      <Radio className="h-2.5 w-2.5 animate-pulse-soft" aria-hidden /> live
+                    </span>
+                  )}
                 </p>
                 <div className="mt-2 divide-y divide-border/50 overflow-hidden rounded-lg border border-border/70 bg-card/50">
                   {round.matches.map((m) => (
@@ -930,13 +976,13 @@ export default function TournamentDetailPage() {
         </section>
       )}
 
-      {/* ---------- Payouts (completed paid tournaments) ---------- */}
+      {/* ---------- Pool & payouts (completed paid tournaments) ---------- */}
       {isPaid && detail.payouts && detail.payouts.length > 0 && (
         <section className="animate-fade-in-up mt-8 [animation-delay:140ms]">
-          <SectionLabel>Purse &amp; payouts</SectionLabel>
+          <SectionLabel>Pool &amp; payouts</SectionLabel>
           <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs leading-relaxed text-muted-foreground">
             <span>
-              Prize pool: <strong className="font-mono tabular-nums text-foreground">{displayNim(totalPool(detail.payouts))} NIM</strong>
+              Prize pool: <strong className="font-mono tabular-nums text-foreground">{displayNim(detail.verifiedPoolLuna ?? totalPool(detail.payouts))} NIM</strong>
               {" "}from verified entries ({s.prizePreset === "top3" ? "60/25/15" : s.prizePreset === "top5" ? "45/25/15/10/5" : "winner takes all"})
             </span>
             <PayoutStateBadge status={s.payoutStatus ?? "none"} />
@@ -944,7 +990,7 @@ export default function TournamentDetailPage() {
           <Panel className="mt-3">
             <ul className="divide-y divide-border/50">
               {detail.payouts.map((p) => (
-                <li key={p.playerId} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+                <li key={p.playerId} className="flex flex-wrap items-center gap-3 px-4 py-2">
                   <span className="w-6 text-right font-mono text-xs tabular-nums text-muted-foreground">
                     {p.payoutRank}
                   </span>
@@ -959,63 +1005,25 @@ export default function TournamentDetailPage() {
                     {displayNim(p.amountLuna)} NIM
                   </span>
                   <PayoutStatusPill status={p.status} />
-                  {isHost && p.status === "dispatching" && (
-                      <button
-                        type="button"
+                  {/* A winner whose wallet cannot be resolved points at the
+                      address their own prize should go to. Everything else
+                      about the payout stays in the admin console. */}
+                  {p.playerId === identity.playerId &&
+                    (p.status === "blocked_no_wallet" || p.status === "pending" || p.status === "failed") && (
+                      <MyDestinationEditor
+                        tournamentId={id}
+                        myPlayerId={identity.playerId}
                         disabled={payoutBusy !== null}
-                        onClick={() => void runPayoutAction("dispatch", p.playerId)}
-                        title="A send was attempted but its outcome is unknown. This re-checks the recorded broadcast on-chain and completes it as sent, or safely retries — it can never pay twice."
-                        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                      >
-                        check status
-                      </button>
+                        onSaved={() => void load()}
+                      />
                     )}
-                  {isHost && (p.status === "pending" || p.status === "failed") && (
-                      <button
-                        type="button"
-                        disabled={payoutBusy !== null}
-                        onClick={() => void sendPrizeFromWallet(p.playerId)}
-                        title="Open Nimiq Pay with the winner's address and the exact prize prefilled. ChainMate verifies your transaction on-chain and marks the prize paid."
-                        className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-                      >
-                        {payoutBusy?.startsWith(`wallet:${p.playerId}`) || payoutBusy?.startsWith(`wallet-claim:${p.playerId}`)
-                          ? "confirm in wallet…"
-                          : p.status === "failed"
-                            ? "retry from wallet"
-                            : "send prize"}
-                      </button>
-                    )}
-                  {isHost && p.status === "sent" && (
-                      <button
-                        type="button"
-                        disabled={payoutBusy !== null}
-                        onClick={() => void runPayoutAction("wallet-confirm", p.playerId)}
-                        title="Re-check the prize transaction's confirmations on-chain. At 8 confirmations it becomes verified."
-                        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                      >
-                        check status
-                      </button>
-                    )}
-                  {isHost && p.status === "sent" && (
-                    <button
-                      type="button"
-                      disabled={payoutBusy !== null}
-                      onClick={() => void runPayoutAction("verify", p.playerId)}
-                      className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                    >
-                      verify
-                    </button>
-                  )}
                 </li>
               ))}
             </ul>
           </Panel>
           <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
-            Prize amounts are calculated from verified payments. &quot;Pending&quot;
-            means recorded and owed — sending moves the NIM from the treasury
-            wallet to the winner&apos;s linked address. If a send was interrupted,
-            &quot;Check status&quot; resolves it safely: it looks the recorded
-            broadcast up on-chain and can never pay twice.
+            &quot;Pending&quot; = owed. If a send was interrupted,
+            &quot;Check status&quot; resolves it safely — it can never pay twice.
           </p>
         </section>
       )}
@@ -1084,6 +1092,87 @@ export default function TournamentDetailPage() {
 /* Paid entry panel (Phase 2B)                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * SELF-SERVE PRIZE ADDRESS. A winner with no linked Nimiq wallet (or whose
+ * binding cannot be resolved) types the address their own prize should go
+ * to; the admin console unblocks and sends. Strictly one's own prize — the
+ * server rejects any other target, and the send itself remains ChainMate's
+ * job, so this input moves no money.
+ */
+function MyDestinationEditor({
+  tournamentId,
+  myPlayerId,
+  disabled,
+  onSaved,
+}: {
+  tournamentId: string;
+  myPlayerId: string;
+  disabled: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setEditing(true)}
+        className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+      >
+        add payout address
+      </button>
+    );
+  }
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await tournamentApi.setMyPrizeDestination(tournamentId, myPlayerId, value.trim());
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not set the address");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <span className="flex w-full flex-col gap-1.5 sm:w-auto">
+      <span className="flex gap-1.5">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="NQ… address"
+          autoFocus
+          className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50 sm:w-56"
+        />
+        <button
+          type="button"
+          disabled={saving || disabled || !value.trim()}
+          onClick={() => void save()}
+          className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+        >
+          {saving ? "saving…" : "save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="shrink-0 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:text-foreground"
+        >
+          ✕
+        </button>
+      </span>
+      {error && <span className="text-2xs text-destructive">{error}</span>}
+    </span>
+  );
+}
+
 function totalPool(payouts: NonNullable<TournamentDetailPayload["payouts"]>): string {
   try {
     return payouts.reduce((acc, p) => acc + BigInt(p.amountLuna), 0n).toString();
@@ -1126,7 +1215,7 @@ function PaidEntryPanel({
       <div className="animate-fade-in-up mt-4 flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
         <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden />
         <span>
-          Entry paid: <strong className="font-mono tabular-nums">{fee} NIM</strong> verified on-chain.
+          Entry paid: <strong className="font-mono tabular-nums">{fee} NIM</strong>
         </span>
       </div>
     );
@@ -1149,9 +1238,6 @@ function PaidEntryPanel({
             <Coins className="h-4 w-4 text-primary" aria-hidden />
             <span>
               Entry fee: <strong className="font-mono tabular-nums">{fee} NIM</strong>
-              <span className="ml-2 text-2xs text-muted-foreground">
-                paid to the ChainMate treasury · verified on-chain
-              </span>
             </span>
           </p>
           {entry.wallet.wallet && (
@@ -1163,39 +1249,16 @@ function PaidEntryPanel({
 
         {paymentPending && (
           <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning">
-            You&apos;re in, but the payment isn&apos;t verified yet. Complete the payment
+            You&apos;re in, but the payment isn&apos;t confirmed yet. Complete the payment
             below before the host starts the tournament.
           </p>
         )}
 
         {!joined && (
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Joining pays the entry fee from your linked Nimiq wallet. Your seat
-            is confirmed once the payment is verified on-chain.
+          <p className="text-xs text-muted-foreground">
+            Joining pays {fee} NIM from your linked Nimiq wallet.
           </p>
         )}
-
-        {/* The money flow, stated plainly — hosts don't fund anything, every
-            entrant pays the treasury, and the pool pays the winners. */}
-        <details className="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-          <summary className="cursor-pointer list-none text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground">
-            How the money works
-          </summary>
-          <div className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
-            <p>
-              <strong className="text-foreground/80">Each player pays their own entry.</strong>{" "}
-              Your {fee} NIM goes straight from your wallet to the ChainMate
-              treasury. The host never funds the tournament and never touches
-              the money.
-            </p>
-            <p>
-              <strong className="text-foreground/80">The pool is the entries.</strong>{" "}
-              Every verified payment is summed on-chain; when the tournament
-              completes, that exact pool is paid out to the winners per the
-              host&apos;s chosen preset (winner / top 3 / top 5).
-            </p>
-          </div>
-        </details>
 
         {phaseLabel && (
           <p className="flex items-center gap-2 text-sm text-primary">
@@ -1318,18 +1381,18 @@ function LeaveWhilePending({ onLeave }: { onLeave: (() => void) | undefined }) {
 }
 
 function PayoutStatusPill({ status }: { status: string }) {
+  /* Quiet tinted chips, sentence case — a status is a fact, not a shout. */
   const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: "prize pending", cls: "border-warning/40 text-warning" },
-    // "Dispatching" reads as a stuck mystery — say what it actually is.
-    dispatching: { label: "send in progress", cls: "border-warning/40 text-warning" },
-    sent: { label: "payout sent", cls: "border-primary/40 text-primary" },
-    verified: { label: "paid ✓", cls: "border-primary/40 text-primary bg-primary/5" },
-    failed: { label: "failed, retrying", cls: "border-destructive/40 text-destructive" },
-    blocked_no_wallet: { label: "awaiting wallet", cls: "border-warning/40 text-warning" },
+    pending: { label: "pending", cls: "bg-warning/10 text-warning" },
+    dispatching: { label: "sending…", cls: "bg-warning/10 text-warning" },
+    sent: { label: "confirming…", cls: "bg-primary/10 text-primary" },
+    verified: { label: "paid", cls: "bg-primary/10 text-primary" },
+    failed: { label: "retrying", cls: "bg-destructive/10 text-destructive" },
+    blocked_no_wallet: { label: "needs wallet", cls: "bg-warning/10 text-warning" },
   };
-  const it = map[status] ?? { label: status, cls: "border-border/60 text-muted-foreground" };
+  const it = map[status] ?? { label: status, cls: "bg-secondary/50 text-muted-foreground" };
   return (
-    <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-2xs uppercase tracking-wider", it.cls)}>
+    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium", it.cls)}>
       {it.label}
     </span>
   );
@@ -1357,6 +1420,23 @@ function nameOf(detail: TournamentDetailPayload, playerId: string): string {
   // server hasn't named (matches how Games/Watch show unnamed players).
   if (playerId === detail.summary.creatorId) return detail.summary.creatorName ?? "Host";
   return detail.entryNames?.[playerId] ?? guestDisplayName(undefined);
+}
+
+/**
+ * Live countdown to a scheduled instant ("45s", "1m 20s"). Re-renders on the
+ * page's own 5s poll cadence — good enough for a one-minute intermission.
+ */
+function IntermissionCountdown({ at }: { at: number }) {
+  const remaining = Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  if (remaining <= 0) return <strong className="font-mono tabular-nums">any second now</strong>;
+  if (remaining < 60) {
+    return <strong className="font-mono tabular-nums">{remaining}s</strong>;
+  }
+  return (
+    <strong className="font-mono tabular-nums">
+      {Math.floor(remaining / 60)}m {remaining % 60}s
+    </strong>
+  );
 }
 
 function UsersIcon() {
@@ -1402,7 +1482,7 @@ function MatchRow({
     <Link
       href={m.gameId ? `/game/${m.gameId}` : "#"}
       className={cn(
-        "group flex items-center justify-between gap-3 px-4 py-2.5 transition-colors",
+        "group flex items-center justify-between gap-3 px-4 py-2 transition-colors",
         m.gameId ? "hover:bg-secondary/40" : "pointer-events-none",
         isMyGame && "bg-primary/5",
       )}
@@ -1426,16 +1506,23 @@ function MatchRow({
       </div>
       <span
         className={cn(
-          "shrink-0 rounded border px-1.5 py-0.5 font-mono text-2xs tabular-nums",
+          "shrink-0 rounded-full px-2 py-0.5 font-mono text-2xs uppercase tracking-wider tabular-nums",
           m.status === "complete"
-            ? "border-border/60 text-muted-foreground"
-            : "border-primary/40 text-primary",
+            ? "bg-secondary/50 text-muted-foreground"
+            : "bg-destructive/10 text-destructive",
         )}
       >
-        {m.status !== "complete" && (
-          <Radio className="mr-1 inline h-2.5 w-2.5 animate-pulse-soft" aria-hidden />
+        {m.status !== "complete" ? (
+          <span className="inline-flex items-center">
+            <span
+              className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse-soft rounded-full bg-destructive align-middle"
+              aria-hidden
+            />
+            live
+          </span>
+        ) : (
+          resultLabel
         )}
-        {resultLabel}
       </span>
     </Link>
   );

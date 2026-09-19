@@ -325,7 +325,7 @@ export default function CreateTournamentPage() {
             </div>
             <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
               {paid
-                ? "Players pay the exact fee in NIM to the treasury. The prize pool is built from verified payments only; every entry is verified on-chain before it counts."
+                ? "Players pay the entry fee in NIM; the pool is paid out to the winners."
                 : "A free tournament needs no wallet. Anyone can join."}
             </p>
           </fieldset>

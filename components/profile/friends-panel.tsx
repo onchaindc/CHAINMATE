@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, Search, UserPlus, Users, X } from "lucide-react";
+import { Ban, Check, Search, UserMinus, UserPlus, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { guestDisplayName } from "@/lib/identity";
+import { cn } from "@/lib/utils";
 import { HostedGameStore, type SearchPlayerResult } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
 
@@ -33,6 +34,10 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   /** Friend pending removal: the dialog names them before anything happens. */
   const [removing, setRemoving] = useState<PlayerStats | null>(null);
+  /** Player pending a block (or unblock): the dialog names them first. */
+  const [blocking, setBlocking] = useState<PlayerStats | null>(null);
+  /** The viewer's blocked ids — drives the Unblock vs Block label. */
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
 
   const reload = useCallback(async () => {
     try {
@@ -43,6 +48,12 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load friends");
       setFriends([]);
+    }
+    try {
+      setBlockedIds(new Set(await store.blocked()));
+    } catch {
+      // The list is decorative until an action needs it; a failure here
+      // must not blank the friends list.
     }
   }, [store]);
 
@@ -97,13 +108,41 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
     await act("remove", target.playerId);
   };
 
-  const friendRow = (p: PlayerStats, actions?: React.ReactNode) => {
+  /** Block (or unblock) after the confirm dialog has been accepted. */
+  const confirmBlock = async () => {
+    if (!blocking) return;
+    const target = blocking;
+    const willBlock = !blockedIds.has(target.playerId);
+    setBlocking(null);
+    setBusyId(target.playerId);
+    setError(null);
+    try {
+      if (willBlock && !target.isGuest) {
+        // Blocking removes the friendship too: a blocked "friend" is a
+        // contradiction, and the block already cuts their messaging rights.
+        await store.friendAction("remove", target.playerId).catch(() => undefined);
+      }
+      await store.blockAction(willBlock ? "block" : "unblock", target.playerId);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That didn't work. Try again.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const friendRow = (
+    p: PlayerStats,
+    actions?: React.ReactNode,
+    options?: { withMenu?: boolean },
+  ) => {
     const linkable = !p.isGuest && p.username;
     const name = guestDisplayName(p.username);
+    const isBlocked = blockedIds.has(p.playerId);
     return (
       <div
         key={p.playerId}
-        className="flex items-center gap-3 px-3 py-2"
+        className="group flex items-center gap-3 px-3 py-2"
       >
         <PlayerAvatar name={name} avatarUrl={p.avatarUrl} size="sm" />
         <div className="min-w-0 flex-1">
@@ -119,12 +158,47 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
             ) : (
               <span className="truncate">{name}</span>
             )}
+            {isBlocked && (
+              <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wider text-destructive">
+                blocked
+              </span>
+            )}
           </p>
           <p className="truncate text-2xs text-muted-foreground">
             <span className="font-mono tabular-nums text-primary">{p.rating}</span>
             {!p.isGuest && p.games > 0 ? ` · ${p.games} games` : p.isGuest ? " · guest" : ""}
           </p>
         </div>
+        {/* Row actions — quiet icon buttons: block/unblock and remove.
+            Always visible on touch (no hover there), hover-revealed on
+            desktop so the list stays clean and destructive actions can't
+            be hit by accident. */}
+        {options?.withMenu && (
+          <div className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+            <button
+              type="button"
+              aria-label={isBlocked ? `Unblock ${name}` : `Block ${name}`}
+              disabled={busyId === p.playerId}
+              onClick={() => setBlocking(p)}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/60",
+                isBlocked ? "text-destructive hover:text-destructive" : "hover:text-foreground",
+                "disabled:opacity-40",
+              )}
+            >
+              <Ban className="h-4 w-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label={`Remove ${name} from friends`}
+              disabled={busyId === p.playerId}
+              onClick={() => setRemoving(p)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-40"
+            >
+              <UserMinus className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        )}
         {actions}
       </div>
     );
@@ -272,20 +346,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
           />
         ) : (
           <div className="divide-y divide-border/50 py-1">
-            {friends.map((p) =>
-              friendRow(
-                p,
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busyId === p.playerId}
-                  onClick={() => setRemoving(p)}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  Remove
-                </Button>,
-              ),
-            )}
+            {friends.map((p) => friendRow(p, undefined, { withMenu: true }))}
           </div>
         )}
       </div>
@@ -301,6 +362,35 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
       >
         They will no longer appear in your friends list, and you will not be
         able to message each other. You can always add them again later.
+      </ConfirmDialog>
+
+      {/* Block (or unblock) — a moderation shield, so it is named and
+          confirmed like every other destructive action. */}
+      <ConfirmDialog
+        open={blocking !== null}
+        title={
+          blockedIds.has(blocking?.playerId ?? "")
+            ? `Unblock ${guestDisplayName(blocking?.username ?? "")}?`
+            : `Block ${guestDisplayName(blocking?.username ?? "")}?`
+        }
+        confirmLabel={blockedIds.has(blocking?.playerId ?? "") ? "Unblock" : "Block"}
+        destructive={!blockedIds.has(blocking?.playerId ?? "")}
+        busy={blocking !== null && busyId === blocking.playerId}
+        onCancel={() => setBlocking(null)}
+        onConfirm={() => void confirmBlock()}
+      >
+        {blockedIds.has(blocking?.playerId ?? "") ? (
+          <p>
+            They will be able to message you, challenge you and add you as a
+            friend again.
+          </p>
+        ) : (
+          <p>
+            They will no longer be able to message you, challenge you or add
+            you as a friend. You can still challenge them, and you can unblock
+            at any time. If you are friends, this also removes the friendship.
+          </p>
+        )}
       </ConfirmDialog>
     </Panel>
   );

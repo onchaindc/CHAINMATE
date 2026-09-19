@@ -93,7 +93,9 @@ export function PlayerMenu() {
           open && "border-border bg-secondary/40",
         )}
       >
-        <PlayerAvatar name={name} />
+        {/* The uploaded picture in the navbar too — omitting avatarUrl here
+            is why an account's face vanished everywhere except its profile. */}
+        <PlayerAvatar name={name} avatarUrl={identity.avatarUrl} />
         <span className="hidden max-w-28 truncate text-sm text-foreground/90 sm:block">
           {name}
         </span>

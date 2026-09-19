@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { ArrowLeft, Loader2, MessagesSquare, Search, Send } from "lucide-react";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -9,6 +10,7 @@ import { EmptyState, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { ChainMateAvatar } from "@/components/auth/chainmate-avatar";
 import { refreshMessageCounts } from "@/hooks/use-message-counts";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +77,15 @@ function preview(text: string): string {
 export default function MessagesPage() {
   const identity = useIdentity();
   const authed = !identity.isGuest && Boolean(identity.username);
+  /* Deep link (?with=<playerId>): notification events point here so a bell
+     tap opens the actual thread. Read off window.location in an effect —
+     the codebase pattern (see app/create) that keeps this page prerenderable
+     without a Suspense boundary. */
+  const [deepLinkPeer, setDeepLinkPeer] = useState<string>("");
+  useEffect(() => {
+    const with_ = new URLSearchParams(window.location.search).get("with");
+    if (with_) setDeepLinkPeer(with_);
+  }, []);
 
   const [inbox, setInbox] = useState<Envelope[] | null>(null);
   /** The friends this account may chat with (server decides, not the UI). */
@@ -241,7 +252,13 @@ export default function MessagesPage() {
   }, [inbox, peer]);
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
+    /* Scroll the THREAD viewport internally — never scrollIntoView, which
+       walks up to the nearest scrollable ancestor chain and yanks the whole
+       page (the reported "chat makes the page jump"). The thread pane is the
+       element with overflow here, so setting its scrollTop pins the newest
+       bubble into view without touching the window. */
+    const el = threadEndRef.current?.parentElement;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [thread.length, peer]);
 
   const send = async () => {
@@ -285,6 +302,39 @@ export default function MessagesPage() {
     setResults([]);
     setError(null);
   };
+
+  /* Resolve a deep-linked peer once the inbox has envelopes to name them
+     from; until then the header would show a raw id. Re-runs harmlessly —
+     the ref pins the work to the first resolution. */
+  const deepLinkDone = useRef<string>("");
+  useEffect(() => {
+    if (!deepLinkPeer || !inbox || inbox === null) return;
+    if (deepLinkDone.current === deepLinkPeer) return;
+    const hit = inbox.find(
+      (m) =>
+        m.kind === "dm" &&
+        (m.counterpartId === deepLinkPeer ||
+          m.fromPlayerId === deepLinkPeer ||
+          m.toPlayerId === deepLinkPeer),
+    );
+    if (!hit) return;
+    deepLinkDone.current = deepLinkPeer;
+    openPeer({
+      player_id: deepLinkPeer,
+      username:
+        hit.counterpartName && hit.counterpartName !== "You"
+          ? hit.counterpartName
+          : hit.fromPlayerId === deepLinkPeer
+            ? hit.fromName
+            : deepLinkPeer,
+      is_guest: false,
+      rating: 0,
+      country: null,
+      games: 0,
+      avatar_url: hit.counterpartAvatar ?? null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkPeer, inbox]);
 
   if (!authed) {
     return (
@@ -365,9 +415,17 @@ export default function MessagesPage() {
                 </ul>
               ) : (
                 <>
-                  <p className="px-4 pb-1.5 pt-3 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Chats
-                  </p>
+                  {/* Mobile needs an exit from the list pane itself — on a
+                      phone the desktop header (with its Back to profile) is
+                      not rendered, so the list was a dead end. */}
+                  <div className="flex items-center justify-between px-4 pb-1.5 pt-3">
+                    <p className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Chats
+                    </p>
+                    <BackLink href="/profile" className="lg:hidden">
+                      Back
+                    </BackLink>
+                  </div>
                   {inbox === null ? (
                     <LoadingRows rows={5} />
                   ) : conversations.length === 0 ? (
@@ -396,7 +454,11 @@ export default function MessagesPage() {
                               peer?.player_id === c.peerId && "bg-secondary/60",
                             )}
                           >
-                            <PlayerAvatar name={c.peerName} avatarUrl={c.peerAvatar} size="md" />
+                            {c.peerId === "chainmate" ? (
+                              <ChainMateAvatar size="md" />
+                            ) : (
+                              <PlayerAvatar name={c.peerName} avatarUrl={c.peerAvatar} size="md" />
+                            )}
                             <span className="min-w-0 flex-1">
                               <span className="flex items-baseline justify-between gap-2">
                                 <span className="truncate text-sm font-semibold">
@@ -438,18 +500,38 @@ export default function MessagesPage() {
           {peer ? (
             <>
               <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+                {/* Back to the thread list. On phones this leaves the chat;
+                    on desktop it returns to the pick-a-conversation state —
+                    the back affordance the threads header had but the chat
+                    itself was missing. */}
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="lg:hidden"
                   aria-label="Back to chats"
                   onClick={() => setPeer(null)}
                 >
                   <ArrowLeft aria-hidden />
                 </Button>
-                <PlayerAvatar name={peer.username} avatarUrl={peerAvatar} size="md" />
+                {peer.player_id === "chainmate" ? (
+                  <ChainMateAvatar size="md" />
+                ) : (
+                  <PlayerAvatar name={peer.username} avatarUrl={peerAvatar} size="md" />
+                )}
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{peer.username}</p>
+                  {/* The name is their profile link, matching the friends
+                      list: a chat header is where you look someone up. */}
+                  {peer.player_id === "chainmate" ? (
+                    <p className="truncate text-sm font-semibold">{peer.username}</p>
+                  ) : peer.username && !peer.is_guest ? (
+                    <Link
+                      href={`/players/${encodeURIComponent(peer.username)}`}
+                      className="block truncate text-sm font-semibold underline-offset-2 hover:underline"
+                    >
+                      {peer.username}
+                    </Link>
+                  ) : (
+                    <p className="truncate text-sm font-semibold">{peer.username}</p>
+                  )}
                   {peer.rating > 0 && (
                     <p className="text-2xs text-muted-foreground">{peer.rating} rated</p>
                   )}
@@ -471,14 +553,17 @@ export default function MessagesPage() {
                           mine ? "justify-end" : "justify-start",
                         )}
                       >
-                        {!mine && (
-                          <PlayerAvatar
-                            name={m.counterpartName ?? peer.username}
-                            avatarUrl={m.counterpartAvatar ?? peerAvatar}
-                            size="xs"
-                            className="mb-0.5"
-                          />
-                        )}
+                        {!mine &&
+                          (m.counterpartId === "chainmate" ? (
+                            <ChainMateAvatar size="xs" className="mb-0.5" />
+                          ) : (
+                            <PlayerAvatar
+                              name={m.counterpartName ?? peer.username}
+                              avatarUrl={m.counterpartAvatar ?? peerAvatar}
+                              size="xs"
+                              className="mb-0.5"
+                            />
+                          ))}
                         <div
                           className={cn(
                             "max-w-[78%] rounded-2xl px-3.5 py-2 text-sm leading-snug",

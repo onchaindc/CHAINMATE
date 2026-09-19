@@ -141,7 +141,37 @@ export async function getBindingForPlayer(
   playerId: string,
 ): Promise<NimiqWalletBinding | null> {
   const bindings = await readBindings();
-  return bindings[playerId] ?? null;
+  const local = bindings[playerId] ?? null;
+  if (local) return local;
+  // Cold-start recovery: this module's own contract (see the header comment)
+  // names the Supabase mirror the durable source for exactly this case. A
+  // serverless instance starts with an empty file store, so without this
+  // read-back every wallet binding "disappears" on a fresh instance — the
+  // payout engine told connected winners "needs wallet" and blocked their
+  // prizes even though the binding was durably mirrored at link time. The
+  // mirror is authority-backed (service key) and its address uniqueness is
+  // schema-enforced, so a recovered row is as trustworthy as the original.
+  if (!supabaseConfigured()) return null;
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("nimiq_wallet_bindings")
+    .select("player_id, address, network, public_key, created_at, updated_at")
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const network: NimiqNetworkName = data.network === "main" ? "main" : "test";
+  const recovered: NimiqWalletBinding = {
+    playerId: data.player_id,
+    address: data.address,
+    network,
+    publicKey: data.public_key,
+    createdAt: Date.parse(String(data.created_at)) || 0,
+    updatedAt: Date.parse(String(data.updated_at)) || 0,
+  };
+  // Heal the fast store so every later read is local (and stays cheap).
+  await writeBindings({ ...bindings, [playerId]: recovered });
+  return recovered;
 }
 
 /** Binding whose address is the given one (canonical compare), or null. */

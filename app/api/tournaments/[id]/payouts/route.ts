@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
+import { isAdminPlayer } from "@/lib/server/admin";
 import { getTournamentDoc } from "@/lib/server/tournament-store";
 import { isPaidTournamentDoc } from "@/lib/server/tournament-economy-doc";
 import { recomputeStandingsFor } from "@/lib/server/tournament-payouts-view";
@@ -20,7 +21,14 @@ import {
   claimPayoutWithWalletTransaction,
   confirmSentWalletPayout,
   preparePayoutClaim,
+  resolvePayoutRow,
 } from "@/lib/server/tournament-payouts-wallet";
+import {
+  RefundClaimError,
+  claimRefundWithWalletTransaction,
+  confirmDispatchedRefund,
+  prepareRefundReturn,
+} from "@/lib/server/tournament-refunds-wallet";
 
 export const runtime = "nodejs";
 
@@ -51,20 +59,42 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 interface PayoutActionBody {
-  action: "plan" | "send" | "retry" | "dispatch" | "verify" | "wallet-prepare" | "wallet-claim" | "wallet-confirm";
+  action:
+    | "plan"
+    | "send"
+    | "retry"
+    | "dispatch"
+    | "verify"
+    | "wallet-prepare"
+    | "wallet-claim"
+    | "wallet-confirm"
+    | "wallet-destination"
+    | "my-destination"
+    | "refund-prepare"
+    | "refund-claim"
+    | "refund-confirm";
   playerId?: string;
   /** For send/dispatch/retry/verify: which winner's payout to act on. */
   targetPlayerId?: string;
   /** For wallet-claim: the hash of the host's Nimiq Pay transaction. */
   txHash?: string;
+  /** For wallet-destination: a canonical Nimiq address typed in the admin console. */
+  destinationAddress?: string;
 }
 
 /**
- * POST /api/tournaments/[id]/payouts — host-only payout actions.
- *   plan:  (re)create the payout records after completion (idempotent)
- *   send:  attempt dispatch through the configured treasury signer —
- *          typed 503 when none is configured (the 2B default)
- *   retry: return a failed/blocked payout to pending
+ * POST /api/tournaments/[id]/payouts — CHAINMATE-ONLY payout actions.
+ *
+ * ChainMate (the platform admin, operating from the admin dashboard) is the
+ * SOLE distributor of prizes and refunds. A host can see statuses on their
+ * tournament page, but money moves only from the admin console — one
+ * accountable payer, one audit trail. Every action here therefore requires
+ * the admin identity; there is no host bypass.
+ *   plan:  (re)create the payout records after completion (idempotent;
+ *          also runs automatically on completion — this endpoint is the
+ *          console's manual re-run)
+ *   wallet-destination: set where a blocked prize pays, from an address
+ *          typed in the admin console
  */
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params;
@@ -86,9 +116,43 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (!doc) {
       return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
     }
-    if (doc.creatorId !== acting.playerId) {
+
+    // SELF-SERVE PRIZE ADDRESS — the one payout action a non-admin may take.
+    // A winner who has not linked a Nimiq wallet (or whose binding cannot be
+    // resolved) types the address their own prize should go to. Strictly
+    // self-scoped: targetPlayerId, when present, must BE the caller, so this
+    // can never set a destination for somebody else's prize.
+    if (body.action === "my-destination") {
+      if (body.targetPlayerId && body.targetPlayerId !== acting.playerId) {
+        return NextResponse.json(
+          { error: "You can only set the destination for your own prize" },
+          { status: 403 },
+        );
+      }
+      if (!body.destinationAddress) {
+        return NextResponse.json({ error: "destinationAddress is required" }, { status: 400 });
+      }
+      const { setPayoutDestination } = await import("@/lib/server/tournament-payouts");
+      try {
+        const payout = await setPayoutDestination(id, acting.playerId, body.destinationAddress);
+        return NextResponse.json({
+          payout: {
+            playerId: payout.playerId,
+            status: payout.status,
+            amountLuna: payout.amountLuna,
+            destinationSet: Boolean(payout.destinationAddress),
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not set the address";
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+    }
+
+    const isAdmin = await isAdminPlayer(acting.playerId);
+    if (!isAdmin) {
       return NextResponse.json(
-        { error: "Only the host can manage payouts" },
+        { error: "Only ChainMate can disburse prizes and refunds" },
         { status: 403 },
       );
     }
@@ -243,17 +307,100 @@ export async function POST(req: NextRequest, { params }: Params) {
         });
       }
       case "wallet-confirm": {
-        // Refresh confirmations for an already-claimed prize → 'verified'.
+        // Check status: whatever the row's state, resolve it to the truth —
+        // refresh a sent/verified prize's confirmations, verify a recorded
+        // dispatch, or DISCOVER a payment the host already sent from their
+        // wallet history and settle it with full identity gates. The legacy
+        // "sending… forever" rows settle here in one click.
         if (!body.targetPlayerId) {
           return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
         }
-        const result = await confirmSentWalletPayout(id, acting.playerId, body.targetPlayerId);
+        const result = await resolvePayoutRow(id, acting.playerId, body.targetPlayerId);
+        if (!result) {
+          return NextResponse.json(
+            { error: "No payment found for this prize yet — send it from your wallet, then check status again" },
+            { status: 404 },
+          );
+        }
         return NextResponse.json({
           payout: {
             playerId: result.payout.playerId,
             status: result.payout.status,
             amountLuna: result.payout.amountLuna,
             payoutTxHash: result.payout.payoutTxHash,
+            confirmations: result.confirmations,
+          },
+        });
+      }
+      case "wallet-destination": {
+        // ADMIN console only: set where this prize goes when the winner's
+        // own wallet binding cannot be resolved. The address is validated
+        // to full canonical form before it is ever stored.
+        if (!isAdmin) {
+          return NextResponse.json({ error: "Only a ChainMate admin can set a payout destination" }, { status: 403 });
+        }
+        if (!body.targetPlayerId || !body.destinationAddress) {
+          return NextResponse.json({ error: "targetPlayerId and destinationAddress are required" }, { status: 400 });
+        }
+        const { setPayoutDestination } = await import("@/lib/server/tournament-payouts");
+        try {
+          const payout = await setPayoutDestination(id, body.targetPlayerId, body.destinationAddress);
+          return NextResponse.json({
+            payout: {
+              playerId: payout.playerId,
+              status: payout.status,
+              amountLuna: payout.amountLuna,
+              destinationAddress: payout.destinationAddress,
+            },
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Could not set the destination";
+          return NextResponse.json({ error: message }, { status: 400 });
+        }
+      }
+      case "refund-prepare": {
+        // Wire facts for returning ONE entrant's fee from the host's own
+        // Nimiq Pay wallet (the deployment has no signing node).
+        if (!body.targetPlayerId) {
+          return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+        }
+        const intent = await prepareRefundReturn(id, acting.playerId, body.targetPlayerId);
+        return NextResponse.json({ intent });
+      }
+      case "refund-claim": {
+        if (!body.targetPlayerId || !body.txHash) {
+          return NextResponse.json(
+            { error: "targetPlayerId and txHash are required" },
+            { status: 400 },
+          );
+        }
+        const result = await claimRefundWithWalletTransaction(
+          id,
+          acting.playerId,
+          body.targetPlayerId,
+          body.txHash,
+        );
+        return NextResponse.json({
+          refund: {
+            playerId: result.refund.playerId,
+            status: result.refund.status,
+            amountLuna: result.refund.amountLuna,
+            refundTxHash: result.refund.refundTxHash,
+            confirmations: result.confirmations,
+          },
+        });
+      }
+      case "refund-confirm": {
+        if (!body.targetPlayerId) {
+          return NextResponse.json({ error: "targetPlayerId is required" }, { status: 400 });
+        }
+        const result = await confirmDispatchedRefund(id, acting.playerId, body.targetPlayerId);
+        return NextResponse.json({
+          refund: {
+            playerId: result.refund.playerId,
+            status: result.refund.status,
+            amountLuna: result.refund.amountLuna,
+            refundTxHash: result.refund.refundTxHash,
             confirmations: result.confirmations,
           },
         });
@@ -272,6 +419,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       );
     }
     if (err instanceof PayoutClaimError) {
+      return NextResponse.json(
+        { error: err.message, kind: err.kind },
+        { status: err.status },
+      );
+    }
+    if (err instanceof RefundClaimError) {
       return NextResponse.json(
         { error: err.message, kind: err.kind },
         { status: err.status },

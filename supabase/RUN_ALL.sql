@@ -1120,3 +1120,17 @@ update public.profiles
 set is_guest = false
 where player_id like 'acct_%'
   and is_guest is true;
+
+-- ============================================================
+-- 0016_tournament_intermission.sql
+-- ============================================================
+-- ChainMate — round intermission for the tournament engine
+-- ============================================================
+-- Idempotent. The engine schedules the NEXT round a short break after the
+-- last game of the current round ends, instead of dealing it instantly.
+-- next_round_at = the instant the next round will be generated (null = none
+-- pending). Read by the cold-start rebuild path; the fast store stays the
+-- source of truth.
+
+alter table tournaments
+  add column if not exists next_round_at timestamptz;

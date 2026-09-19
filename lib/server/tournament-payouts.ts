@@ -370,6 +370,46 @@ export class PayoutTransitionError extends Error {
   }
 }
 
+/**
+ * ADMIN override for a payout destination: set exactly where this prize
+ * goes when the winner's own wallet binding cannot be resolved (their
+ * binding was made on an instance whose fast store never reached this one,
+ * or they linked and lost access). The address is validated to canonical
+ * Nimiq form before it is stored. Rows blocked as "no wallet" unblock;
+ * settled rows (sent/verified) are refused — the money already moved.
+ */
+export async function setPayoutDestination(
+  tournamentId: string,
+  playerId: string,
+  addressInput: string,
+  deps: { store?: PayoutStore } = {},
+): Promise<PayoutRecord> {
+  const { validateNimiqAddress } = await import("@/lib/nimiq/address");
+  let canonical: string;
+  try {
+    canonical = validateNimiqAddress(addressInput);
+  } catch {
+    throw new PayoutTransitionError("That is not a valid Nimiq address", 400);
+  }
+  const store = deps.store ?? fastStorePayoutStore;
+  return withPayoutLock(`send:${tournamentId}:${playerId}`, async () => {
+    const payout = await store.get(tournamentId, playerId);
+    if (!payout) throw new PayoutTransitionError("No planned prize for that player", 404);
+    if (payout.status === "sent" || payout.status === "verified") {
+      throw new PayoutTransitionError("This prize has already been sent", 409);
+    }
+    const updated: PayoutRecord = {
+      ...payout,
+      destinationAddress: canonical,
+      status: "pending",
+      failureReason: null,
+    };
+    await store.upsert(updated);
+    await mirrorPayouts(tournamentId, [updated]);
+    return updated;
+  });
+}
+
 /** Signer availability — Phase 2B ships with NO custodial signer. */
 export interface TreasurySigner {
   /**

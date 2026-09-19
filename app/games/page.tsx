@@ -96,7 +96,7 @@ function GamesContent() {
   }, [identity.playerId, identity.status]);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
+    <div className="shell px-4 py-12 sm:px-6 lg:py-16">
       <PageHeader
         eyebrow="Your record"
         title="Games"
@@ -125,7 +125,8 @@ function GamesContent() {
                   game={game}
                   me={game.backend === "local" ? localMe : identity.playerId}
                   delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                  names={game.backend === "local" ? undefined : names}
+                  players={game.backend === "local" ? undefined : players}
+                  meName={game.backend === "local" ? identity.username : undefined}
                 />
               ))}
             </div>
@@ -172,7 +173,8 @@ function GamesContent() {
                 game={game}
                 me={game.backend === "local" ? localMe : identity.playerId}
                 delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
-                names={game.backend === "local" ? undefined : names}
+                players={game.backend === "local" ? undefined : players}
+                meName={game.backend === "local" ? identity.username : undefined}
               />
             ))}
           </div>
