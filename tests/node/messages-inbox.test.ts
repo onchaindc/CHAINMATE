@@ -195,6 +195,19 @@ test("the operator DMs anyone without friendship — full admin rights", async (
   assert.equal(denied.ok, false);
 });
 
+test("the dashboard reply path delivers as ChainMate without any friendship", async () => {
+  const ADMIN = "acct_admin_boss"; // seat claimed by the previous test
+  const PLAYER = "acct_player_nofriend";
+  // Exactly what app/admin's Message button calls: reply → official account.
+  const res = await messages.replyToSupportMessage(ADMIN, PLAYER, "Moderation note");
+  assert.deepEqual(res, { ok: true });
+  const inbox = await messages.inboxFor(PLAYER);
+  assert.ok(
+    inbox.some((m) => m.kind === "dm" && m.body === "Moderation note"),
+    "the official reply never reached the player's inbox",
+  );
+});
+
 test("DMs fail closed without a real friendship (no Supabase)", async () => {
   // Fresh ids: the inbox above is seeded by earlier tests, and the assertion
   // here is that a rejected send writes NOTHING for either side.
