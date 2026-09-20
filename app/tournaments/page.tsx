@@ -236,7 +236,7 @@ function TournamentCard({
                 Free
               </span>
             )}
-            {/* The purse, where there is one: live verified pool (when the
+            {/* The pool, where there is one: live verified pool (when the
                 server has resolved entries) or the entry fee × field, plus
                 the preset split so players see what 1st/2nd/3rd get. */}
             {t.entryFeeLuna && t.entryFeeLuna !== "0" && (
