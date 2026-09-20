@@ -71,13 +71,40 @@ function newId(): string {
  * Best display name for the actor (falls back without leaking raw ids).
  * The app has exactly three names for unresolvable players: "ChainMate"
  * (the official account — it has no profile row by design), "Computer"
- * (the engine), and "Guest" (everywhere else). Nothing invented: a
- * notification that says "Someone sent you a friend request" reads like
- * a security breach.
+ * (the engine), and "Guest" (everywhere else). Nothing invented.
  */
 async function actorDisplayName(playerId: string): Promise<string> {
   if (playerId === "chainmate") return "ChainMate";
   return (await usernameForPlayer(playerId)) ?? "Guest";
+}
+
+/**
+ * Read-time repair: notification bodies were persisted with whatever name
+ * the actor resolved to AT SEND TIME — including the era when an unnamed
+ * actor produced "A player challenged you…" (the exact wording the operator
+ * reported). Re-derive the actor's CURRENT name on every read and rebuild
+ * the sentence when it differs. Rows for the official account heal to
+ * "ChainMate …" without a store rewrite.
+ */
+function rebuildEventBody(type: NotifyEventType, name: string, oldBody: string): string {
+  if (type === "message") return oldBody; // body IS the message preview
+  const lower = oldBody.toLowerCase();
+  if (type === "friend-request") {
+    return lower.includes("friend request") && !oldBody.startsWith(name)
+      ? `${name} sent you a friend request.`
+      : oldBody;
+  }
+  if (type === "friend-accepted") {
+    return lower.includes("accepted your friend request") && !oldBody.startsWith(name)
+      ? `${name} accepted your friend request. You can chat now.`
+      : oldBody;
+  }
+  if (type === "challenge") {
+    return lower.includes("challenged you") && !oldBody.startsWith(name)
+      ? `${name} challenged you to a game.`
+      : oldBody;
+  }
+  return oldBody;
 }
 
 async function pushEvent(
@@ -182,7 +209,21 @@ export async function notifyChallenge(
 
 export async function eventsFor(playerId: string): Promise<NotifyEvent[]> {
   const all = await readAll();
-  return all[playerId] ?? [];
+  const inbox = all[playerId] ?? [];
+  // Names are stored denormalised but rendered now — heal any row whose
+  // stored name no longer matches the actor's current one.
+  return Promise.all(
+    inbox.map(async (e) => {
+      const current = await actorDisplayName(e.actorPlayerId);
+      if (current === e.actorName) return e;
+      const healed: NotifyEvent = {
+        ...e,
+        actorName: current,
+        body: rebuildEventBody(e.type, current, e.body),
+      };
+      return healed;
+    }),
+  );
 }
 
 export async function unreadEventCount(playerId: string): Promise<number> {

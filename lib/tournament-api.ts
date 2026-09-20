@@ -208,4 +208,25 @@ export const tournamentApi = {
       }),
     });
   },
+
+  /**
+   * SELF-SERVE PRIZE ADDRESS: a winner without a linked wallet types where
+   * their own prize should go. Server-enforced self-scoped — the caller can
+   * only ever set their own row. The unblocking is visible to the admin
+   * console, which still performs the actual send.
+   */
+  async setMyPrizeDestination(
+    tournamentId: string,
+    playerId: string,
+    destinationAddress: string,
+  ): Promise<void> {
+    await call(`/api/tournaments/${encodeURIComponent(tournamentId)}/payouts`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId,
+        action: "my-destination",
+        destinationAddress,
+      }),
+    });
+  },
 };

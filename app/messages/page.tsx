@@ -10,6 +10,7 @@ import { EmptyState, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { ChainMateAvatar } from "@/components/auth/chainmate-avatar";
 import { refreshMessageCounts } from "@/hooks/use-message-counts";
 import { cn } from "@/lib/utils";
 
@@ -453,7 +454,11 @@ export default function MessagesPage() {
                               peer?.player_id === c.peerId && "bg-secondary/60",
                             )}
                           >
-                            <PlayerAvatar name={c.peerName} avatarUrl={c.peerAvatar} size="md" />
+                            {c.peerId === "chainmate" ? (
+                              <ChainMateAvatar size="md" />
+                            ) : (
+                              <PlayerAvatar name={c.peerName} avatarUrl={c.peerAvatar} size="md" />
+                            )}
                             <span className="min-w-0 flex-1">
                               <span className="flex items-baseline justify-between gap-2">
                                 <span className="truncate text-sm font-semibold">
@@ -507,11 +512,17 @@ export default function MessagesPage() {
                 >
                   <ArrowLeft aria-hidden />
                 </Button>
-                <PlayerAvatar name={peer.username} avatarUrl={peerAvatar} size="md" />
+                {peer.player_id === "chainmate" ? (
+                  <ChainMateAvatar size="md" />
+                ) : (
+                  <PlayerAvatar name={peer.username} avatarUrl={peerAvatar} size="md" />
+                )}
                 <div className="min-w-0">
                   {/* The name is their profile link, matching the friends
                       list: a chat header is where you look someone up. */}
-                  {peer.username && !peer.is_guest ? (
+                  {peer.player_id === "chainmate" ? (
+                    <p className="truncate text-sm font-semibold">{peer.username}</p>
+                  ) : peer.username && !peer.is_guest ? (
                     <Link
                       href={`/players/${encodeURIComponent(peer.username)}`}
                       className="block truncate text-sm font-semibold underline-offset-2 hover:underline"
@@ -542,14 +553,17 @@ export default function MessagesPage() {
                           mine ? "justify-end" : "justify-start",
                         )}
                       >
-                        {!mine && (
-                          <PlayerAvatar
-                            name={m.counterpartName ?? peer.username}
-                            avatarUrl={m.counterpartAvatar ?? peerAvatar}
-                            size="xs"
-                            className="mb-0.5"
-                          />
-                        )}
+                        {!mine &&
+                          (m.counterpartId === "chainmate" ? (
+                            <ChainMateAvatar size="xs" className="mb-0.5" />
+                          ) : (
+                            <PlayerAvatar
+                              name={m.counterpartName ?? peer.username}
+                              avatarUrl={m.counterpartAvatar ?? peerAvatar}
+                              size="xs"
+                              className="mb-0.5"
+                            />
+                          ))}
                         <div
                           className={cn(
                             "max-w-[78%] rounded-2xl px-3.5 py-2 text-sm leading-snug",

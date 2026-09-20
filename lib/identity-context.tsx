@@ -181,7 +181,11 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     try {
       const sb = getSupabaseBrowser();
-      if (sb) await sb.auth.signOut();
+      // scope "local" signs out THIS device only. The default ("global")
+      // revokes the account's refresh tokens server-side, which silently
+      // killed every other signed-in device — signing out on the phone
+      // logged the desktop out mid-game.
+      if (sb) await sb.auth.signOut({ scope: "local" });
     } catch {
       // continue — local record cleared regardless
     }

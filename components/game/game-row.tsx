@@ -33,6 +33,13 @@ interface GameRowProps {
   delta?: number | null;
   /** Real display info for player ids (usernames, avatars from the server). */
   players?: Record<string, PlayerInfo>;
+  /**
+   * This browser's real display name, when the row's store can't supply one.
+   * Local/AI games run on the device store, whose records carry no server
+   * profile — without this the signed-in player's OWN row fell back to the
+   * generic guest label ("Guest vs Computer"), which read as a data bug.
+   */
+  meName?: string;
 }
 
 /**
@@ -45,7 +52,7 @@ interface GameRowProps {
  * rows glow, losses recede, draws sit neutral — scanning a page of results
  * takes a glance instead of a read.
  */
-export function GameRow({ game, me, delta, players }: GameRowProps) {
+export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
   const over = isGameOver(game.status);
   const creator = game.creator;
   const opponent = game.opponent || "";
@@ -61,7 +68,11 @@ export function GameRow({ game, me, delta, players }: GameRowProps) {
    * straight through — putting the short id back on screen.
    */
   const nameFor = (id: string) =>
-    id === AI_PLAYER_ID ? "Computer" : guestDisplayName(players?.[id]?.name);
+    id === AI_PLAYER_ID
+      ? "Computer"
+      : id === me && meName
+        ? meName
+        : guestDisplayName(players?.[id]?.name);
 
   /**
    * The row is ABOUT the opponent — the person you played. A waiting game

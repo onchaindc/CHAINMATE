@@ -18,6 +18,8 @@
  */
 
 import { getGameStorage } from "@/lib/server/storage";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseConfigured } from "@/lib/supabase/config";
 import { profileForPlayerId } from "@/lib/supabase/db";
 
 const BANS_KEY = "chainmate:admin:bans";
@@ -304,7 +306,31 @@ function withBanLock<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function getBan(playerId: string): Promise<BanRecord | null> {
   const bans = await readBans();
-  return bans[playerId] ?? null;
+  const local = bans[playerId] ?? null;
+  if (local) return local;
+  // Cold-start recovery: a fresh serverless instance has an empty fast
+  // store, which used to silently LIFT every restriction — a restricted
+  // account could wait out a redeploy and play again. The durable mirror
+  // (0017) is authority-backed (service key), so a recovered row is as
+  // trustworthy as the original. Healed into the fast store so every
+  // later read stays local.
+  if (!supabaseConfigured()) return null;
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from("admin_bans")
+    .select("player_id, reason, banned_by, banned_at")
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const recovered: BanRecord = {
+    playerId: data.player_id,
+    reason: data.reason,
+    bannedBy: data.banned_by,
+    bannedAt: Date.parse(String(data.banned_at)) || 0,
+  };
+  await getGameStorage().set(BANS_KEY, JSON.stringify({ ...bans, [playerId]: recovered }));
+  return recovered;
 }
 
 export async function listBans(): Promise<BanRecord[]> {
@@ -327,6 +353,7 @@ export async function banPlayer(
     };
     bans[playerId] = record;
     await getGameStorage().set(BANS_KEY, JSON.stringify(bans));
+    await mirrorBan(record);
     return record;
   });
 }
@@ -337,8 +364,39 @@ export async function unbanPlayer(playerId: string): Promise<boolean> {
     if (!bans[playerId]) return false;
     delete bans[playerId];
     await getGameStorage().set(BANS_KEY, JSON.stringify(bans));
+    await deleteBanMirror(playerId);
     return true;
   });
+}
+
+/* Durable mirror (supabase/migrations/0017): the ban ledger survives cold
+   starts. Best-effort — a mirror failure logs and moves on, the fast store
+   remains the runtime source of truth while it is warm. */
+
+function reportBanMirrorError(scope: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[admin] ${scope} mirror failed: ${message}`);
+}
+
+async function mirrorBan(record: BanRecord): Promise<void> {
+  if (!supabaseConfigured()) return;
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  const { error } = await admin.from("admin_bans").upsert({
+    player_id: record.playerId,
+    reason: record.reason,
+    banned_by: record.bannedBy,
+    banned_at: new Date(record.bannedAt).toISOString(),
+  });
+  if (error) reportBanMirrorError("ban upsert", error);
+}
+
+async function deleteBanMirror(playerId: string): Promise<void> {
+  if (!supabaseConfigured()) return;
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+  const { error } = await admin.from("admin_bans").delete().eq("player_id", playerId);
+  if (error) reportBanMirrorError("ban delete", error);
 }
 
 export interface BanGate {

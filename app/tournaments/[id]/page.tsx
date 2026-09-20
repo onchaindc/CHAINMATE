@@ -90,6 +90,7 @@ export default function TournamentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<TournamentAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** Set while the self-serve prize-address save is in flight. */
   const [payoutBusy, setPayoutBusy] = useState<string | null>(null);
   /** Leave confirmation (paid events warn about forfeiting the entry). */
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -220,165 +221,6 @@ export default function TournamentDetailPage() {
     }
   }, [stillJoined, entry.pendingTxHash]);
 
-  /** Host-only payout dispatch/verify — crash-safe on the server. */
-  const runPayoutAction = async (
-    action: "dispatch" | "verify" | "wallet-confirm" | "refund-confirm",
-    targetPlayerId: string,
-  ) => {
-    if (!detail || payoutBusy) return;
-    setPayoutBusy(`${action}:${targetPlayerId}`);
-    setActionError(null);
-    try {
-      await tournamentApi.payoutAction(id, identity.playerId, action, targetPlayerId);
-      await load();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Payout action failed");
-    } finally {
-      setPayoutBusy(null);
-    }
-  };
-
-  /**
-   * HOST-WALLET PRIZE PAYMENT — the zero-infrastructure treasury.
-   *
-   * 1. Ask the server for the exact wire facts (winner's linked address +
-   *    exact prize luna) — the host never types an address.
-   * 2. Open Nimiq Pay through the proven wallet wrapper; the host confirms
-   *    the send in the wallet's native sheet.
-   * 3. Submit the returned hash: the server verifies it on-chain (exists,
-   *    network, host sender, winner recipient, exact amount, executed, not
-   *    already claimed) and marks the prize paid.
-   */
-  const sendPrizeFromWallet = async (targetPlayerId: string) => {
-    if (payoutBusy) return;
-    setPayoutBusy(`wallet:${targetPlayerId}`);
-    setActionError(null);
-    try {
-      const prep = (await tournamentApi.payoutAction(
-        id,
-        identity.playerId,
-        "wallet-prepare",
-        targetPlayerId,
-      )) as { intent: { recipientAddress: string; amountLuna: string; network: string } };
-      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
-      const { canonicalAddress } = await import("@/lib/nimiq/address");
-      const { parseNim } = await import("@/lib/nimiq/format");
-
-      const connected = await connectNimiq();
-      if (!connected.ok) throw new Error(connected.error.message);
-      const sent = await sendNimiqBasicTransaction(connected.value, {
-        recipient: canonicalAddress(prep.intent.recipientAddress),
-        value: BigInt(prep.intent.amountLuna),
-      });
-      if (!sent.ok) throw new Error(sent.error.message);
-
-      setPayoutBusy(`wallet-claim:${targetPlayerId}`);
-      try {
-        await tournamentApi.payoutAction(
-          id,
-          identity.playerId,
-          "wallet-claim",
-          targetPlayerId,
-          sent.value,
-        );
-        await load();
-      } catch {
-        // The money has MOVED. The server records any transaction that
-        // passes its identity gates at ≥1 confirmation — so this claim can
-        // only fail on a real network problem, never on "still confirming".
-        // Retry the SAME hash until it lands; a second send is never needed.
-        setActionError(
-          `Prize sent (tx ${sent.value.slice(0, 10)}…) — still confirming. Do NOT send again: re-press the prize's action in a moment to finish verification.`,
-        );
-        // Retry the claim immediately once — the common case (1–7
-        // confirmations by now) lands and the row shows "sent".
-        try {
-          await tournamentApi.payoutAction(
-            id,
-            identity.playerId,
-            "wallet-claim",
-            targetPlayerId,
-            sent.value,
-          );
-          setActionError(null);
-          await load();
-        } catch {
-          /* stays in the guiding message above; never a second payment */
-        }
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Sending the prize failed");
-    } finally {
-      setPayoutBusy(null);
-    }
-  };
-
-  /**
-   * HOST-WALLET REFUND — returning one entrant's fee from the host's own
-   * Nimiq Pay wallet when the event is cancelled (or the fee must go back
-   * after leaving before lock). Same three steps as the prize path:
-   * server-issued wire facts, the wallet sheet, on-chain verification.
-   */
-  const refundFromWallet = async (targetPlayerId: string) => {
-    if (payoutBusy) return;
-    setPayoutBusy(`refund:${targetPlayerId}`);
-    setActionError(null);
-    try {
-      const prep = (await tournamentApi.payoutAction(
-        id,
-        identity.playerId,
-        "refund-prepare",
-        targetPlayerId,
-      )) as { intent: { recipientAddress: string; amountLuna: string; network: string } };
-      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
-      const { canonicalAddress } = await import("@/lib/nimiq/address");
-
-      const connected = await connectNimiq();
-      if (!connected.ok) throw new Error(connected.error.message);
-      const sent = await sendNimiqBasicTransaction(connected.value, {
-        recipient: canonicalAddress(prep.intent.recipientAddress),
-        value: BigInt(prep.intent.amountLuna),
-      });
-      if (!sent.ok) throw new Error(sent.error.message);
-
-      setPayoutBusy(`refund-claim:${targetPlayerId}`);
-      try {
-        await tournamentApi.payoutAction(
-          id,
-          identity.playerId,
-          "refund-claim",
-          targetPlayerId,
-          sent.value,
-        );
-        await load();
-      } catch {
-        // The fee has MOVED back. The server records any transaction passing
-        // its identity gates at ≥1 confirmation; retry the SAME hash until
-        // the claim lands — a second send is never needed.
-        setActionError(
-          `Refund sent (tx ${sent.value.slice(0, 10)}…) — still confirming. Do NOT send again: re-press the refund's action in a moment to finish verification.`,
-        );
-        try {
-          await tournamentApi.payoutAction(
-            id,
-            identity.playerId,
-            "refund-claim",
-            targetPlayerId,
-            sent.value,
-          );
-          setActionError(null);
-          await load();
-        } catch {
-          /* stays in the guiding message above; never a second payment */
-        }
-      }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Returning the fee failed");
-    } finally {
-      setPayoutBusy(null);
-    }
-  };
-
   /**
    * Reload recovery: if the player paid (a pending tx is stored) but left
    * during the confirmation window, resume verification for the SAME hash —
@@ -478,12 +320,6 @@ export default function TournamentDetailPage() {
 
   const s = detail.summary;
   const isHost = detail.myRole === "host";
-  /** ChainMate (the platform admin) is the SOLE prize distributor: money
-      moves only from the admin console, where the operator's wallet and
-      accountability live. Hosts and players see statuses here — never
-      payment buttons. */
-  const canSettle = isAdmin;
-
   const isEntrant = detail.myRole === "entrant";
   // Membership, not role: a HOST WHO JOINED (the common paid-event case —
   // hosts must pay like everyone else) used to see the Pay button forever
@@ -726,33 +562,6 @@ export default function TournamentDetailPage() {
                           {r.status === "verified" && "refunded"}
                           {r.status === "failed" && "retrying"}
                         </span>
-                        {canSettle &&
-                          (r.status === "owed" || r.status === "failed") && (
-                            <button
-                              type="button"
-                              disabled={payoutBusy !== null}
-                              onClick={() => void refundFromWallet(r.playerId)}
-                              title="Open Nimiq Pay with the player's address and their exact fee prefilled. ChainMate verifies your transaction on-chain and records the refund."
-                              className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-                            >
-                              {payoutBusy?.startsWith(`refund:${r.playerId}`) || payoutBusy?.startsWith(`refund-claim:${r.playerId}`)
-                                ? "confirm in wallet…"
-                                : r.status === "failed"
-                                  ? "retry refund"
-                                  : "return fee"}
-                            </button>
-                          )}
-                        {canSettle && r.status === "dispatched" && (
-                          <button
-                            type="button"
-                            disabled={payoutBusy !== null}
-                            onClick={() => void runPayoutAction("refund-confirm", r.playerId)}
-                            title="Re-check the refund transaction's confirmations on-chain."
-                            className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                          >
-                            check status
-                          </button>
-                        )}
                       </li>
                     ))}
                   </ul>
@@ -803,32 +612,6 @@ export default function TournamentDetailPage() {
                     {r.status === "verified" && "refunded"}
                     {r.status === "failed" && "retrying"}
                   </span>
-                  {canSettle && (r.status === "owed" || r.status === "failed") && (
-                    <button
-                      type="button"
-                      disabled={payoutBusy !== null}
-                      onClick={() => void refundFromWallet(r.playerId)}
-                      title="Open Nimiq Pay with the player's address and their exact fee prefilled. ChainMate verifies your transaction on-chain and records the refund."
-                      className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-                    >
-                      {payoutBusy?.startsWith(`refund:${r.playerId}`) || payoutBusy?.startsWith(`refund-claim:${r.playerId}`)
-                        ? "confirm in wallet…"
-                        : r.status === "failed"
-                          ? "retry refund"
-                          : "return fee"}
-                    </button>
-                  )}
-                  {canSettle && r.status === "dispatched" && (
-                    <button
-                      type="button"
-                      disabled={payoutBusy !== null}
-                      onClick={() => void runPayoutAction("refund-confirm", r.playerId)}
-                      title="Re-check the refund transaction's confirmations on-chain."
-                      className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                    >
-                      check status
-                    </button>
-                  )}
                 </li>
               ))}
             </ul>
@@ -1193,10 +976,10 @@ export default function TournamentDetailPage() {
         </section>
       )}
 
-      {/* ---------- Payouts (completed paid tournaments) ---------- */}
+      {/* ---------- Pool & payouts (completed paid tournaments) ---------- */}
       {isPaid && detail.payouts && detail.payouts.length > 0 && (
         <section className="animate-fade-in-up mt-8 [animation-delay:140ms]">
-          <SectionLabel>Purse &amp; payouts</SectionLabel>
+          <SectionLabel>Pool &amp; payouts</SectionLabel>
           <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs leading-relaxed text-muted-foreground">
             <span>
               Prize pool: <strong className="font-mono tabular-nums text-foreground">{displayNim(detail.verifiedPoolLuna ?? totalPool(detail.payouts))} NIM</strong>
@@ -1222,54 +1005,17 @@ export default function TournamentDetailPage() {
                     {displayNim(p.amountLuna)} NIM
                   </span>
                   <PayoutStatusPill status={p.status} />
-                  {isAdmin && p.status === "blocked_no_wallet" && (
-                    <DestinationEditor
-                      tournamentId={id}
-                      myPlayerId={identity.playerId}
-                      playerId={p.playerId}
-                      busy={payoutBusy !== null}
-                      onSaved={() => void load()}
-                    />
-                  )}
-                  {canSettle && (p.status === "dispatching" || p.status === "sent") && (
-                      <button
-                        type="button"
+                  {/* A winner whose wallet cannot be resolved points at the
+                      address their own prize should go to. Everything else
+                      about the payout stays in the admin console. */}
+                  {p.playerId === identity.playerId &&
+                    (p.status === "blocked_no_wallet" || p.status === "pending" || p.status === "failed") && (
+                      <MyDestinationEditor
+                        tournamentId={id}
+                        myPlayerId={identity.playerId}
                         disabled={payoutBusy !== null}
-                        onClick={() => void runPayoutAction("wallet-confirm", p.playerId)}
-                        title="Resolve this prize to its true state: refresh an in-flight payment's confirmations, or find a payment you already sent from your wallet history and settle it. It can never pay twice."
-                        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                      >
-                        check status
-                      </button>
-                    )}
-                  {canSettle &&
-                    (p.status === "pending" || p.status === "failed" || p.status === "dispatching") && (
-                      <button
-                        type="button"
-                        disabled={payoutBusy !== null}
-                        onClick={() => void sendPrizeFromWallet(p.playerId)}
-                        title="Open Nimiq Pay with the winner's address and the exact prize prefilled. ChainMate verifies your transaction on-chain and marks the prize paid."
-                        className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-                      >
-                        {payoutBusy?.startsWith(`wallet:${p.playerId}`) || payoutBusy?.startsWith(`wallet-claim:${p.playerId}`)
-                          ? "confirm in wallet…"
-                          : p.status === "pending"
-                            ? "send prize"
-                            : p.status === "failed"
-                              ? "retry from wallet"
-                              : "pay from wallet"}
-                      </button>
-                    )}
-                  {canSettle && p.status === "sent" && (
-                      <button
-                        type="button"
-                        disabled={payoutBusy !== null}
-                        onClick={() => void runPayoutAction("wallet-confirm", p.playerId)}
-                        title="Re-check the prize transaction's confirmations on-chain. At 8 confirmations it becomes verified."
-                        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-                      >
-                        check status
-                      </button>
+                        onSaved={() => void load()}
+                      />
                     )}
                 </li>
               ))}
@@ -1345,6 +1091,87 @@ export default function TournamentDetailPage() {
 /* ------------------------------------------------------------------ */
 /* Paid entry panel (Phase 2B)                                         */
 /* ------------------------------------------------------------------ */
+
+/**
+ * SELF-SERVE PRIZE ADDRESS. A winner with no linked Nimiq wallet (or whose
+ * binding cannot be resolved) types the address their own prize should go
+ * to; the admin console unblocks and sends. Strictly one's own prize — the
+ * server rejects any other target, and the send itself remains ChainMate's
+ * job, so this input moves no money.
+ */
+function MyDestinationEditor({
+  tournamentId,
+  myPlayerId,
+  disabled,
+  onSaved,
+}: {
+  tournamentId: string;
+  myPlayerId: string;
+  disabled: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setEditing(true)}
+        className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+      >
+        add payout address
+      </button>
+    );
+  }
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await tournamentApi.setMyPrizeDestination(tournamentId, myPlayerId, value.trim());
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not set the address");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <span className="flex w-full flex-col gap-1.5 sm:w-auto">
+      <span className="flex gap-1.5">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="NQ… address"
+          autoFocus
+          className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50 sm:w-56"
+        />
+        <button
+          type="button"
+          disabled={saving || disabled || !value.trim()}
+          onClick={() => void save()}
+          className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+        >
+          {saving ? "saving…" : "save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="shrink-0 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:text-foreground"
+        >
+          ✕
+        </button>
+      </span>
+      {error && <span className="text-2xs text-destructive">{error}</span>}
+    </span>
+  );
+}
 
 function totalPool(payouts: NonNullable<TournamentDetailPayload["payouts"]>): string {
   try {
@@ -1581,94 +1408,6 @@ function PayoutStateBadge({ status }: { status: string }) {
   };
   const it = map[status] ?? { label: status, cls: "text-muted-foreground" };
   return <span className={cn("font-semibold", it.cls)}>· {it.label}</span>;
-}
-
-/**
- * ADMIN payout-destination editor. When a prize is blocked because the
- * winner's wallet cannot be resolved, the admin types the destination
- * address directly — ChainMate is the sole distributor, so the console is
- * where this is decided. The server validates before anything is stored;
- * the row unblocks to "pending" on success.
- */
-function DestinationEditor({
-  tournamentId,
-  myPlayerId,
-  playerId,
-  busy,
-  onSaved,
-}: {
-  tournamentId: string;
-  myPlayerId: string;
-  playerId: string;
-  busy: boolean;
-  onSaved: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => setEditing(true)}
-        className="shrink-0 rounded border border-border/70 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-      >
-        set address
-      </button>
-    );
-  }
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await tournamentApi.payoutSetDestination(
-        tournamentId,
-        myPlayerId,
-        playerId,
-        value.trim(),
-      );
-      setEditing(false);
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not set the address");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <span className="flex w-full flex-col gap-1.5 sm:w-auto">
-      <span className="flex gap-1.5">
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="NQ… address"
-          autoFocus
-          className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50 sm:w-56"
-        />
-        <button
-          type="button"
-          disabled={saving || busy || !value.trim()}
-          onClick={() => void save()}
-          className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-        >
-          {saving ? "saving…" : "save"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setEditing(false)}
-          className="shrink-0 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:text-foreground"
-        >
-          ✕
-        </button>
-      </span>
-      {error && <span className="text-2xs text-destructive">{error}</span>}
-    </span>
-  );
 }
 
 /* ------------------------------------------------------------------ */

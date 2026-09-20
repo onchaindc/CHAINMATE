@@ -26,6 +26,7 @@ import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { StatTiles } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
+import { formatNim } from "@/lib/nimiq/format";
 
 /**
  * ChainMate admin dashboard.
@@ -1224,7 +1225,7 @@ function PayoutRow({
         <span className="w-8 font-mono tabular-nums text-muted-foreground">{line.payoutRank}</span>
         <span className="min-w-0 flex-1 truncate font-medium">{line.playerName ?? line.playerId}</span>
         <span className="font-mono tabular-nums text-muted-foreground">{line.shareBps / 100}%</span>
-        <span className="font-mono tabular-nums font-semibold text-primary">{line.amountLuna} luna</span>
+        <span className="font-mono tabular-nums font-semibold text-primary">{formatNim(BigInt(line.amountLuna))} NIM</span>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>
           {pill.label}
         </span>
@@ -1473,7 +1474,7 @@ function PrizeSettlement({
                       {r.playerName ?? r.playerId}
                     </span>
                     <span className="font-mono tabular-nums text-foreground/80">
-                      {r.amountLuna} luna
+                      {formatNim(BigInt(r.amountLuna))} NIM
                     </span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>
                       {pill.label}

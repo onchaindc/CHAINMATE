@@ -67,7 +67,7 @@ export function ProfileHeader({
   return (
     <div
       className={cn(
-        "relative flex flex-wrap items-center gap-x-5 gap-y-4 animate-fade-in-up",
+        "flex flex-wrap items-center gap-x-5 gap-y-4 animate-fade-in-up",
         className,
       )}
     >
@@ -77,7 +77,7 @@ export function ProfileHeader({
         <PlayerAvatar name={name} avatarUrl={avatarUrl} size="lg" />
       )}
 
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1 basis-48">
         {eyebrow && (
           <p className="text-2xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             {eyebrow}
@@ -103,39 +103,41 @@ export function ProfileHeader({
         )}
       </div>
 
-      {/* Actions pin to the card's top-right corner (absolute), so they
-          hold their position on phones where the name/rating rows wrap —
-          the gear used to slide under the username there. */}
-      {actions && (
-        <div className="absolute right-0 top-0 flex items-center gap-2">{actions}</div>
-      )}
-
-      {/* `ml-auto` on the rating chip keeps it at the row's end; with the
-          actions pinned absolutely it owns the whole right side. */}
-      {rating !== null && rating !== undefined && (
-        /* The rating as a small anchored chip: label on top, number and
-           delta centred beneath. The old floating text block had the
-           number left of its caption's edge and read as misaligned — a
-           bordered chip with internal centre alignment can't drift. */
-        <div className="ml-auto rounded-xl border border-border/60 bg-card/60 px-3.5 py-2 text-center shadow-elevation-1">
-          <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Rating
-          </p>
-          <div className="mt-0.5 flex items-baseline justify-center gap-1.5">
-            <p className="font-mono text-2xl font-bold leading-none tabular-nums text-primary">
-              {rating}
-            </p>
-            {ratingDelta !== null && ratingDelta !== undefined && ratingDelta !== 0 && (
-              <p
-                className={cn(
-                  "font-mono text-xs font-semibold tabular-nums",
-                  ratingDelta > 0 ? "text-positive" : "text-negative",
-                )}
-              >
-                {ratingDelta > 0 ? `+${ratingDelta}` : ratingDelta}
+      {/* One right-aligned cluster for actions and the rating chip, in normal
+          flow. The old absolute `right-0 top-0` pinning put the gear directly
+          on top of the rating chip on desktop, and on phones the absolutely
+          positioned buttons overlayed the wrapped name row entirely. In flow
+          they can never overlap: on wide screens the cluster hugs the right
+          edge (`ml-auto`), on narrow ones it wraps onto its own row. */}
+      {(actions || (rating !== null && rating !== undefined)) && (
+        <div className="ml-auto flex flex-wrap items-center gap-2.5">
+          {actions}
+          {rating !== null && rating !== undefined && (
+            /* The rating as a small anchored chip: label on top, number and
+               delta centred beneath. The old floating text block had the
+               number left of its caption's edge and read as misaligned — a
+               bordered chip with internal centre alignment can't drift. */
+            <div className="rounded-xl border border-border/60 bg-card/60 px-3.5 py-2 text-center shadow-elevation-1">
+              <p className="text-2xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Rating
               </p>
-            )}
-          </div>
+              <div className="mt-0.5 flex items-baseline justify-center gap-1.5">
+                <p className="font-mono text-2xl font-bold leading-none tabular-nums text-primary">
+                  {rating}
+                </p>
+                {ratingDelta !== null && ratingDelta !== undefined && ratingDelta !== 0 && (
+                  <p
+                    className={cn(
+                      "font-mono text-xs font-semibold tabular-nums",
+                      ratingDelta > 0 ? "text-positive" : "text-negative",
+                    )}
+                  >
+                    {ratingDelta > 0 ? `+${ratingDelta}` : ratingDelta}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

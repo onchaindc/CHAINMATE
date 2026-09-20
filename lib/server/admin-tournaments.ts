@@ -89,6 +89,8 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
 
     // Payout purse + refunds: the admin dashboard is ChainMate's settlement
     // console, so every completed/cancelled paid event carries its rows here.
+    // Names resolve for EVERY row (not just the host's) — a console showing
+    // raw `acct_…` ids is a debugging view, not an operator view.
     let payoutLines: AdminPayoutLine[] = [];
     if (paidDoc && (doc.status === "completed" || doc.status === "cancelled")) {
       try {
@@ -97,7 +99,7 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
         for (const p of records) {
           payoutLines.push({
             playerId: p.playerId,
-            playerName: p.playerId === doc.creatorId ? await usernameForPlayer(doc.creatorId) : null,
+            playerName: await usernameForPlayer(p.playerId),
             payoutRank: p.payoutRank,
             shareBps: p.shareBps,
             amountLuna: p.amountLuna,
@@ -113,7 +115,7 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
       ? await Promise.all(
           Object.values(doc.refunds).map(async (r) => ({
             playerId: r.playerId,
-            playerName: r.playerId === doc.creatorId ? await usernameForPlayer(doc.creatorId) : null,
+            playerName: await usernameForPlayer(r.playerId),
             amountLuna: r.amountLuna,
             status: r.status,
           })),

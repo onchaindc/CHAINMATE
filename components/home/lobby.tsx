@@ -44,7 +44,8 @@ import { cn } from "@/lib/utils";
  * placeholder, and no new endpoints were added for it.
  */
 
-const TIME_CONTROLS = ["5 + 0", "10 + 0", "15 + 10"] as const;
+/** Quick-play pool. Everything here parses everywhere via lib/clocks. */
+const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0"] as const;
 
 /** Live feed and unfinished games move on their own, so this refreshes. */
 const POLL_MS = 10_000;
@@ -68,7 +69,7 @@ export function Lobby() {
   const match = useMatchmaking();
   const [data, setData] = useState<LobbyData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [timeControl, setTimeControl] = useState<string>("10 + 0");
+  const [timeControl, setTimeControl] = useState<string>("5 + 0");
   const [challenging, setChallenging] = useState<string | null>(null);
 
   const playerId = identity.playerId;
@@ -271,7 +272,7 @@ export function Lobby() {
                 </p>
 
                 <div
-                  className="mt-4 grid max-w-md grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                  className="mt-4 grid max-w-md grid-cols-4 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
                   role="radiogroup"
                   aria-label="Time control"
                 >

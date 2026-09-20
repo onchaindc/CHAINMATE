@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Bell, Mail, Swords, UserCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { ChainMateAvatar } from "@/components/auth/chainmate-avatar";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
 import { useMessageCounts } from "@/hooks/use-message-counts";
@@ -191,7 +192,11 @@ export function NotificationBell() {
                         className="flex items-start gap-2.5"
                       >
                         <span className="relative mt-0.5 shrink-0">
-                          <PlayerAvatar name={e.actorName} size="sm" />
+                          {e.actorPlayerId === "chainmate" ? (
+                            <ChainMateAvatar size="sm" />
+                          ) : (
+                            <PlayerAvatar name={e.actorName} size="sm" />
+                          )}
                           <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-popover bg-primary text-primary-foreground">
                             <Icon className="h-2 w-2" aria-hidden />
                           </span>

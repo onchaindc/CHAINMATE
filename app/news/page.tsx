@@ -160,28 +160,34 @@ export default function NewsPage() {
         description="The latest from the chess world, newest first. Stories open right here in the app."
       />
 
-      {/* Source tabs — the section is organized, not one undifferentiated pile. */}
+      {/* Source pills — quiet segmented filter, not colored chips. */}
       {items !== null && items.length > 0 && (
-        <div className="mt-6 flex gap-1.5">
+        <div className="mt-6 inline-flex rounded-full border border-border/70 bg-card/60 p-0.5">
           {SOURCE_TABS.map((tab) => {
             const count =
               tab.id === "all"
                 ? (items?.length ?? 0)
                 : (items ?? []).filter((n) => n.source === tab.id).length;
+            const active = filter === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setFilter(tab.id)}
                 className={cn(
-                  "rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors",
-                  filter === tab.id
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-border/70 text-muted-foreground hover:text-foreground",
+                  "rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors",
+                  active
+                    ? "bg-primary text-primary-foreground shadow-elevation-1"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {tab.label}
-                <span className="ml-1.5 font-mono text-2xs opacity-70">{count}</span>
+                <span className={cn(
+                  "ml-1.5 font-mono text-2xs",
+                  active ? "opacity-80" : "opacity-60",
+                )}>
+                  {count}
+                </span>
               </button>
             );
           })}
@@ -215,7 +221,7 @@ export default function NewsPage() {
             <button
               type="button"
               onClick={() => setOpenItem(latest)}
-              className="group block w-full overflow-hidden rounded-xl border border-border/70 bg-card/50 text-left shadow-elevation-1 transition-shadow hover:shadow-elevation-2"
+              className="group block w-full overflow-hidden rounded-xl border border-border/70 bg-card/50 text-left shadow-elevation-1 transition-all hover:border-primary/25 hover:shadow-elevation-2"
             >
               {latest.imageUrl && (
                 <div className="aspect-[21/9] w-full overflow-hidden bg-secondary/40 sm:aspect-[3/1]">
@@ -226,11 +232,15 @@ export default function NewsPage() {
                     src={latest.imageUrl}
                     alt=""
                     loading="lazy"
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.015]"
                   />
                 </div>
               )}
-              <div className="p-4 sm:p-5">
+              <div className="relative p-4 sm:p-5">
+                <span
+                  aria-hidden
+                  className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/40 via-primary/10 to-transparent"
+                />
                 <p className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-primary">
                   <Radio className="h-3 w-3" aria-hidden />
                   Latest
@@ -263,9 +273,9 @@ export default function NewsPage() {
                 key={`${item.url}-${i}`}
                 type="button"
                 onClick={() => setOpenItem(item)}
-                className="group flex h-full flex-col rounded-lg border border-border/60 bg-card/40 p-3 text-left transition-colors hover:bg-card/70"
+                className="group flex h-full flex-col rounded-lg border border-border/60 bg-card/40 p-3 text-left transition-all hover:border-primary/20 hover:bg-card/70"
               >
-                <div className="mb-2.5 h-32 w-full overflow-hidden rounded-md bg-secondary/40">
+                <div className="relative mb-2.5 h-32 w-full overflow-hidden rounded-md bg-secondary/40">
                   {item.imageUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img

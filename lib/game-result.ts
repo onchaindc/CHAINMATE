@@ -79,14 +79,14 @@ export function describeResult(
       detail =
         loserSide && winnerSide
           ? `${sideName(loserSide)} resigned${onMove} — ${sideName(winnerSide)} wins.`
-          : `A player resigned${onMove}.`;
+          : `Resigned${onMove}.`;
       break;
     case "timeout":
       reason = "on Timeout";
       detail =
         loserSide && winnerSide
           ? `${sideName(loserSide)} ran out of time${onMove} — ${sideName(winnerSide)} wins.`
-          : `A player ran out of time${onMove}.`;
+          : `Out of time${onMove}.`;
       break;
     case "stalemate":
       reason = "by Stalemate";

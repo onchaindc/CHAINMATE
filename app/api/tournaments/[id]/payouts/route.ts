@@ -69,6 +69,7 @@ interface PayoutActionBody {
     | "wallet-claim"
     | "wallet-confirm"
     | "wallet-destination"
+    | "my-destination"
     | "refund-prepare"
     | "refund-claim"
     | "refund-confirm";
@@ -115,6 +116,39 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (!doc) {
       return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
     }
+
+    // SELF-SERVE PRIZE ADDRESS — the one payout action a non-admin may take.
+    // A winner who has not linked a Nimiq wallet (or whose binding cannot be
+    // resolved) types the address their own prize should go to. Strictly
+    // self-scoped: targetPlayerId, when present, must BE the caller, so this
+    // can never set a destination for somebody else's prize.
+    if (body.action === "my-destination") {
+      if (body.targetPlayerId && body.targetPlayerId !== acting.playerId) {
+        return NextResponse.json(
+          { error: "You can only set the destination for your own prize" },
+          { status: 403 },
+        );
+      }
+      if (!body.destinationAddress) {
+        return NextResponse.json({ error: "destinationAddress is required" }, { status: 400 });
+      }
+      const { setPayoutDestination } = await import("@/lib/server/tournament-payouts");
+      try {
+        const payout = await setPayoutDestination(id, acting.playerId, body.destinationAddress);
+        return NextResponse.json({
+          payout: {
+            playerId: payout.playerId,
+            status: payout.status,
+            amountLuna: payout.amountLuna,
+            destinationSet: Boolean(payout.destinationAddress),
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not set the address";
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+    }
+
     const isAdmin = await isAdminPlayer(acting.playerId);
     if (!isAdmin) {
       return NextResponse.json(
