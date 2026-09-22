@@ -194,7 +194,12 @@ export async function POST(req: NextRequest, { params }: Params) {
         { status: 403 },
       );
     }
-    if (!isPaidTournamentDoc(doc)) {
+    // Money gate: a paid tournament qualifies by definition; a FREE one
+    // qualifies only when the operator actually topped up its pool. Either
+    // way the purse is the verified ledger, never a client number.
+    const { getVerifiedPrizePool } = await import("@/lib/server/tournament-economy");
+    const hasPool = isPaidTournamentDoc(doc) || (await getVerifiedPrizePool(id)) > 0n;
+    if (!hasPool) {
       return NextResponse.json(
         { error: "This tournament has no prize pool" },
         { status: 400 },

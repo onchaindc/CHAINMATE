@@ -102,8 +102,14 @@ export async function prepareTopUp(
 
   const doc = await docReader(deps)(tournamentId);
   if (!doc) throw new TopUpError("not-found", "Tournament not found", 404);
-  if (doc.status === "cancelled") {
-    throw new TopUpError("cancelled", "This tournament was cancelled — money can no longer be added", 409);
+  if (doc.status === "completed" || doc.status === "cancelled") {
+    throw new TopUpError(
+      doc.status === "completed" ? "ended" : "cancelled",
+      doc.status === "completed"
+        ? "This tournament has ended — money can no longer be added to its pool"
+        : "This tournament was cancelled — money can no longer be added",
+      409,
+    );
   }
 
   const { getCanonicalTreasuryAddress } = await import("@/lib/nimiq/config");
@@ -150,8 +156,12 @@ export async function claimTopUp(
 
   const doc = await docReader(deps)(tournamentId);
   if (!doc) throw new TopUpError("not-found", "Tournament not found", 404);
-  if (doc.status === "cancelled") {
-    throw new TopUpError("cancelled", "This tournament was cancelled — money can no longer be added", 409);
+  if (doc.status === "completed" || doc.status === "cancelled") {
+    throw new TopUpError(
+      doc.status === "completed" ? "ended" : "cancelled",
+      "This tournament has ended — money can no longer be added to its pool",
+      409,
+    );
   }
 
   const store = deps.store ?? fastStoreTxStore;

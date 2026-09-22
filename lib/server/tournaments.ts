@@ -562,16 +562,22 @@ function entryFeeLunaOf(doc: TournamentDocument): bigint {
 }
 
 /**
- * Materialise the payout records for a completed PAID tournament from the
- * verified ledger + final standings. Runs on EVERY completion path (host
- * action and engine progression alike), so no finished event is ever left
- * without its purse. Best-effort: completion stands even if planning fails
- * (maintenance re-runs it — planTournamentPayouts is idempotent). The doc
- * passed in is fresh and already persisted as completed; payoutStatus is
- * written back when rows are created.
+ * Materialise the payout records for a completed tournament with money in
+ * it from the verified ledger + final standings. Runs on EVERY completion
+ * path (host action and engine progression alike), so no finished event is
+ * ever left without its purse. Best-effort: completion stands even if
+ * planning fails (maintenance re-runs it — planTournamentPayouts is
+ * idempotent). The doc passed in is fresh and already persisted as
+ * completed; payoutStatus is written back when rows are created.
  */
 async function planPayoutsIfPaid(doc: TournamentDocument): Promise<void> {
-  if (!isPaidTournamentDoc(doc) || !doc.prizePreset) return;
+  // A preset always accompanies an entry fee, but a FREE tournament that the
+  // operator topped up from the admin console has money in the ledger too —
+  // its purse is planned from the verified pool on completion, not skipped.
+  const hasPool = await verifiedPrizePoolOf(doc)
+    .catch(() => 0n)
+    .then((pool) => pool > 0n);
+  if ((!isPaidTournamentDoc(doc) && !hasPool) || !doc.prizePreset) return;
   const { planTournamentPayouts } = await import("@/lib/server/tournament-payouts");
   const { getVerifiedPrizePool } = await import("@/lib/server/tournament-economy");
   const standings = recomputeStandings(doc);
@@ -2141,9 +2147,11 @@ export async function getTournamentDetail(
   const summary = summaryOf(doc, entrants.length);
   summary.creatorName = entryNames[doc.creatorId];
 
-  // Phase 2B: payout lines for paid tournaments (UI-safe public shape).
+  // Phase 2B: payout lines for tournaments with money in them (a topped-up
+  // FREE event pays out the same way as a paid one).
   let payouts: TournamentPayoutLine[] | undefined;
-  if (isPaidTournamentDoc(doc) && doc.status === "completed") {
+  const hasVerifiedPool = (await verifiedPrizePoolOf(doc).catch(() => 0n)) > 0n;
+  if ((isPaidTournamentDoc(doc) || hasVerifiedPool) && doc.status === "completed") {
     try {
       const { listTournamentPayouts } = await import("@/lib/server/tournament-payouts");
       const records = await listTournamentPayouts(doc.id);
@@ -2238,7 +2246,7 @@ export function summaryOf(doc: TournamentDocument, playerCount: number): Tournam
  * unallocated, not missing. The card and the purse header show this number.
  */
 export async function verifiedPrizePoolOf(doc: TournamentDocument): Promise<bigint> {
-  if (!doc.entryFeeLuna || doc.entryFeeLuna === "0") return 0n;
+  // Paid entries AND operator top-ups — the ledger is the only truth.
   const { getVerifiedPrizePool } = await import("@/lib/server/tournament-economy");
   return getVerifiedPrizePool(doc.id);
 }
@@ -2253,9 +2261,9 @@ export async function listTournaments(opts?: {
   const playerIds = new Set<string>();
   for (const doc of docs) {
     const summary = summaryOf(doc, activeEntryCount(doc));
-    // True verified pool for paid events, so tournament cards can show the
-    // real purse (never a client-side estimate).
-    if (doc.entryFeeLuna && doc.entryFeeLuna !== "0") {
+    // True verified pool (paid entries AND operator top-ups), so tournament
+    // cards can show the real purse — never a client-side estimate.
+    if (isPaidTournamentDoc(doc) || (await verifiedPrizePoolOf(doc).catch(() => 0n)) > 0n) {
       summary.verifiedPoolLuna = (await verifiedPrizePoolOf(doc).catch(() => 0n)).toString();
     }
     summaries.push(summary);

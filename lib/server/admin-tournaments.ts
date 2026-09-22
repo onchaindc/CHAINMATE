@@ -84,7 +84,10 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
     if (!doc) continue;
     const active = doc.entries.filter((e) => e.leftAt === undefined);
     const paid = active.filter((e) => e.paid);
-    const paidDoc = isPaidTournamentDoc(doc);
+    // Money in the event: a paid entry fee, or a pool the operator topped
+    // up from this console (free events can carry a purse too).
+    const verifiedPoolLuna = await getVerifiedPrizePool(doc.id).catch(() => 0n);
+    const moneyed = isPaidTournamentDoc(doc) || verifiedPoolLuna > 0n;
 
 
     // Payout purse + refunds: the admin dashboard is ChainMate's settlement
@@ -92,7 +95,7 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
     // Names resolve for EVERY row (not just the host's) — a console showing
     // raw `acct_…` ids is a debugging view, not an operator view.
     let payoutLines: AdminPayoutLine[] = [];
-    if (paidDoc && (doc.status === "completed" || doc.status === "cancelled")) {
+    if (moneyed && (doc.status === "completed" || doc.status === "cancelled")) {
       try {
         const records = await listTournamentPayouts(doc.id);
         payoutLines = [];
@@ -131,8 +134,8 @@ export async function listAllTournamentsForAdmin(limit = 100): Promise<AdminTour
       hostName: await usernameForPlayer(doc.creatorId),
       entries: active.length,
       paidEntries: paid.length,
-      entryFeeNim: paidDoc && doc.entryFeeLuna ? formatNim(BigInt(doc.entryFeeLuna)) : null,
-      prizePoolNim: paidDoc ? formatNim(await getVerifiedPrizePool(doc.id)) : null,
+      entryFeeNim: isPaidTournamentDoc(doc) && doc.entryFeeLuna ? formatNim(BigInt(doc.entryFeeLuna)) : null,
+      prizePoolNim: moneyed ? formatNim(verifiedPoolLuna) : null,
       createdAt: doc.createdAt,
       startedAt: doc.startedAt,
       payoutStatus: doc.payoutStatus ?? "none",

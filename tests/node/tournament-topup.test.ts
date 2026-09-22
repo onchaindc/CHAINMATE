@@ -225,6 +225,10 @@ test("prepare: cancelled tournaments refuse new money", async () => {
   await assert.rejects(() => topup.prepareTopUp("tour_topup", "5", depsFor({ status: "cancelled" })), /cancelled/);
 });
 
+test("prepare: completed tournaments refuse new money (live events only)", async () => {
+  await assert.rejects(() => topup.prepareTopUp("tour_topup", "5", depsFor({ status: "completed" })), /ended/);
+});
+
 /* ------------------------------------------------------------------ */
 /* Claim — through the REAL verification engine                        */
 /* ------------------------------------------------------------------ */
@@ -494,4 +498,31 @@ test("re-plan: refused once any prize has been dispatched", async () => {
     rows.map((r) => r.shareBps),
     [6_000, 2_500, 1_500],
   );
+});
+
+test("a topped-up FREE tournament distributes its pool like a paid one", async () => {
+  const txStore = makeTxStore();
+  const payoutStore = makePayoutStore();
+  // The operator tops up a free event (no entry fee anywhere) with 25 NIM.
+  const rpcTx = validTx();
+  const result = await topup.claimTopUp("tour_topup", "acct_admin", rpcTx.hash, {
+    ...depsFor(),
+    store: txStore,
+    verify: (async (hash: string) => verifyWith(txStore, rpcTx, { txHash: hash })) as never,
+  });
+  assert.equal(result.amountLuna, "2500000");
+
+  // ... and the completed event's purse is planned from that pool.
+  const plan = await payouts.planTournamentPayouts(
+    "tour_topup",
+    { preset: "top3", standingsRanks: HOST_RANKS },
+    { store: payoutStore, getPrizePool: (id) => economy.getVerifiedPrizePool(id, txStore), getWallet: async () => null },
+  );
+  assertPlan(plan);
+  assert.equal(plan.prizePoolLuna, 2_500_000n, "pool comes from the top-up, not an entry fee");
+  assert.equal(plan.created, 3);
+  const rows = await payoutStore.listByTournament("tour_topup");
+  assert.equal(rows.length, 3);
+  const total = rows.reduce((acc, r) => acc + BigInt(r.amountLuna), 0n);
+  assert.equal(total, 2_500_000n, "the whole top-up is allocated");
 });
