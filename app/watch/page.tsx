@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Radio, Trophy, Users } from "lucide-react";
 import { GameRow } from "@/components/game/game-row";
 import { LiveGameCard } from "@/components/game/live-game-card";
 import { PageHeader, SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
+import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -23,68 +24,62 @@ import { cn } from "@/lib/utils";
  */
 const POLL_MS = 5000;
 
+/** Everything the watch page renders, as ONE cached payload. */
+interface WatchData {
+  live: LiveGameEntry[];
+  open: GameIndexEntry[];
+  recent: GameIndexEntry[];
+  players: Record<string, PlayerInfo>;
+  localIds: Set<string>;
+}
+
+const EMPTY_LOCAL_IDS = new Set<string>();
+
+async function loadWatch(): Promise<WatchData> {
+  const hosted = getStore("hosted") as HostedGameStore;
+  const local = getStore("local") as LocalGameStore;
+  const [remote, localGames] = await Promise.all([
+    hosted.listWatch(),
+    Promise.resolve(local.listMyGames()),
+  ]);
+  const localRecent = localGames
+    .filter((g) => isGameOver(g.status))
+    .map<GameIndexEntry>((g) => ({
+      id: g.id,
+      updatedAt: g.updatedAt ?? 0,
+      createdAt: g.createdAt ?? 0,
+      creator: g.creator,
+      opponent: g.opponent,
+      status: g.status,
+      winner: g.winner,
+      timeControl: g.timeControl,
+      visibility: g.visibility,
+      endedAt: g.endedAt,
+    }));
+  return {
+    live: remote.live,
+    open: remote.open,
+    players: remote.players,
+    localIds: new Set(localRecent.map((e) => e.id)),
+    recent: mergeEntries([...remote.recent, ...localRecent]).filter(isPlayedGame),
+  };
+}
+
 export default function WatchPage() {
-  const [live, setLive] = useState<LiveGameEntry[]>([]);
-  const [open, setOpen] = useState<GameIndexEntry[]>([]);
-  const [recent, setRecent] = useState<GameIndexEntry[]>([]);
-  const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Cached read: the live feed renders from the session cache the moment you
+  // navigate here (the 5s poll keeps it live exactly as before), so revisits
+  // never blank into a skeleton.
+  const { data, error } = useCachedRead<WatchData>("watch:feed", loadWatch, {
+    pollMs: POLL_MS,
+  });
+  const live = data?.live ?? [];
+  const open = data?.open ?? [];
+  const recent = data?.recent ?? [];
+  const players = data?.players ?? {};
+  const localIds = data?.localIds ?? EMPTY_LOCAL_IDS;
+  const loading = data === null;
   const hostedMe = useMemo(() => getStore("hosted").getMyPlayerId(), []);
   const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
-
-  /** Player id → username, for the rows that only carry ids. */
-  /** Local (offline) games use the local identity, not the hosted one. */
-  const [localIds, setLocalIds] = useState<Set<string>>(() => new Set());
-
-  const load = useCallback(async () => {
-    const hosted = getStore("hosted") as HostedGameStore;
-    const local = getStore("local") as LocalGameStore;
-    const [remote, localGames] = await Promise.all([
-      hosted.listWatch(),
-      Promise.resolve(local.listMyGames()),
-    ]);
-    const localRecent = localGames
-      .filter((g) => isGameOver(g.status))
-      .map<GameIndexEntry>((g) => ({
-        id: g.id,
-        updatedAt: g.updatedAt ?? 0,
-        createdAt: g.createdAt ?? 0,
-        creator: g.creator,
-        opponent: g.opponent,
-        status: g.status,
-        winner: g.winner,
-        timeControl: g.timeControl,
-        visibility: g.visibility,
-        endedAt: g.endedAt,
-      }));
-    setLive(remote.live);
-    setOpen(remote.open);
-    setPlayers(remote.players);
-    setLocalIds(new Set(localRecent.map((e) => e.id)));
-    setRecent(mergeEntries([...remote.recent, ...localRecent]).filter(isPlayedGame));
-    setError(null);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        await load();
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to load matches");
-        setLoading(false);
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [load]);
 
   return (
     <div className="shell px-4 py-12 sm:px-6 lg:py-16">

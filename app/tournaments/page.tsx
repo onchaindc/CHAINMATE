@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
 import { CalendarClock, ChevronRight, Coins, Plus, Swords, Trophy, Users } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader, SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
+import { useCachedRead } from "@/lib/read-cache";
 import { tournamentApi } from "@/lib/tournament-api";
 import { formatNim } from "@/lib/nimiq/format";
 import type { TournamentFormat, TournamentStatus, TournamentSummary } from "@/lib/tournament-types";
@@ -60,27 +61,23 @@ const FORMAT_LABEL: Record<TournamentFormat, string> = {
 };
 
 export default function TournamentsPage() {
-  const [tournaments, setTournaments] = useState<TournamentSummary[] | null>(null);
-  const [players, setPlayers] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  // Cached read: the browser list renders from the session cache the moment
+  // you navigate here (no skeleton on revisits) and revalidates every 15s.
+  const { data, error, refresh } = useCachedRead(
+    "tournaments:list",
+    () => tournamentApi.list(),
+    { pollMs: 15_000 },
+  );
+  const tournaments = data?.tournaments ?? null;
+  const players = data?.players ?? {};
 
-  const load = useCallback(async () => {
-    try {
-      const data = await tournamentApi.list();
-      setTournaments(data.tournaments);
-      setPlayers(data.players);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load tournaments");
-      setTournaments((prev) => prev ?? []);
-    }
-  }, []);
-
+  // A completed tournament's status line ("Final standings") is derived
+  // client-side from the detail payloads; keep that side-channel fresh on
+  // the same cadence the old poll had, without refetching the list twice.
   useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 15_000);
+    const timer = setInterval(() => void refresh(), 15_000);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [refresh]);
 
   const all = tournaments ?? [];
   const now = Date.now();

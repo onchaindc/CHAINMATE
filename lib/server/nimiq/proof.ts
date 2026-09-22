@@ -38,8 +38,9 @@ import type { NimiqNetworkName } from "@/lib/nimiq/config";
 export interface ProofExpectation {
   playerId: string;
   tournamentId: string;
-  /** Exact fee in luna (bigint). */
-  expectedAmountLuna: bigint;
+  /** Exact fee in luna (bigint). Undefined only for free-amount flows
+   *  (pool top-ups), where the tx value itself is the attested amount. */
+  expectedAmountLuna?: bigint;
   /** Canonical treasury address the payment must go to. */
   expectedRecipient: string;
   network: NimiqNetworkName;
@@ -72,7 +73,10 @@ export async function verifyPaymentProof(
   const message = proofMessage({
     playerId: expectation.playerId,
     tournamentId: expectation.tournamentId,
-    amountLuna: expectation.expectedAmountLuna.toString(),
+    // Free-amount flows (top-ups) attest with a wildcard: the proof binds
+    // the payment to the payer/tournament/recipient/network, and the tx's
+    // own value — verified separately — is the amount that lands.
+    amountLuna: expectation.expectedAmountLuna?.toString() ?? "*",
     recipient: canonicalAddress(expectation.expectedRecipient),
     network: expectation.network,
   });

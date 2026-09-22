@@ -3,6 +3,7 @@ import { resolveActingPlayer } from "@/lib/server/auth";
 import { isAdminPlayer } from "@/lib/server/admin";
 import { getTournamentDoc } from "@/lib/server/tournament-store";
 import { isPaidTournamentDoc } from "@/lib/server/tournament-economy-doc";
+import { isPrizePreset } from "@/lib/tournament-economy";
 import { recomputeStandingsFor } from "@/lib/server/tournament-payouts-view";
 import {
   PayoutTransitionError,
@@ -72,7 +73,9 @@ interface PayoutActionBody {
     | "my-destination"
     | "refund-prepare"
     | "refund-claim"
-    | "refund-confirm";
+    | "refund-confirm"
+    | "topup-prepare"
+    | "topup-claim";
   playerId?: string;
   /** For send/dispatch/retry/verify: which winner's payout to act on. */
   targetPlayerId?: string;
@@ -80,6 +83,10 @@ interface PayoutActionBody {
   txHash?: string;
   /** For wallet-destination: a canonical Nimiq address typed in the admin console. */
   destinationAddress?: string;
+  /** For plan: the admin console's distribution choice (top 1 / top 3 / top 5). */
+  preset?: string;
+  /** For topup-prepare: the human NIM amount the operator wants to add. */
+  amountNim?: string;
 }
 
 /**
@@ -149,6 +156,37 @@ export async function POST(req: NextRequest, { params }: Params) {
       }
     }
 
+    // POOL TOP-UPS: admin-only, and they work for any live/completed PAID
+    // tournament (a cancelled event refuses — money can no longer be added).
+    // Kept ahead of the isPaidTournamentDoc gate only for clearer errors;
+    // both actions re-check paid-ness themselves via the treasury/doc gates.
+    if (body.action === "topup-prepare" || body.action === "topup-claim") {
+      const { prepareTopUp, claimTopUp, TopUpError } = await import("@/lib/server/tournament-topup");
+      try {
+        if (body.action === "topup-prepare") {
+          const intent = await prepareTopUp(id, body.amountNim ?? "");
+          return NextResponse.json({ intent });
+        }
+        if (!body.txHash) {
+          return NextResponse.json({ error: "txHash is required" }, { status: 400 });
+        }
+        const result = await claimTopUp(id, acting.playerId, body.txHash);
+        return NextResponse.json({
+          topup: {
+            amountLuna: result.amountLuna,
+            txHash: result.txHash,
+            poolLunaAfter: result.poolLunaAfter,
+          },
+        });
+      } catch (err) {
+        if (err instanceof TopUpError) {
+          return NextResponse.json({ error: err.message, kind: err.kind }, { status: err.status });
+        }
+        const message = err instanceof Error ? err.message : "Top-up failed";
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
+    }
+
     const isAdmin = await isAdminPlayer(acting.playerId);
     if (!isAdmin) {
       return NextResponse.json(
@@ -171,11 +209,15 @@ export async function POST(req: NextRequest, { params }: Params) {
             { status: 409 },
           );
         }
+        // The admin console's distribution choice: "top 1 / top 3 / top 5"
+        // picked at settlement time. Absent/invalid → the tournament's own
+        // preset (the creation default), never client-invented shares.
+        const requested = isPrizePreset(body.preset) ? body.preset : doc.prizePreset;
         const standings = recomputeStandingsFor(doc);
         const result = await planTournamentPayouts(
           id,
           {
-            preset: doc.prizePreset,
+            preset: requested,
             standingsRanks: standings
               .filter((r) => r.rank <= 5)
               .map((r) => ({ rank: r.rank, playerId: r.playerId })),

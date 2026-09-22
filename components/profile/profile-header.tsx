@@ -65,12 +65,24 @@ export function ProfileHeader({
         })
       : null;
   return (
-    <div
-      className={cn(
-        "flex flex-wrap items-center gap-x-5 gap-y-4 animate-fade-in-up",
-        className,
+    <div className={cn("relative", className)}>
+      {/* The gear pinned to the section's top-right corner. In normal flow
+          (the actions cluster) it wrapped below the rating chip on phones and
+          read as unrelated buttons; absolute pinning keeps it at the very top
+          right of the profile section, just below the navbar, at every width.
+          The name row keeps right padding so a wrapped name never slides
+          underneath it. */}
+      {actions && (
+        <div className="absolute right-0 top-0 z-10 -mt-1 flex items-center gap-2">
+          {actions}
+        </div>
       )}
-    >
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-x-5 gap-y-4 animate-fade-in-up",
+          actions && "pr-14",
+        )}
+      >
       {editableAvatar ? (
         <AvatarControls name={name} avatarUrl={avatarUrl} />
       ) : (
@@ -103,15 +115,10 @@ export function ProfileHeader({
         )}
       </div>
 
-      {/* One right-aligned cluster for actions and the rating chip, in normal
-          flow. The old absolute `right-0 top-0` pinning put the gear directly
-          on top of the rating chip on desktop, and on phones the absolutely
-          positioned buttons overlayed the wrapped name row entirely. In flow
-          they can never overlap: on wide screens the cluster hugs the right
-          edge (`ml-auto`), on narrow ones it wraps onto its own row. */}
-      {(actions || (rating !== null && rating !== undefined)) && (
+      {/* The rating chip stays in the flex row (it wraps naturally on
+          phones); only the actions are corner-pinned above. */}
+      {rating !== null && rating !== undefined && (
         <div className="ml-auto flex flex-wrap items-center gap-2.5">
-          {actions}
           {rating !== null && rating !== undefined && (
             /* The rating as a small anchored chip: label on top, number and
                delta centred beneath. The old floating text block had the
@@ -140,6 +147,7 @@ export function ProfileHeader({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

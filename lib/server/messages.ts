@@ -232,6 +232,28 @@ export async function unseenFeedFor(playerId: string): Promise<MessageEnvelope[]
   return feed.filter((m) => m.sentAt > watermark);
 }
 
+/**
+ * Rename a player's newest inbox envelope with a stable marker id. The
+ * auto-welcome uses this to make its one-time guarantee race-proof: the
+ * marker IS the dedup key (see lib/server/welcome.ts), so two instances
+ * handling the same signup both stamp the same inbox and only one welcome
+ * ever exists. Runs under the store lock like every other inbox mutation.
+ */
+export async function stampWelcomeEnvelope(playerId: string, markerId: string): Promise<void> {
+  await withLock(async () => {
+    const all = await readAll();
+    const inbox = all[playerId];
+    if (!inbox || inbox.length === 0) return;
+    // The welcome was just pushed, so it is the newest envelope. Only stamp
+    // a not-yet-stamped one: re-stamping an older marker rename would be
+    // harmless but pointless.
+    const newest = inbox[0];
+    if (newest.id.startsWith("welcome_")) return;
+    newest.id = markerId;
+    await writeAll(all);
+  });
+}
+
 export async function markInboxRead(playerId: string): Promise<void> {
   await withLock(async () => {
     const all = await readAll();
@@ -312,11 +334,13 @@ export async function sendDirectMessage(
     readAt: sentAt,
   });
 
-  // Official/admin outreach rings the bell. A moderation reply that only
-  // exists inside /messages is invisible — the player has no reason to open
-  // a thread they do not know exists. Ordinary player-to-player DMs stay
-  // bell-silent: their badge lives on the Messages entry alone.
-  if (fromPlayerId === CHAINMATE_ID) {
+  // EVERY delivered DM rings the recipient's bell now: "<name> sent you a
+  // message" with a tap that opens the exact thread. The old rule (only the
+  // official account notifies) left ordinary player DMs invisible until the
+  // recipient happened to open /messages — the badge lived only in the
+  // hamburger menu. The producer dedupes per sender, so rapid-fire messages
+  // read as one fresh notification, not a pile of rows.
+  {
     const { notifyDirectMessage } = await import("@/lib/server/notify");
     await notifyDirectMessage(
       fromPlayerId,

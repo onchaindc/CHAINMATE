@@ -79,6 +79,19 @@ async function actorDisplayName(playerId: string): Promise<string> {
 }
 
 /**
+ * Where a tap on the actor's identity should land: their PUBLIC profile.
+ * The old friend-request rows pointed at `/profile` — the RECIPIENT's own
+ * profile — so "User A sent you a friend request" opened… you. Every social
+ * event now names the actor's page (guests and unresolvable actors fall
+ * back to the app home rather than a broken link).
+ */
+async function actorProfileHref(playerId: string): Promise<string> {
+  if (playerId === "chainmate") return "/messages";
+  const username = await usernameForPlayer(playerId);
+  return username ? `/players/${encodeURIComponent(username)}` : "/";
+}
+
+/**
  * Read-time repair: notification bodies were persisted with whatever name
  * the actor resolved to AT SEND TIME — including the era when an unnamed
  * actor produced "A player challenged you…" (the exact wording the operator
@@ -129,13 +142,15 @@ export async function notifyFriendRequest(
   addresseeId: string,
 ): Promise<void> {
   const name = await actorDisplayName(requesterId);
+  // Tap target: the REQUESTER's profile — the row is about them, and
+  // accepting happens from the profile/friends surfaces it links to.
   await pushEvent({
     toPlayerId: addresseeId,
     type: "friend-request",
     actorPlayerId: requesterId,
     actorName: name,
     body: `${name} sent you a friend request.`,
-    href: "/profile",
+    href: await actorProfileHref(requesterId),
     createdAt: Date.now(),
   });
 }
@@ -146,13 +161,15 @@ export async function notifyFriendAccepted(
   requesterId: string,
 ): Promise<void> {
   const name = await actorDisplayName(accepterId);
+  // Tap target: the ACCEPTER's profile (who accepted), matching the avatar
+  // the row already shows — not the reader's own /profile.
   await pushEvent({
     toPlayerId: requesterId,
     type: "friend-accepted",
     actorPlayerId: accepterId,
     actorName: name,
     body: `${name} accepted your friend request. You can chat now.`,
-    href: "/messages",
+    href: await actorProfileHref(accepterId),
     createdAt: Date.now(),
   });
 }
@@ -160,13 +177,18 @@ export async function notifyFriendAccepted(
 /**
  * A direct message arrived — the bell's bridge to the inbox.
  *
- * Player-to-player DMs deliberately do NOT ring the bell (they count in the
- * Messages badge only); this producer exists for senders whose message would
- * otherwise be invisible until the player happens to open /messages — the
- * official account's moderation replies and admin outreach above all. The
- * body is the message itself, un-prefixed: the row already shows who sent
- * it (avatar + name), and a "ChainMate: Hi onchaindc. This is a final
- * warning…" read like a letter's envelope quoting itself.
+ * EVERY DM now rings the bell, WhatsApp-style: "AbdulXBT sent you a message"
+ * with a tap that opens that exact thread (/messages?with=<sender>). Without
+ * this, a DM from a player is invisible until the recipient happens to open
+ * /messages — the badge lives in the hamburger menu where nobody looks.
+ *
+ * DEDUP: rapid-fire messages from one sender must read as ONE notification
+ * that stays fresh, not a pile of rows. While the recipient has not seen the
+ * event yet, a new message from the SAME sender UPDATES that row (body →
+ * newest preview, timestamp → now) instead of pushing another. Marking seen
+ * (opening the bell) resets the cycle, so the next unseen message after a
+ * check rings again. The official account's moderation replies take the
+ * same path, body being the message itself.
  */
 export async function notifyDirectMessage(
   fromPlayerId: string,
@@ -174,14 +196,36 @@ export async function notifyDirectMessage(
   preview: string,
 ): Promise<void> {
   const name = await actorDisplayName(fromPlayerId);
-  await pushEvent({
-    toPlayerId,
-    type: "message",
-    actorPlayerId: fromPlayerId,
-    actorName: name,
-    body: preview,
-    href: `/messages?with=${encodeURIComponent(toPlayerId === fromPlayerId ? "" : fromPlayerId)}`,
-    createdAt: Date.now(),
+  await withLock(async () => {
+    const all = await readAll();
+    const inbox = all[toPlayerId] ?? [];
+    // Replace this sender's still-unseen "…sent you a message" row, newest
+    // first — one live notification per sender, exactly one badge unit.
+    const existing = inbox.find(
+      (e) => e.type === "message" && e.actorPlayerId === fromPlayerId && e.readAt === null,
+    );
+    if (existing) {
+      existing.body = preview;
+      existing.createdAt = Date.now();
+      existing.href = `/messages?with=${encodeURIComponent(fromPlayerId)}`;
+      // Bump to the top so the freshest sender leads the panel.
+      all[toPlayerId] = [existing, ...inbox.filter((e) => e.id !== existing.id)];
+      await writeAll(all);
+      return;
+    }
+    inbox.unshift({
+      toPlayerId,
+      type: "message",
+      actorPlayerId: fromPlayerId,
+      actorName: name,
+      body: preview,
+      href: `/messages?with=${encodeURIComponent(toPlayerId === fromPlayerId ? "" : fromPlayerId)}`,
+      createdAt: Date.now(),
+      id: newId(),
+      readAt: null,
+    });
+    all[toPlayerId] = inbox.slice(0, EVENT_LIMIT);
+    await writeAll(all);
   });
 }
 

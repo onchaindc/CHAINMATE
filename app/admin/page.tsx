@@ -27,6 +27,8 @@ import { StatTiles } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
 import { formatNim } from "@/lib/nimiq/format";
+import { parseNim } from "@/lib/nimiq/format";
+import { PRESET_SHARES_BPS, presetLabel, type PrizePreset } from "@/lib/tournament-economy";
 
 /**
  * ChainMate admin dashboard.
@@ -40,6 +42,26 @@ import { formatNim } from "@/lib/nimiq/format";
  * delete accounts, read the support inbox, reply as ChainMate, or
  * broadcast to every player at once.
  */
+
+/**
+ * One-click welcome templates, sent from the per-account Message composer.
+ * Placeholders: {name} (username or id). Same mechanics as the warnings —
+ * pick one, it fills the composer, editable before sending.
+ */
+const WELCOME_TEMPLATES: { label: string; text: string }[] = [
+  {
+    label: "Welcome — start here",
+    text: "Welcome to ChainMate, {name}! 🎉 Your account is ready. Start with a quick game (Play → Find a match), try the AI opponent, or join a free tournament. Add friends from their profiles to chat. If anything feels off, message us here — this thread reaches the team.",
+  },
+  {
+    label: "Welcome — brief",
+    text: "Welcome aboard, {name}! 🎉 Play your first rated game from the Play page, and message us here any time — we read every reply.",
+  },
+  {
+    label: "Welcome — tournaments focus",
+    text: "Welcome to ChainMate, {name}! 🏆 Free tournaments run daily in three formats — Swiss, Knockout and Arena — and every rating point is earned in real games. Hop in from the Tournaments tab, and good luck at the board!",
+  },
+];
 
 /**
  * One-click moderation warnings, sent from the per-account Message composer.
@@ -815,6 +837,33 @@ function Dashboard({
                             clicks instead of typing the same paragraphs. */}
                         <label className="flex items-center gap-2 text-2xs text-muted-foreground">
                           <span className="shrink-0 font-semibold uppercase tracking-wider">
+                            Welcome
+                          </span>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const t = WELCOME_TEMPLATES.find((w) => w.label === e.target.value);
+                              if (!t) return;
+                              setReplyDrafts((prev) => ({
+                                ...prev,
+                                [a.playerId]: t.text.replaceAll(
+                                  "{name}",
+                                  a.username ?? a.playerId,
+                                ),
+                              }));
+                            }}
+                            className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs outline-none"
+                          >
+                            <option value="">Choose a welcome template…</option>
+                            {WELCOME_TEMPLATES.map((w) => (
+                              <option key={w.label} value={w.label}>
+                                {w.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex items-center gap-2 text-2xs text-muted-foreground">
+                          <span className="shrink-0 font-semibold uppercase tracking-wider">
                             Warnings
                           </span>
                           <select
@@ -1277,13 +1326,24 @@ function PayoutRow({
   );
 }
 
+/** Does this planned purse match the preset's share table (rank order)? */
+function sharesMatch(lines: AdminPayoutLine[], preset: PrizePreset): boolean {
+  const shares = PRESET_SHARES_BPS[preset];
+  if (lines.length !== shares.length) return false;
+  const sorted = [...lines].sort((a, b) => a.payoutRank - b.payoutRank);
+  return sorted.every((l, i) => l.shareBps === shares[i]);
+}
+
 /**
  * The per-tournament settlement console, embedded under each paid event in
  * the admin table: per-rank prize rows and refund obligations, each with
  * pay/check-status (and an address override for prizes whose winner cannot
  * be resolved). Payments go out through the operator's own Nimiq Pay wallet
  * exactly like the host path did — the difference is WHO is accountable:
- * ChainMate itself, in the ChainMate console.
+ * ChainMate itself, in the ChainMate console. The console can also TOP UP
+ * the pool from the operator's own wallet (verified on-chain before the
+ * pool grows) and re-cut the purse as top 1 / top 3 / top 5 while nothing
+ * has been dispatched yet.
  */
 function PrizeSettlement({
   row,
@@ -1302,6 +1362,7 @@ function PrizeSettlement({
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [topupNim, setTopupNim] = useState("");
 
   /** POST a payout action as the admin; passcode session rides the header. */
   const payoutAction = async (
@@ -1309,6 +1370,8 @@ function PrizeSettlement({
     targetPlayerId: string,
     txHash?: string,
     destinationAddress?: string,
+    preset?: string,
+    amountNim?: string,
   ): Promise<Record<string, unknown>> => {
     const token = getIdentityToken();
     const res = await fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
@@ -1318,7 +1381,7 @@ function PrizeSettlement({
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         "X-Admin-Session": passcodeToken,
       },
-      body: JSON.stringify({ playerId, action, targetPlayerId, txHash, destinationAddress }),
+      body: JSON.stringify({ playerId, action, targetPlayerId, txHash, destinationAddress, preset, amountNim }),
     });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
     if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
@@ -1411,10 +1474,77 @@ function PrizeSettlement({
     }
   };
 
+  /**
+   * Pool top-up: prepare → Nimiq Pay sheet (exact amount + treasury) →
+   * claim. The server verifies the real on-chain transaction against the
+   * configured treasury and the admin's linked wallet, then credits the
+   * pool; the same hash can never be claimed twice.
+   */
+  const topUp = async () => {
+    setWorking("topup");
+    setError(null);
+    setNotice(null);
+    try {
+      const prep = (await payoutAction("topup-prepare", "")) as {
+        intent: { recipientAddress: string; amountLuna: string };
+      };
+      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
+      const { canonicalAddress } = await import("@/lib/nimiq/address");
+      const connected = await connectNimiq();
+      if (!connected.ok) throw new Error(connected.error.message);
+      const sent = await sendNimiqBasicTransaction(connected.value, {
+        recipient: canonicalAddress(prep.intent.recipientAddress),
+        value: BigInt(prep.intent.amountLuna),
+      });
+      if (!sent.ok) throw new Error(sent.error.message);
+      try {
+        await payoutAction("topup-claim", "", sent.value);
+        setNotice(null);
+      } catch {
+        // The money moved; usually just confirmations still maturing. The
+        // SAME hash re-claims — never a second payment.
+        setNotice(`Top-up sent (tx ${sent.value.slice(0, 10)}…) — still confirming. Press Top up again to re-check; do NOT send again.`);
+        try {
+          await payoutAction("topup-claim", "", sent.value);
+          setNotice(null);
+        } catch {
+          /* guiding notice stays */
+        }
+      }
+      setTopupNim("");
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Top-up failed");
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  /** Distribute with the picked shape (top 1 / top 3 / top 5). */
+  const distribute = async (preset: PrizePreset) => {
+    setWorking(`plan:${preset}`);
+    setError(null);
+    try {
+      await payoutAction("plan", "", undefined, undefined, preset);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Distribution failed");
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const poolLabel = row.prizePoolNim ? `${row.prizePoolNim} NIM` : "—";
   const unsettled =
     row.payouts.filter((p) => p.status !== "verified").length +
     row.refunds.filter((r) => r.status !== "verified").length;
+  const topupValid = (() => {
+    try {
+      return parseNim(topupNim) > 0n;
+    } catch {
+      return false;
+    }
+  })();
 
   return (
     <div className="w-full">
@@ -1444,6 +1574,59 @@ function PrizeSettlement({
               {notice}
             </p>
           )}
+
+          {/* ---- Top up the pool ---- */}
+          <div className="flex flex-wrap items-center gap-2 rounded-md bg-secondary/30 px-3 py-2">
+            <p className="min-w-0 flex-1 text-2xs leading-snug text-muted-foreground">
+              Top up the pool from your own Nimiq wallet. The server verifies
+              the transaction on-chain before the pool grows.
+            </p>
+            <input
+              value={topupNim}
+              onChange={(e) => setTopupNim(e.target.value.replace(/[^0-9.]/g, ""))}
+              placeholder="NIM, e.g. 25"
+              inputMode="decimal"
+              className="w-28 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+              aria-label="Top-up amount in NIM"
+            />
+            <Button
+              size="sm"
+              disabled={!topupValid || working !== null || busy}
+              onClick={() => void topUp()}
+            >
+              {working === "topup" ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              Top up
+            </Button>
+          </div>
+
+          {/* ---- Choose the distribution shape (nothing dispatched yet) ---- */}
+          {row.payouts.length === 0 || row.payouts.every((p) => p.status === "pending" || p.status === "blocked_no_wallet" || p.status === "failed") ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md bg-secondary/30 px-3 py-2">
+              <p className="min-w-0 flex-1 text-2xs leading-snug text-muted-foreground">
+                Distribute the pool {row.payouts.length > 0 ? "again" : ""} as:
+              </p>
+              {(["winner", "top3", "top5"] as const).map((preset) => (
+                <Button
+                  key={preset}
+                  size="sm"
+                  variant={
+                    row.prizePreset === preset ||
+                    (row.payouts.length > 0 && sharesMatch(row.payouts, preset))
+                      ? "default"
+                      : "outline"
+                  }
+                  disabled={working !== null || busy}
+                  onClick={() => void distribute(preset)}
+                >
+                  {working === `plan:${preset}` ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  {preset === "winner" ? "Top 1" : preset === "top3" ? "Top 3" : "Top 5"}
+                  <span className="ml-1 hidden font-mono text-2xs text-muted-foreground sm:inline">
+                    {presetLabel(preset)}
+                  </span>
+                </Button>
+              ))}
+            </div>
+          ) : null}
 
           {row.payouts.length > 0 && (
             <ul className="divide-y divide-border/50">

@@ -166,6 +166,10 @@ export async function POST(req: NextRequest) {
         stats,
       });
       await updatePlayerIdentity(freshPlayerId, { username, isGuest: false });
+      // One-time welcome from ChainMate — best-effort, never fails signup
+      // (sendWelcomeIfNew swallows its own errors), awaited so serverless
+      // cannot freeze the process mid-send.
+      await (await import("@/lib/server/welcome")).sendWelcomeIfNew(freshPlayerId, username);
       return NextResponse.json({ profile, playerId: freshPlayerId });
     }
 
@@ -192,6 +196,10 @@ export async function POST(req: NextRequest) {
       stats,
     });
     await updatePlayerIdentity(freshPlayerId, { username, isGuest: false });
+    // One-time welcome from ChainMate — best-effort, never fails signup
+    // (sendWelcomeIfNew swallows its own errors), awaited so serverless
+    // cannot freeze the process mid-send.
+    await (await import("@/lib/server/welcome")).sendWelcomeIfNew(freshPlayerId, username);
     return NextResponse.json({ profile, playerId: freshPlayerId });
   } catch (err) {
     const message =

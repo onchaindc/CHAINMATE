@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
@@ -8,6 +7,7 @@ import { CountryFlag } from "@/components/ui/country-flag";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
+import { useCachedRead } from "@/lib/read-cache";
 import { useIdentity } from "@/lib/identity-context";
 import { guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
@@ -43,27 +43,13 @@ const HEAD =
 
 export default function LeaderboardPage() {
   const identity = useIdentity();
-  const [players, setPlayers] = useState<PlayerStats[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const me = identity.playerId;
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await (getStore("hosted") as HostedGameStore).leaderboard();
-        if (!cancelled) setPlayers(list);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load leaderboard");
-          setPlayers([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Cached read: the ranking table renders from the session cache the moment
+  // you navigate here and revalidates in the background.
+  const { data: players, error } = useCachedRead<PlayerStats[]>(
+    "leaderboard",
+    async () => (getStore("hosted") as HostedGameStore).leaderboard(),
+  );
 
   return (
     <div className="shell px-4 py-12 sm:px-6 lg:py-16">

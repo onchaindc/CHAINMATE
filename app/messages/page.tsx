@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Loader2, MessagesSquare, Search, Send } from "lucide-react";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
@@ -8,7 +8,8 @@ import { Panel } from "@/components/ui/panel";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { getIdentityToken } from "@/lib/identity";
+import { getIdentityToken, getPlayerId } from "@/lib/identity";
+import { useCachedRead } from "@/lib/read-cache";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { ChainMateAvatar } from "@/components/auth/chainmate-avatar";
 import { refreshMessageCounts } from "@/hooks/use-message-counts";
@@ -74,6 +75,31 @@ function preview(text: string): string {
   return oneLine.length > 48 ? `${oneLine.slice(0, 48)}…` : oneLine;
 }
 
+/** One cached inbox payload: envelopes + the friends-gated peer set. */
+interface InboxData {
+  messages: Envelope[];
+  allowedPeers: Set<string>;
+}
+
+const EMPTY_PEERS = new Set<string>();
+
+async function loadInbox(): Promise<InboxData> {
+  const playerId = getPlayerId();
+  const token = getIdentityToken();
+  const res = await fetch(`/api/messages?playerId=${encodeURIComponent(playerId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!res.ok) throw new Error("Failed to load messages");
+  const data = (await res.json()) as {
+    messages?: Envelope[];
+    allowedPeers?: string[];
+  };
+  return {
+    messages: data.messages ?? [],
+    allowedPeers: new Set(data.allowedPeers ?? []),
+  };
+}
+
 export default function MessagesPage() {
   const identity = useIdentity();
   const authed = !identity.isGuest && Boolean(identity.username);
@@ -87,9 +113,17 @@ export default function MessagesPage() {
     if (with_) setDeepLinkPeer(with_);
   }, []);
 
-  const [inbox, setInbox] = useState<Envelope[] | null>(null);
+  // Cached read: the inbox renders from the session cache the moment you
+  // navigate here (revisits never blank into a skeleton) and the 5s poll
+  // keeps new messages arriving live, exactly as before.
+  const { data: inboxData, refresh } = useCachedRead<InboxData>(
+    `messages:inbox:${identity.playerId}`,
+    loadInbox,
+    { pollMs: 5_000, enabled: authed && Boolean(identity.playerId) },
+  );
+  const inbox = inboxData?.messages ?? null;
   /** The friends this account may chat with (server decides, not the UI). */
-  const [allowedPeers, setAllowedPeers] = useState<Set<string>>(new Set());
+  const allowedPeers = inboxData?.allowedPeers ?? EMPTY_PEERS;
   const [peer, setPeer] = useState<SearchRow | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchRow[]>([]);
@@ -98,33 +132,6 @@ export default function MessagesPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
-
-  const load = useCallback(async () => {
-    if (!identity.playerId) return;
-    try {
-      const token = getIdentityToken();
-      const res = await fetch(
-        `/api/messages?playerId=${encodeURIComponent(identity.playerId)}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
-      );
-      if (!res.ok) return;
-      const data = (await res.json()) as {
-        messages?: Envelope[];
-        allowedPeers?: string[];
-      };
-      setInbox(data.messages ?? []);
-      setAllowedPeers(new Set(data.allowedPeers ?? []));
-    } catch {
-      // transient; keep the previous list
-    }
-  }, [identity.playerId]);
-
-  useEffect(() => {
-    if (!authed) return;
-    void load();
-    const t = setInterval(() => void load(), 5_000);
-    return () => clearInterval(t);
-  }, [authed, load]);
 
   /* When a conversation is open, mark the DM inbox read so the badge clears
      like a seen WhatsApp thread (both header badges refresh instantly). */
@@ -286,7 +293,7 @@ export default function MessagesPage() {
         setError(data.error ?? "Could not send the message");
       } else {
         setDraft("");
-        await load();
+        await refresh();
         refreshMessageCounts();
       }
     } catch {
@@ -333,7 +340,6 @@ export default function MessagesPage() {
       games: 0,
       avatar_url: hit.counterpartAvatar ?? null,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkPeer, inbox]);
 
   if (!authed) {

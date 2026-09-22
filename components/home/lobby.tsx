@@ -25,6 +25,7 @@ import { SectionLabel } from "@/components/ui/page-header";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
 import { guestDisplayName } from "@/lib/identity";
+import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
@@ -67,13 +68,20 @@ export function Lobby() {
   const identity = useIdentity();
   const router = useRouter();
   const match = useMatchmaking();
-  const [data, setData] = useState<LobbyData | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [timeControl, setTimeControl] = useState<string>("5 + 0");
   const [challenging, setChallenging] = useState<string | null>(null);
 
   const playerId = identity.playerId;
   const ready = identity.status !== "loading" && Boolean(playerId);
+
+  // Cached read: the lobby's four server reads are keyed per player, so a
+  // returning player sees their last-known lobby instantly on navigation and
+  // the 10s poll keeps live games/challenges current exactly as before.
+  const { data, error, refresh } = useCachedRead<LobbyData>(
+    `lobby:${playerId}`,
+    () => load(playerId),
+    { pollMs: POLL_MS, enabled: ready },
+  );
 
   const load = useCallback(async (me: string) => {
     const store = getStore("hosted") as HostedGameStore;
@@ -111,27 +119,8 @@ export function Lobby() {
 
   useEffect(() => {
     if (!ready) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const next = await load(playerId);
-        if (cancelled) return;
-        setData(next);
-        setError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to load your lobby");
-        // Keep whatever was already on screen; only the first failure is blank.
-        setData((prev) => prev);
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [ready, playerId, load]);
+    void refresh();
+  }, [ready, refresh]);
 
   /**
    * Player id → username. Folds in friends as well as the games' own player
@@ -177,15 +166,16 @@ export function Lobby() {
     return map;
   }, [data?.stats.ratingHistory, data?.recent, playerId]);
 
+  const [challengeError, setChallengeError] = useState<string | null>(null);
   const challengeFriend = async (friendId: string) => {
     setChallenging(friendId);
-    setError(null);
+    setChallengeError(null);
     try {
       const store = getStore("hosted") as HostedGameStore;
       const game = await store.challenge(friendId, timeControl);
       router.push(`/game/${game.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send the challenge");
+      setChallengeError(err instanceof Error ? err.message : "Could not send the challenge");
       setChallenging(null);
     }
   };
@@ -327,6 +317,7 @@ export function Lobby() {
                   </Button>
                 )}
 
+                {challengeError && <ErrorNote message={challengeError} className="mt-3" />}
                 {match.error && <ErrorNote message={match.error} className="mt-3" />}
 
                 <div className="mt-3 grid max-w-lg gap-2 sm:grid-cols-2">

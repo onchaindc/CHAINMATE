@@ -33,6 +33,7 @@
 import {
   allocatePrizePool,
   isPrizePreset,
+  PRESET_SHARES_BPS,
   type PrizePreset,
 } from "@/lib/tournament-economy";
 import { getLinkedWallet } from "@/lib/server/nimiq/service";
@@ -222,6 +223,13 @@ export interface PayoutStore {
   listByTournament(tournamentId: string): Promise<PayoutRecord[]>;
   upsert(payout: PayoutRecord): Promise<void>;
   get(tournamentId: string, playerId: string): Promise<PayoutRecord | null>;
+  /**
+   * Re-plan support: drop a stale row (a rank the new plan no longer pays).
+   * MUST refuse to remove a dispatched row — implementations enforce it like
+   * upsert's monotonic rule. Optional: seams without it simply keep stale
+   * rows and re-planning skips them via the caller's guard.
+   */
+  remove?(tournamentId: string, playerId: string): Promise<void>;
 }
 
 export const fastStorePayoutStore: PayoutStore = {
@@ -244,6 +252,21 @@ export const fastStorePayoutStore: PayoutStore = {
   async get(tournamentId, playerId) {
     const file = await readPayoutsFile();
     return file.payouts[payoutKey(tournamentId, playerId)] ?? null;
+  },
+  async remove(tournamentId, playerId) {
+    await withPayoutLock(`row:${tournamentId}:${playerId}`, async () => {
+      const file = await readPayoutsFile();
+      const key = payoutKey(tournamentId, playerId);
+      const existing = file.payouts[key];
+      if (!existing) return;
+      // Same monotonic rule as upsert: dispatched money is history, never a
+      // row a re-plan may quietly delete.
+      if (existing.status === "sent" || existing.status === "verified" || existing.status === "dispatching") {
+        return;
+      }
+      delete file.payouts[key];
+      await writePayoutsFile(file);
+    });
   },
 };
 
@@ -277,17 +300,36 @@ export async function planTournamentPayouts(
   const store = deps.store ?? fastStorePayoutStore;
 
   return withPayoutLock(`plan:${tournamentId}`, async () => {
-    // Idempotency guard.
+    // Idempotency guard — with one exception: when the caller supplies a
+    // DIFFERENT preset than what was planned and NOTHING has been dispatched
+    // yet (no sent/verified/dispatching rows), the plan is rebuilt. That is
+    // the admin console's "distribute as top 1 / top 3 / top 5" choice: the
+    // operator reads the final field, picks the shape, and the purse is cut
+    // accordingly. Once money has moved the plan is immutable — a re-plan
+    // can never redefine an obligation someone is already owed or paid.
     const existing = await store.listByTournament(tournamentId);
     if (existing.length > 0) {
-      const pool = existing.reduce((acc, p) => acc + BigInt(p.amountLuna), 0n);
-      return {
-        created: 0,
-        prizePoolLuna: pool,
-        allocatedLuna: pool,
-        dustLuna: 0n,
-        payouts: existing,
-      };
+      const dispatched = existing.some(
+        (p) => p.status === "sent" || p.status === "verified" || p.status === "dispatching",
+      );
+      // Same-shape check: the existing rows' per-rank shareBps, in rank
+      // order, already match the requested preset — nothing to rebuild.
+      const sameShape =
+        isPrizePreset(input.preset) &&
+        sameShares(existing, PRESET_SHARES_BPS[input.preset]);
+      const replan = isPrizePreset(input.preset) && !sameShape && !dispatched;
+      if (!replan) {
+        const pool = existing.reduce((acc, p) => acc + BigInt(p.amountLuna), 0n);
+        return {
+          created: 0,
+          prizePoolLuna: pool,
+          allocatedLuna: pool,
+          dustLuna: 0n,
+          payouts: existing,
+        };
+      }
+      // Fall through to re-planning; the rows below overwrite the old plan
+      // one-for-one via the store's monotonic upsert (pending rows only).
     }
 
     if (!isPrizePreset(input.preset)) {
@@ -331,13 +373,27 @@ export async function planTournamentPayouts(
       });
     }
 
+    const replanned = existing.length > 0;
     for (const p of payouts) {
       await store.upsert(p);
+    }
+    // Re-plan with a SMALLER preset (top5 → top3): the ranks the new plan no
+    // longer pays must not linger as ghost obligations in the console. Rows
+    // for ranks outside the new allocation are removed — remove() enforces
+    // the same monotonic rule as upsert, so a dispatched row survives even
+    // if the caller's dispatched-check raced.
+    if (replanned && store.remove) {
+      const plannedIds = new Set(payouts.map((p) => p.playerId));
+      for (const stale of existing) {
+        if (!plannedIds.has(stale.playerId)) {
+          await store.remove(tournamentId, stale.playerId);
+        }
+      }
     }
     await mirrorPayouts(tournamentId, payouts);
 
     return {
-      created: payouts.length,
+      created: replanned ? 0 : payouts.length,
       prizePoolLuna: pool,
       allocatedLuna: allocation.allocatedLuna,
       dustLuna: allocation.dustLuna,
@@ -348,6 +404,17 @@ export async function planTournamentPayouts(
 
 /** Local alias so the type stays readable. */
 type PrizeAllocationResultAlias = ReturnType<typeof allocatePrizePool>;
+
+/**
+ * Do the planned rows' per-rank shareBps (rank order) match the preset's
+ * share table exactly? Used to decide whether a re-plan request is a real
+ * preset change or just an idempotent re-run.
+ */
+function sameShares(rows: PayoutRecord[], sharesBps: number[]): boolean {
+  if (rows.length !== sharesBps.length) return false;
+  const sorted = [...rows].sort((a, b) => a.payoutRank - b.payoutRank);
+  return sorted.every((r, i) => r.shareBps === sharesBps[i]);
+}
 
 /** Payouts for the UI (detail page). Safe to call for any tournament. */
 export async function listTournamentPayouts(

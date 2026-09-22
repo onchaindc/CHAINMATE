@@ -519,8 +519,11 @@ async function ensurePaidSeatInEngine(
 
 /**
  * The verified prize pool for a tournament: the exact sum of every
- * kind='tournament_entry' consumption recorded against it. Never trusts any
- * other number.
+ * kind='tournament_entry' consumption recorded against it PLUS every
+ * kind='pool_topup' consumption (money the operator/host added from their
+ * own wallet, verified on-chain with the same gates as an entry). Refunds
+ * and plain verifications are money OUT or neutral and never count. Never
+ * trusts any other number.
  */
 export async function getVerifiedPrizePool(
   tournamentId: string,
@@ -529,7 +532,7 @@ export async function getVerifiedPrizePool(
   if (!store.listByTournament) return 0n;
   const rows = await store.listByTournament(tournamentId);
   return rows
-    .filter((r) => r.kind === "tournament_entry")
+    .filter((r) => r.kind === "tournament_entry" || r.kind === "pool_topup")
     .reduce((acc, r) => acc + BigInt(r.amountLuna), 0n);
 }
 

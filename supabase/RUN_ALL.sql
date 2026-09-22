@@ -1124,13 +1124,98 @@ where player_id like 'acct_%'
 -- ============================================================
 -- 0016_tournament_intermission.sql
 -- ============================================================
--- ChainMate — round intermission for the tournament engine
--- ============================================================
--- Idempotent. The engine schedules the NEXT round a short break after the
--- last game of the current round ends, instead of dealing it instantly.
+-- Round intermission: the engine schedules the NEXT round a short break after
+-- the last game of the current round ends, instead of dealing it instantly.
 -- next_round_at = the instant the next round will be generated (null = none
 -- pending). Read by the cold-start rebuild path; the fast store stays the
 -- source of truth.
-
 alter table tournaments
   add column if not exists next_round_at timestamptz;
+
+-- ============================================================
+-- 0017_admin_bans.sql
+-- ============================================================
+-- ChainMate — durable admin bans (restriction ledger)
+-- =====================================================
+-- Idempotent, additive. Pairs with lib/server/admin.ts: the fast store
+-- (.data / Vercel KV) is the runtime source of truth and this table is the
+-- durable mirror used for cold-start recovery. Without it, a fresh
+-- serverless instance started with an empty fast store and every
+-- restriction silently vanished — restricted accounts could simply wait
+-- out a redeploy and play again. Mirrors the wallet-binding pattern from
+-- 0007 exactly.
+--
+-- SCOPE BOUNDARY: administrative restrictions only. No balances, payouts,
+-- or payments live here.
+
+create table if not exists public.admin_bans (
+  player_id text primary key,
+  reason text not null,
+  banned_by text not null,
+  banned_at timestamptz not null default now()
+);
+
+-- Mirror writes go through the service-role key only.
+alter table public.admin_bans enable row level security;
+
+-- No policies: anon/authenticated clients are denied every operation;
+-- the API (service key) bypasses RLS as intended.
+
+-- ============================================================
+-- 0018_pool_topup.sql
+-- ============================================================
+-- ChainMate — prize-pool top-ups (admin console)
+-- ==============================================
+-- Idempotent, additive. Extends the nimiq_transactions consumption ledger's
+-- `kind` vocabulary so a verified incoming transaction can be consumed as a
+-- POOL TOP-UP — the operator (or host) adding prize money to a paid
+-- tournament's pool from their own Nimiq Pay wallet, verified on-chain
+-- exactly like an entry payment (sender tier checks, exact amount, executed,
+-- ≥ required confirmations, durable replay guard).
+--
+-- Why the schema change: 0008 declared
+--   check (kind in ('verification', 'tournament_entry'))
+-- and no later migration widened it, so every 'refund' consumption row the
+-- host-wallet refund path wrote (lib/server/tournament-refunds-wallet.ts)
+-- SILENTLY FAILED its Supabase mirror (non-duplicate errors are swallowed)
+-- even though the fast store kept it. This migration widens the check to the
+-- full vocabulary the code already writes:
+--
+--   verification      wallet-link verification (Phase 1B)
+--   tournament_entry  a player's verified entry fee (2B)
+--   refund            a verified entry-fee RETURN paid by the host
+--   pool_topup        a verified prize-pool top-up paid by the operator
+--
+-- There are still NO balances and NO custodial ledger here: every row
+-- remains one real, verified on-chain transaction, and the
+-- UNIQUE (network, tx_hash) replay guard is untouched. Pool top-ups count
+-- toward a tournament's verified prize pool (they carry its tournament_id
+-- and kind='pool_topup'); refunds never do (money OUT, never IN).
+
+do $$
+declare
+  r record;
+begin
+  -- Drop whichever check constraint currently guards nimiq_transactions.kind
+  -- (the auto-named one from 0008, or any re-created variant), then re-add a
+  -- single named constraint with the full vocabulary. Drop-guard keeps
+  -- RUN_ALL.sql re-runnable.
+  for r in
+    select conname from pg_constraint
+    where conrelid = 'public.nimiq_transactions'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) like '%kind%'
+  loop
+    execute format('alter table public.nimiq_transactions drop constraint %I', r.conname);
+  end loop;
+end $$;
+
+alter table public.nimiq_transactions
+  add constraint nimiq_transactions_kind_check
+  check (kind in ('verification', 'tournament_entry', 'refund', 'pool_topup'));
+
+-- Top-up lookup: "which verified top-ups landed on tournament X?" (mirrors
+-- the entry-lookup index; the kind filter is partial-index style.)
+create index if not exists nimiq_tx_pool_topup_idx
+  on public.nimiq_transactions (tournament_id, created_at)
+  where kind = 'pool_topup';

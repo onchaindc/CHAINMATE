@@ -134,16 +134,20 @@ export function normalizeTxHash(txHash: string): string {
 export interface VerificationObligation {
   /** The player whose LINKED wallet must be the sender. */
   playerId: string;
-  /** Exact expected amount in luna (bigint — never a float). */
-  expectedAmountLuna: bigint;
+  /** Exact expected amount in luna (bigint — never a float). Omit ONLY for
+   *  flows where the payer chooses the amount freely (pool top-ups): every
+   *  other flow MUST set it — an unpriced entry would be a money bug. */
+  expectedAmountLuna?: bigint;
   /** Expected recipient; defaults to the configured treasury address. */
   expectedRecipient?: string;
   /** Expected network; defaults to the deployment's configured network. */
   network?: NimiqNetworkName;
-  /** What the consumption row records; defaults to 'verification'.
-   *  'refund' = an outgoing host-wallet ENTRY-FEE RETURN (not an entry, not a
-   *  prize) — its own kind so the verified prize pool can never count it. */
-  kind?: "verification" | "tournament_entry" | "refund";
+  /** What the consumption row records; defaults to 'verification'. */
+  /** What the transaction was consumed FOR. Phase 1C only ever writes
+   *  'verification'; tournament entry fees (2B) will write 'tournament_entry'.
+   *  'refund' = an outgoing host-wallet ENTRY-FEE RETURN; 'pool_topup' = a
+   *  verified incoming prize-pool top-up (both may carry tournamentId). */
+  kind?: "verification" | "tournament_entry" | "refund" | "pool_topup";
   /** Reserved for Phase 2B; recorded on the consumption row when present. */
   tournamentId?: string;
 }
@@ -559,6 +563,9 @@ async function verifyOnChain(
   }
 
   // 6. Value must equal the obligation exactly — bigint luna, no floats.
+  //    Flows with a free-form amount (pool top-ups) skip the equality check
+  //    but still require a positive integer value: zero/negative is never
+  //    money and a float-corrupted value can never parse.
   let amountLuna: string;
   try {
     amountLuna = toLuna(tx.value as bigint | number | string).toString();
@@ -569,8 +576,12 @@ async function verifyOnChain(
       `Node returned a non-integer value: ${moneyError?.message ?? "unknown"}`,
     );
   }
-  if (amountLuna !== obligation.expectedAmountLuna.toString()) {
-    throw new NimiqTxError("wrong-amount", "Transaction amount does not match the expected amount");
+  if (obligation.expectedAmountLuna !== undefined) {
+    if (amountLuna !== obligation.expectedAmountLuna.toString()) {
+      throw new NimiqTxError("wrong-amount", "Transaction amount does not match the expected amount");
+    }
+  } else if (BigInt(amountLuna) <= 0n) {
+    throw new NimiqTxError("wrong-amount", "Transaction amount must be positive");
   }
 
   // 7. Confirmations, computed server-side from block heights. INCLUSIVE
