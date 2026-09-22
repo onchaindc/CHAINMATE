@@ -133,6 +133,34 @@ export default function CreateTournamentPage() {
       : []),
   ];
 
+  // Guests cannot host: the server refuses, so the form is replaced with the
+  // sign-up path instead of a form that only errors on submit.
+  if (identity.isGuest) {
+    return (
+      <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 lg:py-16">
+        <BackLink href="/tournaments" className="mb-4">
+          Back to tournaments
+        </BackLink>
+        <PageHeader
+          eyebrow="Compete"
+          title="Host a tournament"
+          description="Hosting needs a ChainMate account — tournaments carry a permanent host record and standings."
+        />
+        <Panel className="animate-fade-in-up mt-8">
+          <div className="flex flex-col items-start gap-3 p-5">
+            <p className="text-sm leading-relaxed text-foreground/85">
+              You&apos;re playing as a guest. Sign up free to host tournaments,
+              keep a permanent rating, and appear in standings.
+            </p>
+            <Link href="/auth?upgrade=1" className="inline-flex items-center gap-2">
+              <Button size="sm">Create free account</Button>
+            </Link>
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 lg:py-16">
       <BackLink href="/tournaments" className="mb-4">

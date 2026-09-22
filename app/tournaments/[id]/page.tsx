@@ -329,6 +329,10 @@ export default function TournamentDetailPage() {
     isEntrant || detail.entries.some((e) => e.playerId === identity.playerId);
   const entryFeeLuna = s.entryFeeLuna && s.entryFeeLuna !== "0" ? s.entryFeeLuna : null;
   const isPaid = entryFeeLuna !== null;
+  // Guests are barred from tournament participation server-side (hosting and
+  // joining alike); the UI mirrors that with sign-up CTAs instead of dead
+  // buttons that only error on click.
+  const isGuest = identity.isGuest;
   const myEntry = detail.entries.find((e) => e.playerId === identity.playerId);
   const myPaymentPending = isPaid && joined && !myEntry?.paid && s.status === "registration";
   const canJoin =
@@ -380,7 +384,7 @@ export default function TournamentDetailPage() {
         description={s.description || undefined}
         actions={
           <div className="flex items-center gap-2">
-            {canJoin && !isPaid && (
+            {canJoin && !isPaid && !isGuest && (
               <Button size="sm" disabled={busy !== null} onClick={() => void act("join")}>
                 {busy === "join" ? (
                   <Loader2 className="animate-spin" aria-hidden />
@@ -662,8 +666,25 @@ export default function TournamentDetailPage() {
         </div>
       )}
 
+      {/* ---------- Guest gate ---------- */}
+      {isGuest && !joined && (s.status === "registration" || s.status === "draft") && (
+        <div className="animate-fade-in-up mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
+          <Info className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <span className="min-w-0 flex-1">
+            Tournaments need a ChainMate account — standings are a permanent
+            ranked record. Guest play stays unlimited in casual games.
+          </span>
+          <Link
+            href="/auth?upgrade=1"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-primary underline-offset-2 hover:underline"
+          >
+            Create free account
+          </Link>
+        </div>
+      )}
+
       {/* ---------- Paid entry panel (Phase 2B) ---------- */}
-      {isPaid && isNimiqEnabled() && (
+      {isPaid && isNimiqEnabled() && !isGuest && (
         <PaidEntryPanel
           detail={detail}
           entryFeeLuna={entryFeeLuna!}

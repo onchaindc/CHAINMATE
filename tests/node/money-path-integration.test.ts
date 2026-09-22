@@ -161,6 +161,9 @@ before(async () => {
   engine.setTournamentCreationGateDeps({
     getLinkedWallet: async () => ({ address: LINKED, network: "test" }),
     getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+    // Every test player is a signed-in account (no profile store in tests);
+    // paid joins pass their own ACCOUNT_OK seam to the economy module.
+    isGuestAccount: async () => false,
   });
 
   // Link the player's wallet through the REAL Phase 1B store.

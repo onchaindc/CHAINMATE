@@ -1141,17 +1141,20 @@ function Dashboard({
                         </Button>
                       )}
                     </div>
-                    {/* Rendered for EVERY tournament: the collapsed console
-                        carries the pool top-up, so hiding it behind
-                        "has payouts" kept fresh events unfundable. Collapsed
-                        by default, it costs nothing when unneeded. */}
-                    <PrizeSettlement
-                      row={t}
-                      playerId={playerId}
-                      passcodeToken={passcodeToken}
-                      busy={busy}
-                      onDone={() => void load()}
-                    />
+                    {/* Rendered only for ENDED events: the console carries
+                        the pool top-up and the prize distribution, both of
+                        which only make sense once a tournament can no longer
+                        take entries. Live events show neither, and deleting
+                        (refund-gated) stays available on the row itself. */}
+                    {(t.status === "completed" || t.status === "cancelled") && (
+                      <PrizeSettlement
+                        row={t}
+                        playerId={playerId}
+                        passcodeToken={passcodeToken}
+                        busy={busy}
+                        onDone={() => void load()}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>

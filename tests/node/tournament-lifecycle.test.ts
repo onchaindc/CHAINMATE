@@ -206,6 +206,8 @@ before(async () => {
       network: "test",
     }),
     getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+    // Every test player is a signed-in account (no profile store in tests).
+    isGuestAccount: async () => false,
   });
 
   // Bind wallets for every player id this suite joins or pays with, through

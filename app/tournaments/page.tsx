@@ -8,6 +8,7 @@ import { PageHeader, SectionLabel } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useCachedRead } from "@/lib/read-cache";
+import { useIdentity } from "@/lib/identity-context";
 import { tournamentApi } from "@/lib/tournament-api";
 import { formatNim } from "@/lib/nimiq/format";
 import type { TournamentFormat, TournamentStatus, TournamentSummary } from "@/lib/tournament-types";
@@ -61,6 +62,7 @@ const FORMAT_LABEL: Record<TournamentFormat, string> = {
 };
 
 export default function TournamentsPage() {
+  const identity = useIdentity();
   // Cached read: the browser list renders from the session cache the moment
   // you navigate here (no skeleton on revisits) and revalidates every 15s.
   const { data, error, refresh } = useCachedRead(
@@ -106,13 +108,15 @@ export default function TournamentsPage() {
         title="Tournaments"
         description="Join while registration is open and climb the standings."
         actions={
-          <Link
-            href="/tournaments/create"
-            className={cn(buttonVariants({ size: "sm" }))}
-          >
-            <Plus aria-hidden />
-            Host one
-          </Link>
+          !identity.isGuest && (
+            <Link
+              href="/tournaments/create"
+              className={cn(buttonVariants({ size: "sm" }))}
+            >
+              <Plus aria-hidden />
+              Host one
+            </Link>
+          )
         }
       />
 
@@ -128,7 +132,11 @@ export default function TournamentsPage() {
             icon={Trophy}
             title="No tournaments yet"
             description="Host the first one: knockout, Swiss or arena, your call."
-            action={{ href: "/tournaments/create", label: "Host a tournament" }}
+            action={
+              identity.isGuest
+                ? { href: "/auth?upgrade=1", label: "Create an account to host" }
+                : { href: "/tournaments/create", label: "Host a tournament" }
+            }
           />
         </Panel>
       ) : (

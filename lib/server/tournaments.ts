@@ -33,7 +33,7 @@ import {
   type TournamentDocument,
 } from "@/lib/server/tournament-store";
 import { isPaidTournamentDoc, markEntryPaid as markEntryPaidOnDoc } from "@/lib/server/tournament-economy-doc";
-import { listPaidEntries } from "@/lib/server/tournament-economy";
+import { isGuestAccount, listPaidEntries } from "@/lib/server/tournament-economy";
 import type { TournamentRefundLine } from "@/lib/tournament-types";
 import { isPaidEntryFee, lunaFromStored, presetRankCount, validateEntryFee } from "@/lib/tournament-economy";
 import { getHostedGame, writeGame } from "@/lib/server/hosted";
@@ -211,11 +211,14 @@ export const CREATOR_MIN_NIM = 50;
 /**
  * Settable test seam for the hosting gate's RPC/ban dependencies: tests
  * inject in-memory fakes so the engine suite keeps running with no Nimiq
- * node and no wallet bindings. Production code leaves this unset.
+ * node and no wallet bindings. Production code leaves this unset. The guest
+ * predicate rides the same seam: without it, account-hood resolves through
+ * the real profile store (fail-closed to guest, as everywhere).
  */
 interface CreationGateDeps {
   getLinkedWallet?: (playerId: string) => Promise<{ address: string; network: string } | null>;
   getAccountBalanceLuna?: (address: string) => Promise<bigint>;
+  isGuestAccount?: (playerId: string) => Promise<boolean>;
 }
 let creationGateDeps: CreationGateDeps | null = null;
 
@@ -227,6 +230,16 @@ export function setTournamentCreationGateDeps(deps: CreationGateDeps | null): vo
 async function gateTournamentCreation(creatorId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const ban = await requireNotBanned(creatorId);
   if (!ban.ok) return { ok: false, error: ban.error! };
+
+  // Guests never host: hosting is an account privilege (the wallet + balance
+  // gates below are meaningless for a device id, and an account-free host
+  // could abandon an event nobody can reach them about).
+  if (await (creationGateDeps?.isGuestAccount ?? isGuestAccount)(creatorId)) {
+    return {
+      ok: false,
+      error: "Hosting a tournament requires a ChainMate account — sign up free, then host.",
+    };
+  }
 
   const linked = creationGateDeps?.getLinkedWallet
     ? await creationGateDeps.getLinkedWallet(creatorId).catch(() => null)
@@ -942,6 +955,17 @@ export async function joinTournament(
   // Banned players hit this door (and the paid-entry door) everywhere.
   const ban = await requireNotBanned(playerId);
   if (!ban.ok) return { ok: false, error: ban.error! };
+  // Guest accounts never enter tournaments, free or paid: standings are a
+  // persistent, ranked, per-account record, and a device id can vanish
+  // mid-bracket (its games then dead-end a knockout and pollute Swiss
+  // pairing). The paid-entry flow enforces the same rule earlier, before
+  // any payment is attempted.
+  if (await (creationGateDeps?.isGuestAccount ?? isGuestAccount)(playerId)) {
+    return {
+      ok: false,
+      error: "Joining tournaments requires a ChainMate account — sign up free, then enter.",
+    };
+  }
   // The document lock is what makes the player-cap race-free: without it,
   // six concurrent joins each read 0 entries, each pass the cap, and all 6
   // write back 6 entries for a 4-player event.

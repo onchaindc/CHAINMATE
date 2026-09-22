@@ -65,24 +65,19 @@ export function ProfileHeader({
         })
       : null;
   return (
-    <div className={cn("relative", className)}>
-      {/* The gear pinned to the section's top-right corner. In normal flow
-          (the actions cluster) it wrapped below the rating chip on phones and
-          read as unrelated buttons; absolute pinning keeps it at the very top
-          right of the profile section, just below the navbar, at every width.
-          The name row keeps right padding so a wrapped name never slides
-          underneath it. */}
+    <div className={cn(className)}>
+      {/* Actions live in a full-width row ABOVE the identity row, right-
+          aligned. The previous layout pinned them absolutely in the corner
+          with only pr-14 reserved, so a wide cluster (Friends + Challenge,
+          ~200px) painted straight over the name and badge on phones. In
+          normal flow nothing can ever overlap: the buttons take their own
+          line on small screens and sit beside the rating on wide ones. */}
       {actions && (
-        <div className="absolute right-0 top-0 z-10 -mt-1 flex items-center gap-2">
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-2 animate-fade-in-up">
           {actions}
         </div>
       )}
-      <div
-        className={cn(
-          "flex flex-wrap items-center gap-x-5 gap-y-4 animate-fade-in-up",
-          actions && "pr-14",
-        )}
-      >
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-4 animate-fade-in-up">
       {editableAvatar ? (
         <AvatarControls name={name} avatarUrl={avatarUrl} />
       ) : (
@@ -116,7 +111,7 @@ export function ProfileHeader({
       </div>
 
       {/* The rating chip stays in the flex row (it wraps naturally on
-          phones); only the actions are corner-pinned above. */}
+          phones). */}
       {rating !== null && rating !== undefined && (
         <div className="ml-auto flex flex-wrap items-center gap-2.5">
           {rating !== null && rating !== undefined && (

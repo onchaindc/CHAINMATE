@@ -56,9 +56,11 @@ before(async () => {
   standings = await import("@/lib/tournament-standings");
   types = await import("@/lib/tournament-types");
 
-  // The 50-NIM hosting gate reads a linked wallet + on-chain balance. Tests
-  // run without a Nimiq node, so inject an always-passing seam: every test
-  // creator has a linked wallet with a balance above the minimum.
+  // The 50-NIM hosting gate reads a linked wallet + on-chain balance, and
+  // both the hosting and joining gates resolve account-hood. Tests run
+  // without a Nimiq node and without a profile store, so inject the same
+  // always-passing seam the engine suite uses: every test player is a
+  // linked, funded ACCOUNT (never a guest).
   engine.setTournamentCreationGateDeps({
     getLinkedWallet: async (playerId: string) => ({
       address: `NQ07_TEST_${playerId}`.slice(0, 36).padEnd(36, "0"),
@@ -66,6 +68,7 @@ before(async () => {
       network: "test",
     }),
     getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+    isGuestAccount: async () => false,
   });
 
   process.on("exit", () => {
@@ -934,25 +937,70 @@ test("non-hosts cannot run lifecycle transitions", async () => {
   }
 });
 
-test("guests can join free tournaments (no payment fields anywhere)", async () => {
+test("guests cannot join free tournaments (account required, free included)", async () => {
   const host = pid("h24");
   const doc = await makeTournament(host);
   await engine.transitionTournament(doc.id, host, "registration");
-  // A guest id (0x… device identity) joins without any account.
+  // A guest id (0x… device identity) is refused BEFORE a seat is created.
   const guest = `0x${"ab".repeat(20)}`;
+  engine.setTournamentCreationGateDeps({
+    getLinkedWallet: async (playerId: string) => ({
+      address: `NQ07_TEST_${playerId}`.slice(0, 36).padEnd(36, "0"),
+      network: "test",
+    }),
+    getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+    isGuestAccount: async (p) => p === guest,
+  });
   const res = await engine.joinTournament(doc.id, guest);
-  assert.ok(res.ok, `guest join failed: ${res.ok ? "" : res.error}`);
+  assert.equal(res.ok, false, "guest join must be refused");
+  assert.match(res.error!, /account/i);
   const after = (await store.getTournamentDoc(doc.id))!;
-  assert.ok(after.entries.some((e) => e.playerId === guest));
+  assert.equal(after.entries.some((e) => e.playerId === guest), false, "no phantom seat");
+  // A signed-in account joins the same free event freely.
+  const member = pid("m24");
+  const ok = await engine.joinTournament(doc.id, member);
+  assert.ok(ok, `account join failed: ${"error" in ok ? ok.error : ""}`);
   // Phase 2A boundary, Phase 2B edition: a FREE tournament's economy fields
   // are all inert (null fee / null preset / "none" payout state) and no
-  // entry carries payment proof. Guests need no wallet and no NIM.
+  // entry carries payment proof.
   assert.equal(after.entryFeeLuna ?? null, null);
   assert.equal(after.prizePreset ?? null, null);
   assert.equal(after.payoutStatus ?? "none", "none");
   for (const e of after.entries) {
     assert.equal(e.paid, undefined, "a free-tournament entry carries payment proof");
   }
+});
+
+test("guests cannot host tournaments (account required)", async () => {
+  const guest = `0x${"cd".repeat(20)}`;
+  // Flip the seam: this id resolves as a guest, everyone else an account.
+  engine.setTournamentCreationGateDeps({
+    getLinkedWallet: async () => ({
+      address: `NQ07_TEST_${"f".repeat(20)}`.slice(0, 36).padEnd(36, "0"),
+      network: "test",
+    }),
+    getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+    isGuestAccount: async (p) => p === guest,
+  });
+  await assert.rejects(
+    () =>
+      engine.createTournament(guest, {
+        name: "Guest Open",
+        format: "swiss",
+        timeControl: "5 + 0",
+        maxPlayers: 4,
+      }),
+    /account/i,
+  );
+  // Restore the all-accounts seam for the rest of the suite.
+  engine.setTournamentCreationGateDeps({
+    getLinkedWallet: async (playerId: string) => ({
+      address: `NQ07_TEST_${playerId}`.slice(0, 36).padEnd(36, "0"),
+      network: "test",
+    }),
+    getAccountBalanceLuna: async () => BigInt(1000) * BigInt(100_000),
+    isGuestAccount: async () => false,
+  });
 });
 
 /* ------------------------------------------------------------------ */
