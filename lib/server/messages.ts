@@ -456,6 +456,23 @@ export async function broadcastFeedFor(playerId: string): Promise<MessageEnvelop
 }
 
 /**
+ * The operator has seen the support stream: mark every unread envelope in
+ * the ChainMate inbox read. The dashboard's "Support messages" tile counts
+ * unread envelopes, so this is what clears it. Admin-only, matching the
+ * other support actions.
+ */
+export async function markSupportRead(
+  adminPlayerId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { isAdminPlayer } = await import("@/lib/server/admin");
+ if (!(await isAdminPlayer(adminPlayerId))) {
+    return { ok: false, error: "Not found" };
+  }
+  await markInboxRead(CHAINMATE_ID);
+  return { ok: true };
+}
+
+/**
  * The operator's support stream: everything players sent TO ChainMate.
  * Admin-only, resolved against the same inbox store.
  */

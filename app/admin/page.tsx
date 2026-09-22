@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Ban,
+  Check,
   CheckCircle2,
   Inbox,
   Loader2,
@@ -462,13 +463,16 @@ function Dashboard({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingBan, setPendingBan] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<AdminAccount | null>(null);
   const [pendingBroadcast, setPendingBroadcast] = useState<"all" | "reply" | null>(null);
   const [messagingTarget, setMessagingTarget] = useState<string | null>(null);
   const [pendingTourAction, setPendingTourAction] = useState<{
     row: AdminTournamentRow;
     action: "cancel" | "complete" | "delete";
   } | null>(null);
+  // Support inbox compaction: one expanded message at a time, older rows
+  // behind "Show older" so a long history never floods the dashboard.
+  const [openSupportId, setOpenSupportId] = useState<string | null>(null);
+  const [supportLimit, setSupportLimit] = useState(12);
 
   const load = useCallback(async () => {
     try {
@@ -554,24 +558,6 @@ function Dashboard({
     }
   };
 
-  const deleteAccount = async (account: AdminAccount) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await adminApi("/api/admin/accounts", playerId, {
-        method: "POST",
-        body: JSON.stringify({ passcodeToken, action: "delete-account", targetPlayerId: account.playerId }),
-      });
-      flash(`Account ${account.username ?? account.playerId} permanently deleted.`);
-      setPendingDelete(null);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const sendBroadcast = async () => {
     if (!broadcastText.trim()) return;
     setPendingBroadcast("all");
@@ -628,6 +614,35 @@ function Dashboard({
   };
 
   const fmt = (ts: number) => new Date(ts).toLocaleString();
+  /** Compact row timestamp: today shows the time only, otherwise the date. */
+  const fmtShort = (ts: number) => {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    return sameDay
+      ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+      : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+
+  /** Clear the unread dot: marks every support envelope read server-side. */
+  const markSupportRead = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi("/api/admin/messages", playerId, {
+        method: "POST",
+        body: JSON.stringify({ passcodeToken, action: "support-mark-read" }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not mark read");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:py-16">
@@ -819,16 +834,6 @@ function Dashboard({
                           Restrict
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:bg-destructive/10"
-                        disabled={busy}
-                        onClick={() => setPendingDelete(a)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                        Delete
-                      </Button>
                     </div>
                     {messagingTarget === a.playerId && (
                       <div className="flex w-full flex-col gap-2">
@@ -921,10 +926,28 @@ function Dashboard({
 
         {/* ---------- Support inbox ---------- */}
         <section>
-          <p className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-            <Inbox className="h-3.5 w-3.5" aria-hidden />
-            Support inbox
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <Inbox className="h-3.5 w-3.5" aria-hidden />
+              Support inbox
+            </p>
+            {support !== null && support.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-2xs text-muted-foreground">
+                  {support.filter((m) => m.readAt === null).length} unread · {support.length} total
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || support.every((m) => m.readAt !== null)}
+                  onClick={() => void markSupportRead()}
+                >
+                  <Check aria-hidden />
+                  Mark all read
+                </Button>
+              </div>
+            )}
+          </div>
           <Panel className="mt-3">
             {support === null ? (
               <LoadingRows rows={3} />
@@ -937,41 +960,76 @@ function Dashboard({
               />
             ) : (
               <ul className="divide-y divide-border/50">
-                {support.map((m) => (
-                  <li key={m.id} className="px-4 py-3">
-                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium">
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="truncate">{m.fromName}</span>
-                      <span className="ml-auto shrink-0 font-normal text-2xs text-muted-foreground">
-                        {fmt(m.sentAt)}
-                      </span>
-                    </p>
-                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-foreground/85">
-                      {m.body}
-                    </p>
-                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <input
-                        type="text"
-                        value={replyDrafts[m.fromPlayerId] ?? ""}
-                        onChange={(e) =>
-                          setReplyDrafts((prev) => ({ ...prev, [m.fromPlayerId]: e.target.value }))
-                        }
-                        placeholder={`Reply as ChainMate to ${m.fromName}…`}
-                        className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
-                      />
-                      <Button
-                        size="sm"
-                        className="w-full sm:w-auto"
-                        disabled={busy || !(replyDrafts[m.fromPlayerId] ?? "").trim()}
-                        onClick={() => void sendReply(m.fromPlayerId)}
+                {support.slice(0, supportLimit).map((m) => {
+                  const unread = m.readAt === null;
+                  const expanded = openSupportId === m.id;
+                  return (
+                    <li key={m.id}>
+                      {/* Collapsed row: one tap-friendly line. The full body
+                          and the reply composer live behind the tap, so an
+                          endless stream of warnings no longer floods the
+                          dashboard. */}
+                      <button
+                        type="button"
+                        onClick={() => setOpenSupportId(expanded ? null : m.id)}
+                        aria-expanded={expanded}
+                        className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-secondary/30"
                       >
-                        {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
-                        Reply
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                        <span
+                          aria-hidden
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${unread ? "bg-primary" : "bg-transparent"}`}
+                        />
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                          {m.fromName}
+                          <span className="ml-2 font-normal text-muted-foreground">
+                            {m.body.split("\n")[0].slice(0, 60) || "(no text)"}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-2xs text-muted-foreground">
+                          {fmtShort(m.sentAt)}
+                        </span>
+                      </button>
+                      {expanded && (
+                        <div className="border-t border-border/50 px-4 py-3">
+                          <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/85">
+                            {m.body}
+                          </p>
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <input
+                              type="text"
+                              value={replyDrafts[m.fromPlayerId] ?? ""}
+                              onChange={(e) =>
+                                setReplyDrafts((prev) => ({ ...prev, [m.fromPlayerId]: e.target.value }))
+                              }
+                              placeholder={`Reply as ChainMate to ${m.fromName}…`}
+                              className="min-w-0 flex-1 rounded-md border border-border/70 bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary/50"
+                            />
+                            <Button
+                              size="sm"
+                              className="w-full sm:w-auto"
+                              disabled={busy || !(replyDrafts[m.fromPlayerId] ?? "").trim()}
+                              onClick={() => void sendReply(m.fromPlayerId)}
+                            >
+                              {busy ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
+                              Reply
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
+            )}
+            {support !== null && support.length > supportLimit && (
+              <button
+                type="button"
+                onClick={() => setSupportLimit((n) => n + 25)}
+                className="w-full border-t border-border/50 px-4 py-2.5 text-center text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-secondary/30 hover:text-foreground"
+              >
+                Show older messages ({support.length - supportLimit} more)
+              </button>
             )}
           </Panel>
         </section>
@@ -1083,15 +1141,17 @@ function Dashboard({
                         </Button>
                       )}
                     </div>
-                    {(t.payouts.length > 0 || t.refunds.length > 0) && (
-                      <PrizeSettlement
-                        row={t}
-                        playerId={playerId}
-                        passcodeToken={passcodeToken}
-                        busy={busy}
-                        onDone={() => void load()}
-                      />
-                    )}
+                    {/* Rendered for EVERY tournament: the collapsed console
+                        carries the pool top-up, so hiding it behind
+                        "has payouts" kept fresh events unfundable. Collapsed
+                        by default, it costs nothing when unneeded. */}
+                    <PrizeSettlement
+                      row={t}
+                      playerId={playerId}
+                      passcodeToken={passcodeToken}
+                      busy={busy}
+                      onDone={() => void load()}
+                    />
                   </li>
                 ))}
               </ul>
@@ -1169,21 +1229,6 @@ function Dashboard({
       >
         They will be shut out of hosting, joining and paying until you lift the
         restriction.
-      </ConfirmDialog>
-
-      <ConfirmDialog
-        open={pendingDelete !== null}
-        title={`Permanently delete ${pendingDelete?.username ?? pendingDelete?.playerId ?? ""}?`}
-        confirmLabel="Delete forever"
-        destructive
-        busy={busy}
-        onCancel={() => setPendingDelete(null)}
-        onConfirm={() => {
-          if (pendingDelete) void deleteAccount(pendingDelete);
-        }}
-      >
-        This erases the account, username, rating, history, wallet binding and
-        messages. There is no undo and no recovery.
       </ConfirmDialog>
 
       <ConfirmDialog

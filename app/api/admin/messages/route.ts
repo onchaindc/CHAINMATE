@@ -11,6 +11,7 @@ import {
   verifyPasscode,
 } from "@/lib/server/admin";
 import {
+  markSupportRead,
   replyToSupportMessage,
   sendBroadcast,
   supportInbox,
@@ -42,6 +43,7 @@ interface AdminMessageBody {
     | "passcode-set"
     | "passcode-verify"
     | "support-inbox"
+    | "support-mark-read"
     | "reply"
     | "broadcast";
   code?: string;
@@ -132,6 +134,11 @@ export async function POST(req: NextRequest) {
       if (!to) return NextResponse.json({ error: "toPlayerId is required" }, { status: 400 });
       const res = await replyToSupportMessage(identity.playerId, to, body.body ?? "");
       if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });
+      return NextResponse.json({ ok: true });
+    }
+    if (body.action === "support-mark-read") {
+      const res = await markSupportRead(identity.playerId);
+      if (!res.ok) return NextResponse.json({ error: res.error }, { status: 403 });
       return NextResponse.json({ ok: true });
     }
     if (body.action === "broadcast") {
