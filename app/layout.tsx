@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import { ChallengeInbox } from "@/components/game/challenge-inbox";
 import { SiteFooter } from "@/components/site-footer";
@@ -106,6 +107,9 @@ export default function RootLayout({
               player on whatever page they're on. */}
           <ChallengeInbox />
         </IdentityProvider>
+        {/* Vercel Web Analytics: counts visitors and page views across every
+            route, including client-side navigations. */}
+        <Analytics />
       </body>
     </html>
   );

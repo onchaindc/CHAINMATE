@@ -17,6 +17,7 @@
     "@noble/ed25519": "^2",
     "@noble/hashes": "^1",
     "@supabase/supabase-js": "^2.112.3",
+    "@vercel/analytics": "^2.0.1",
     "chess.js": "^1.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
