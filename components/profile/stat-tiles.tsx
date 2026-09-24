@@ -13,7 +13,13 @@ import { cn } from "@/lib/utils";
 const LAYOUTS = {
   /** Five tiles: two per row on a phone, a single row from `sm` up. */
   five: "grid-cols-2 sm:grid-cols-5",
-  three: "grid-cols-3",
+  /** Three tiles: two per row on a phone, a single row from `sm` up. A fixed
+      grid-cols-3 overflows the viewport on phones: each track's min width is
+      the widest unbreakable word in its label ("RESTRICTIONS" at uppercase
+      2xs ≈ 86px), which exceeds the ~80px a phone-sized track offers after
+      px-4 — and a grid track grows to fit, widening the whole page. Two-up
+      gives every label room; the five layout already worked this way. */
+  three: "grid-cols-2 sm:grid-cols-3",
 } as const;
 
 export interface StatTile {
@@ -47,7 +53,7 @@ export function StatTiles({
       )}
     >
       {tiles.map((t) => (
-        <div key={t.label} className="bg-card/50 px-4 py-4">
+        <div key={t.label} className="min-w-0 bg-card/50 px-4 py-4">
           <p
             className={cn(
               "font-mono font-bold tabular-nums",
@@ -59,7 +65,7 @@ export function StatTiles({
           >
             {t.value}
           </p>
-          <p className="mt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="mt-1 break-words text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
             {t.label}
           </p>
         </div>
