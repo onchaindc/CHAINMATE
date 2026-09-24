@@ -27,8 +27,16 @@ import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { StatTiles } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
 import { getIdentityToken } from "@/lib/identity";
-import { formatNim } from "@/lib/nimiq/format";
-import { parseNim } from "@/lib/nimiq/format";
+import {
+  clearPendingTopUpTx,
+  loadPendingTopUpTx,
+  savePendingTopUpTx,
+} from "@/lib/nimiq/pending-topup-tx";
+import {
+  confirmationsPending,
+  isRetryableVerificationError,
+} from "@/lib/nimiq/verify-retry";
+import { formatNim, parseNim } from "@/lib/nimiq/format";
 import { PRESET_SHARES_BPS, presetLabel, type PrizePreset } from "@/lib/tournament-economy";
 
 /**
@@ -840,7 +848,7 @@ function Dashboard({
                         {/* One-click warnings: pick one, it fills the composer
                             (editable before sending), so moderation is two
                             clicks instead of typing the same paragraphs. */}
-                        <label className="flex items-center gap-2 text-2xs text-muted-foreground">
+                        <label className="flex flex-col gap-1 text-2xs text-muted-foreground sm:flex-row sm:items-center sm:gap-2">
                           <span className="shrink-0 font-semibold uppercase tracking-wider">
                             Welcome
                           </span>
@@ -867,7 +875,7 @@ function Dashboard({
                             ))}
                           </select>
                         </label>
-                        <label className="flex items-center gap-2 text-2xs text-muted-foreground">
+                        <label className="flex flex-col gap-1 text-2xs text-muted-foreground sm:flex-row sm:items-center sm:gap-2">
                           <span className="shrink-0 font-semibold uppercase tracking-wider">
                             Warnings
                           </span>
@@ -1103,7 +1111,8 @@ function Dashboard({
                       </p>
                       {t.prizePoolNim ? (
                         <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
-                          pool {t.prizePoolNim} NIM ({t.paidEntries} paid @ {t.entryFeeNim})
+                          pool {t.prizePoolNim} NIM
+                          {t.entryFeeNim ? ` · ${t.paidEntries} paid @ ${t.entryFeeNim} NIM` : " · topped up"}
                         </p>
                       ) : (
                         <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">free</p>
@@ -1332,11 +1341,11 @@ function PayoutRow({
 
   return (
     <li className="flex flex-col gap-2 py-2 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="w-8 font-mono tabular-nums text-muted-foreground">{line.payoutRank}</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="w-6 shrink-0 text-right font-mono tabular-nums text-muted-foreground">{line.payoutRank}</span>
         <span className="min-w-0 flex-1 truncate font-medium">{line.playerName ?? line.playerId}</span>
-        <span className="font-mono tabular-nums text-muted-foreground">{line.shareBps / 100}%</span>
-        <span className="font-mono tabular-nums font-semibold text-primary">{formatNim(BigInt(line.amountLuna))} NIM</span>
+        <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{line.shareBps / 100}%</span>
+        <span className="shrink-0 font-mono tabular-nums font-semibold text-primary">{formatNim(BigInt(line.amountLuna))} NIM</span>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>
           {pill.label}
         </span>
@@ -1365,7 +1374,7 @@ function PayoutRow({
         )}
       </div>
       {editing && (
-        <div className="flex items-center gap-1.5 pl-10">
+        <div className="flex items-center gap-1.5 pl-8 sm:pl-10">
           <input
             value={address}
             onChange={(e) => setAddress(e.target.value)}
@@ -1423,6 +1432,14 @@ function PoolTopUp({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [topupNim, setTopupNim] = useState("");
+  /**
+   * A top-up the wallet ALREADY sent for this tournament, still uncredited.
+   * While this is set the send input is hidden and the ONLY action is
+   * "Verify payment" on the SAME hash — a second payment is impossible
+   * from this console. Persisted in localStorage so a reload, a closed
+   * tab or a lost response can never orphan money the wallet already moved.
+   */
+  const [pendingHash, setPendingHash] = useState<string | null>(null);
 
   const topupValid = (() => {
     try {
@@ -1432,27 +1449,85 @@ function PoolTopUp({
     }
   })();
 
+  const post = useCallback(
+    (action: string, txHash?: string) => {
+      const token = getIdentityToken();
+      return fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "X-Admin-Session": passcodeToken,
+        },
+        body: JSON.stringify({ playerId, action, targetPlayerId: "", txHash }),
+      }).then(async (res) => {
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
+        if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
+        return data as { intent?: { recipientAddress: string; amountLuna: string } };
+      });
+    },
+    [row.id, passcodeToken, playerId],
+  );
+
+  /**
+   * Re-claim the SAME hash until the server credits it (confirmations
+   * maturing, a hiccupy node) or it fails terminally. Never re-sends.
+   */
+  const reverify = useCallback(
+    async (txHash: string): Promise<boolean> => {
+      setWorking(true);
+      setError(null);
+      setNotice(null);
+      try {
+        await post("topup-claim", txHash);
+        clearPendingTopUpTx(row.id);
+        setPendingHash(null);
+        setNotice("Top-up verified — the prize pool has grown.");
+        onDone();
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Verification failed";
+        // Confirmations still maturing or the node hiccuping: keep the
+        // pending state so a retry stays a re-check of the same hash.
+        if (confirmationsPending(message) !== null || isRetryableVerificationError(err)) {
+          const pending = confirmationsPending(message);
+          setNotice(
+            pending
+              ? `Payment received — ${pending.have}/${pending.required} confirmations. Press Verify again in a moment.`
+              : "Payment received — the Nimiq node could not confirm it yet. Press Verify again in a moment.",
+          );
+          return false;
+        }
+        // Terminal refusal (wrong recipient, consumed elsewhere…): surface
+        // it — the money's fate is explained, nothing is hidden.
+        setError(message);
+        return false;
+      } finally {
+        setWorking(false);
+      }
+    },
+    [post, row.id, onDone],
+  );
+
+  // Crash recovery: on mount, restore a pending top-up recorded before a
+  // reload or tab close and re-claim it once. Money already sent is never
+  // asked for twice — this only re-checks the same transaction.
+  useEffect(() => {
+    const saved = loadPendingTopUpTx(row.id);
+    if (!saved) return;
+    setPendingHash(saved);
+    setOpen(true);
+    void reverify(saved);
+    // reverify intentionally excluded: re-running on every identity change
+    // would re-claim needlessly; the hash itself is the recovery payload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row.id]);
+
   const topUp = async () => {
     setWorking(true);
     setError(null);
     setNotice(null);
     try {
-      const token = getIdentityToken();
-      const post = (action: string, txHash?: string) =>
-        fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            "X-Admin-Session": passcodeToken,
-          },
-          body: JSON.stringify({ playerId, action, targetPlayerId: "", txHash, amountNim: topupNim }),
-        }).then(async (res) => {
-          const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
-          if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
-          return data as { intent?: { recipientAddress: string; amountLuna: string } };
-        });
-
       const prep = await post("topup-prepare");
       if (!prep.intent) throw new Error("Top-up prepare returned no payment intent");
       const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
@@ -1464,21 +1539,24 @@ function PoolTopUp({
         value: BigInt(prep.intent.amountLuna),
       });
       if (!sent.ok) throw new Error(sent.error.message);
-      try {
-        await post("topup-claim", sent.value);
-        setNotice(null);
-      } catch {
-        // The money moved; usually just confirmations still maturing. The
-        // SAME hash re-claims — never a second payment.
-        setNotice(`Top-up sent (tx ${sent.value.slice(0, 10)}…) — still confirming. Re-open and press Top up again to re-check; do NOT send again.`);
-      }
+      // From this instant the money has LEFT the wallet and this hash IS the
+      // top-up. Persist it BEFORE any claim attempt so a reload, a closed
+      // tab or a lost response can never turn into a second payment.
+      savePendingTopUpTx(row.id, sent.value);
+      setPendingHash(sent.value);
       setTopupNim("");
-      onDone();
+      await reverify(sent.value);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Top-up failed");
-    } finally {
       setWorking(false);
     }
+  };
+
+  const dismissPending = () => {
+    clearPendingTopUpTx(row.id);
+    setPendingHash(null);
+    setError(null);
+    setNotice(null);
   };
 
   const poolLabel = row.prizePoolNim ? `${row.prizePoolNim} NIM` : "0 NIM";
@@ -1490,7 +1568,17 @@ function PoolTopUp({
         className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-secondary/30 px-3 py-2 text-left text-2xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
       >
         <span className="min-w-0 truncate">Prize pool — {poolLabel}</span>
-        <span aria-hidden className="ml-auto shrink-0 text-muted-foreground">{open ? "▾" : "▸"}</span>
+        {pendingHash && (
+          <span className="ml-auto shrink-0 font-mono normal-case tracking-normal text-warning">
+            verifying…
+          </span>
+        )}
+        <span
+          aria-hidden
+          className={pendingHash ? "shrink-0 text-muted-foreground" : "ml-auto shrink-0 text-muted-foreground"}
+        >
+          {open ? "▾" : "▸"}
+        </span>
       </button>
       {open && (
         <div className="mt-2 space-y-2 rounded-md border border-border/60 p-3">
@@ -1500,29 +1588,53 @@ function PoolTopUp({
               {notice}
             </p>
           )}
-          <p className="text-2xs leading-snug text-muted-foreground">
-            Top up the prize pool from your own Nimiq wallet. The server
-            verifies the transaction on-chain before the pool grows.
-          </p>
-          <div className="flex items-center gap-2">
-            <input
-              value={topupNim}
-              onChange={(e) => setTopupNim(e.target.value.replace(/[^0-9.]/g, ""))}
-              placeholder="NIM, e.g. 25"
-              inputMode="decimal"
-              className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1.5 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
-              aria-label="Top-up amount in NIM"
-            />
-            <Button
-              size="sm"
-              className="shrink-0"
-              disabled={!topupValid || working || busy}
-              onClick={() => void topUp()}
-            >
-              {working ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              Top up
-            </Button>
-          </div>
+          {pendingHash ? (
+            <div className="space-y-2">
+              <p className="break-all font-mono text-2xs text-muted-foreground">
+                tx {pendingHash.slice(0, 18)}…{pendingHash.slice(-6)} — sent from your wallet,
+                waiting to be credited on-chain.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" disabled={working || busy} onClick={() => void reverify(pendingHash)}>
+                  {working ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  Verify payment
+                </Button>
+                <Button size="sm" variant="ghost" disabled={working} onClick={dismissPending}>
+                  Dismiss
+                </Button>
+              </div>
+              <p className="text-2xs leading-snug text-muted-foreground">
+                Do not send again — Verify re-checks the SAME transaction, so a retry can never
+                cost a second payment.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-2xs leading-snug text-muted-foreground">
+                Top up the prize pool from your own Nimiq wallet. The server
+                verifies the transaction on-chain before the pool grows.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={topupNim}
+                  onChange={(e) => setTopupNim(e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="NIM, e.g. 25"
+                  inputMode="decimal"
+                  className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1.5 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+                  aria-label="Top-up amount in NIM"
+                />
+                <Button
+                  size="sm"
+                  className="shrink-0"
+                  disabled={!topupValid || working || busy}
+                  onClick={() => void topUp()}
+                >
+                  {working ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  Top up
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1766,12 +1878,12 @@ function PrizeSettlement({
                 const settled = r.status === "verified";
                 const actionable = !settled && !busy && working === null;
                 return (
-                  <li key={r.playerId} className="flex flex-wrap items-center gap-2 py-2 text-xs">
-                    <span className="w-8 font-mono tabular-nums text-muted-foreground">R</span>
+                  <li key={r.playerId} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-xs">
+                    <span className="w-6 shrink-0 text-right font-mono tabular-nums text-muted-foreground">R</span>
                     <span className="min-w-0 flex-1 truncate font-medium">
                       {r.playerName ?? r.playerId}
                     </span>
-                    <span className="font-mono tabular-nums text-foreground/80">
+                    <span className="shrink-0 font-mono tabular-nums text-foreground/80">
                       {formatNim(BigInt(r.amountLuna))} NIM
                     </span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>

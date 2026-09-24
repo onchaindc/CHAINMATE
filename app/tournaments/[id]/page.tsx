@@ -870,6 +870,12 @@ export default function TournamentDetailPage() {
             <span className="ml-2 font-sans text-2xs normal-case tracking-normal text-muted-foreground/70">
               {s.format === "knockout" ? "by bracket position" : "1 / ½ / 0"}
             </span>
+            {detail.verifiedPoolLuna ? (
+              <span className="ml-2 inline-flex items-center gap-1 font-sans text-2xs normal-case tracking-normal text-primary">
+                <Coins className="h-3 w-3" aria-hidden />
+                {displayNim(detail.verifiedPoolLuna)} NIM pool
+              </span>
+            ) : null}
           </SectionLabel>
           <Panel className="mt-3">
             {detail.standings.length === 0 ? (
@@ -1004,7 +1010,7 @@ export default function TournamentDetailPage() {
           <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs leading-relaxed text-muted-foreground">
             <span>
               Prize pool: <strong className="font-mono tabular-nums text-foreground">{displayNim(detail.verifiedPoolLuna ?? totalPool(detail.payouts))} NIM</strong>
-              {" "}from verified entries ({s.prizePreset === "top3" ? "60/25/15" : s.prizePreset === "top5" ? "45/25/15/10/5" : "winner takes all"})
+              {" "}from verified entries and top-ups ({s.prizePreset === "top3" ? "60/25/15" : s.prizePreset === "top5" ? "45/25/15/10/5" : "winner takes all"})
             </span>
             <PayoutStateBadge status={s.payoutStatus ?? "none"} />
           </p>
