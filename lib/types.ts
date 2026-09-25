@@ -3,7 +3,14 @@
 export type GameBackend = "local" | "hosted" | "genlayer";
 
 /** Strength preset for the built-in chess AI opponent. */
-export type AiDifficulty = "beginner" | "casual" | "club" | "advanced" | "expert";
+export type AiDifficulty =
+  | "beginner"
+  | "casual"
+  | "club"
+  | "advanced"
+  | "expert"
+  | "sovereign"
+  | "apex";
 
 /** One named computer opponent — a real name and rating, chess.com-style. */
 export interface AiLevel {
@@ -34,8 +41,10 @@ export const AI_LEVELS: AiLevel[] = [
   { id: "beginner", name: "Pawn", rating: 600, blurb: "New to the game, hangs pieces you can punish.", depth: 1, blunderChance: 0.3, variety: 40 },
   { id: "casual", name: "Nova", rating: 900, blurb: "A relaxed club player who makes the odd slip.", depth: 1, blunderChance: 0.12, variety: 30 },
   { id: "club", name: "Atlas", rating: 1200, blurb: "Solid fundamentals, punishes blunders.", depth: 2, blunderChance: 0.06, variety: 20 },
-  { id: "advanced", name: "Onyx", rating: 1600, blurb: "Sharp tactical play with few mistakes.", depth: 2, blunderChance: 0.02, variety: 15 },
-  { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless, bring your A-game.", depth: 3, blunderChance: 0, variety: 10 },
+  { id: "advanced", name: "Onyx", rating: 1600, blurb: "Sharp tactical play with few mistakes.", depth: 3, blunderChance: 0.02, variety: 15 },
+  { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless, bring your A-game.", depth: 4, blunderChance: 0, variety: 10 },
+  { id: "sovereign", name: "Sovereign", rating: 2200, blurb: "Master-level play. Opens from real theory and never blinks.", depth: 5, blunderChance: 0, variety: 6 },
+  { id: "apex", name: "Apex", rating: 2400, blurb: "The house engine. Deep, patient, and brutally unforgiving.", depth: 6, blunderChance: 0, variety: 0 },
 ];
 
 /** Map any stored difficulty value (incl. legacy ids) onto a known level. */

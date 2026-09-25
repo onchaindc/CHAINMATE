@@ -105,3 +105,21 @@ export function formatClock(ms: number): string {
   if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
+
+/** Below this the clock switches to tenths — flag-fall precision. */
+const TENTH_THRESHOLD_MS = 20_000;
+
+/**
+ * The modern clock read: whole seconds normally, and TENTHS under 20s —
+ * the last seconds of a scramble are decided by a tenth, so the clock shows
+ * them. Integer seconds elsewhere stay calm and tabular.
+ */
+export function formatClockLive(ms: number): string {
+  if (ms < TENTH_THRESHOLD_MS) {
+    const t = Math.max(0, ms);
+    const s = Math.floor(t / 1000);
+    const tenths = Math.floor((t % 1000) / 100);
+    return `${String(s).padStart(2, "0")}.${tenths}`;
+  }
+  return formatClock(ms);
+}

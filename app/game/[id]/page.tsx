@@ -434,7 +434,6 @@ export default function GamePage() {
     : baseOrientation;
   const spectator = mySide === null && !waiting;
   const aiThinking = isAiGame && game.status === "active" && !myTurn;
-  const moveNumber = Math.floor(game.moves.length / 2) + 1;
 
   // Draw offer state: who offered, and whether the viewer can respond.
   // Draws need a human opponent on the shared store — the on-device AI has
@@ -754,46 +753,24 @@ export default function GamePage() {
   );
 
   const gameInfo = (
-    <div className="border-t border-border/60">
-      <div className="px-4 py-2.5">
-        <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Game info
+    /* Game info as ONE quiet meta line, not a boxed definition list: the
+       time control and mode are facts you glance at once, not a section
+       that demands its own header, border and vertical stack. Sits between
+       the console content and the chat like a caption. */
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-2xs tabular-nums text-muted-foreground">
+      {isAiGame && <span>vs {aiLevelFor(game?.aiDifficulty).name}</span>}
+      {game.timeControl && <span>· {game.timeControl}</span>}
+      <span>· {isAiGame ? "Computer" : "Online"}</span>
+      {game.endedAt && (
+        <span>
+          ·{" "}
+          {new Date(game.endedAt).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          })}
         </span>
-      </div>
-      <dl className="space-y-1.5 px-4 pb-3 text-xs">
-        {game.timeControl && (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Time control</dt>
-            <dd className="font-mono tabular-nums text-foreground/85">{game.timeControl}</dd>
-          </div>
-        )}
-        {game.visibility && (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Visibility</dt>
-            <dd className="capitalize text-foreground/85">{game.visibility}</dd>
-          </div>
-        )}
-        <div className="flex items-center justify-between">
-          <dt className="text-muted-foreground">Mode</dt>
-          <dd className="capitalize text-foreground/85">
-            {isAiGame ? "vs Computer" : "Online"}
-          </dd>
-        </div>
-        {game.endedAt && (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Ended</dt>
-            <dd className="tabular-nums text-foreground/85">
-              {new Date(game.endedAt).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </dd>
-          </div>
-        )}
-      </dl>
-    </div>
+      )}
+    </p>
   );
 
   return (
@@ -955,27 +932,11 @@ export default function GamePage() {
             </div>
           )}
 
-          {/* A quiet container only while playing — after the game the moves
-              + summary ARE the report, so the extra box header went away. */}
-          {!gameOver && (
-            <div className="overflow-hidden rounded-lg border border-border/70 bg-card/50">
-              <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
-                <span className="flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  <span className="relative flex h-1.5 w-1.5" aria-hidden>
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-                  </span>
-                  Match
-                </span>
-                <span className="font-mono text-xs tabular-nums text-foreground/80">
-                  Move {moveNumber}
-                </span>
-              </div>
-            </div>
-          )}
-
           {/* The move history lives under the board (see the board column);
-              this console carries the info and chat. */}
+              this console carries the info and chat. The old "Match" box
+              (a header announcing a move number that the move strip already
+              shows, wrapped in a border and a ping) went away — one live
+              element per screen is enough, and the clock is it. */}
           {gameInfo}
 
           {/* Two humans talking while they play — spectators and AI games

@@ -1,7 +1,7 @@
 "use client";
 
 import { abortGame, applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
-import { chooseAiMove } from "@/lib/ai-engine";
+import { chooseAiMove, sanHistoryOf } from "@/lib/ai-engine";
 import { computeClocks } from "@/lib/clocks";
 import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
 import { buildRuleSummary } from "@/lib/summary";
@@ -256,7 +256,10 @@ export class LocalGameStore implements GameStore {
     this.aiMoveInFlight = true;
     this.aiMoveFen = fen;
     try {
-      const aiMove = chooseAiMove(fen, game.aiDifficulty ?? "casual");
+      // The SAN history lets the top levels use their opening book — a bare
+      // FEN carries no move list, and the book must never be consulted on a
+      // guessed ply count.
+      const aiMove = chooseAiMove(fen, game.aiDifficulty ?? "casual", sanHistoryOf(game.moves));
       if (!aiMove) return game;
       const res = applyMoveToGame(game, AI_PLAYER_ID, aiMove.from, aiMove.to, aiMove.promotion);
       if (!res.ok) return game;

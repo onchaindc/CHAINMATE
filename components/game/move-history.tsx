@@ -60,8 +60,6 @@ export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps
     );
   };
 
-  const moveNumber = Math.floor(moves.length / 2) + 1;
-
   return (
     <div className="w-full">
       <div
@@ -93,9 +91,9 @@ export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps
           </div>
         )}
       </div>
-      {moves.length > 0 && (
+      {onSelectPly && moves.length > 0 && (
         <p className="mt-0.5 hidden px-1 text-right font-mono text-2xs tabular-nums text-muted-foreground lg:block">
-          move {moveNumber} · {moves.length} ply{onSelectPly ? " · click to review" : ""}
+          click a move to review
         </p>
       )}
     </div>

@@ -89,7 +89,7 @@ export default function SoloPage() {
             eyebrow="Solo"
             eyebrowIcon={Bot}
             title="Play the computer"
-            description="Five engine levels, 600 to 2000. Unrated, untimed."
+            description="Seven engine levels, 600 to 2400. Unrated."
           />
 
           <Panel className="mt-8 animate-fade-in-up [animation-delay:80ms]">
@@ -110,9 +110,11 @@ export default function SoloPage() {
                   >
                     {/* The selected row is marked by the row itself — a leading
                         bar and the name coming forward — rather than by a radio
-                        disc. Five discs down the left edge is what made the old
-                        list read as a form to fill in instead of a roster to
-                        pick from. */}
+                        disc. Discs down the left edge made the old list read as
+                        a form to fill in instead of a roster to pick from.
+                        Master-level bots (2000+) get a small crown: they are a
+                        different weight of opponent and the roster should say
+                        so at a glance. */}
                     {active && (
                       <span
                         className="absolute inset-y-0 left-0 w-0.5 bg-primary"

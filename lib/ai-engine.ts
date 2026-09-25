@@ -2,9 +2,39 @@ import { Chess, type Move } from "chess.js";
 import { aiLevelFor, type AiDifficulty } from "@/lib/types";
 
 /**
- * Built-in chess opponent for single-player games. Pure client-side minimax
- * with alpha-beta pruning and piece-square evaluation — no network, no LLM,
- * no keys. The AI always plays Black.
+ * Built-in chess opponent for single-player games. Pure client-side search —
+ * no network, no LLM, no keys. The AI always plays Black.
+ *
+ * The 2026 rebuild, in order of playing strength:
+ *
+ *  1. **Iterative deepening with a time budget.** Every level gets a think
+ *     time; the search deepens 1, 2, 3… plies until the budget is spent and
+ *     plays the best move from the last *completed* depth. Depth is no longer
+ *     a fixed number that gets slow in crowded positions and shallow in sharp
+ *     ones — the same level looks deeper where the position demands it, and
+ *     the hard levels can be trusted with a clock.
+ *
+ *  2. **Quiescence search.** Plain fixed-depth alpha-beta stops at a horizon:
+ *     if the last ply ends just as a capture becomes available, the engine
+ *     scores the position before the capture and walks into exchanges it
+ *     loses ("horizon effect"). Quiescence keeps resolving captures past the
+ *     horizon until the position is quiet, so the scores it reasons with are
+ *     ones it can trust. This is the biggest tactical jump available at this
+ *     engine size.
+ *
+ *  3. **Check extensions.** A checking move is searched one ply deeper, so
+ *     mating lines that cross the horizon are now seen.
+ *
+ *  4. **A transposition table** — the same position reached by different move
+ *     orders is searched once, and the table's best move is tried first at
+ *     every node, which is what makes iterative deepening affordable.
+ *
+ *  5. **A real opening book** for the top levels: main-line repertoire with
+ *     random selection per game, so no two games start alike and the engine
+ *     stops "answering 1.e4 with Nf6 and 1.d4 with Nc6 with equal confidence".
+ *
+ *  6. **A harsher evaluation.** Bishop pair, doubled/isolated pawn penalties,
+ *     rook open-file bonuses, mobility. None of it fancy; all of it chess.
  */
 
 const PIECE_VALUES: Record<string, number> = {
@@ -97,23 +127,30 @@ const KING_ENDGAME_PST = [
   -50, -30, -30, -30, -30, -30, -30, -50,
 ];
 
+/* ------------------------------------------------------------------ */
+/* Evaluation                                                           */
+/* ------------------------------------------------------------------ */
+
 /**
  * Static evaluation, from White's perspective, in centipawns.
  *
- * Deliberately a **single** pass over the board. Picking the king table needs
- * the material total, which used to mean a second full walk (`materialTotal`)
- * for every leaf — 128 square visits per evaluation instead of 64, on the
- * hottest path in the engine. The kings are set aside during the one walk and
- * scored once the total is known, which is the same number the two-pass version
- * produced.
+ * One pass over the board collects: material + placement, per-file pawn
+ * counts (doubled / isolated penalties), the bishop pair, rook open files.
+ * The kings are set aside during the walk and scored once the material total
+ * is known (which king table to use depends on it).
  */
 function evaluate(chess: Chess): number {
   const board = chess.board();
   let score = 0;
   let material = 0;
-  // Mirrored already for Black, so the king table can be applied straight off.
   let whiteKingIdx = -1;
   let blackKingIdx = -1;
+  const whitePawnFiles = [0, 0, 0, 0, 0, 0, 0, 0];
+  const blackPawnFiles = [0, 0, 0, 0, 0, 0, 0, 0];
+  let whiteBishops = 0;
+  let blackBishops = 0;
+  const whiteRookFiles: number[] = [];
+  const blackRookFiles: number[] = [];
 
   for (let rank = 0; rank < 8; rank++) {
     const row = board[rank];
@@ -140,18 +177,60 @@ function evaluate(chess: Chess): number {
                 : QUEEN_PST;
       const pst = piece.color === "w" ? table[idx] : table[(7 - rank) * 8 + file];
       score += piece.color === "w" ? value + pst : -(value + pst);
+
+      if (piece.type === "p") {
+        if (piece.color === "w") whitePawnFiles[file] += 1;
+        else blackPawnFiles[file] += 1;
+      } else if (piece.type === "b") {
+        if (piece.color === "w") whiteBishops += 1;
+        else blackBishops += 1;
+      } else if (piece.type === "r") {
+        (piece.color === "w" ? whiteRookFiles : blackRookFiles).push(file);
+      }
     }
+  }
+
+  // Bishop pair: two bishops together are worth a real third of a pawn over
+  // their raw sum — chess's most reliable material heuristic.
+  if (whiteBishops >= 2) score += 30;
+  if (blackBishops >= 2) score -= 30;
+
+  // Doubled pawns (-12 per extra pawn on a file) and isolated pawns (-14
+  // each: no neighbouring pawn can ever come to its defence).
+  for (let f = 0; f < 8; f++) {
+    if (whitePawnFiles[f] > 1) score -= 12 * (whitePawnFiles[f] - 1);
+    if (blackPawnFiles[f] > 1) score += 12 * (blackPawnFiles[f] - 1);
+    const whiteNeighbours =
+      (f > 0 ? whitePawnFiles[f - 1]! : 0) + (f < 7 ? whitePawnFiles[f + 1]! : 0);
+    const blackNeighbours =
+      (f > 0 ? blackPawnFiles[f - 1]! : 0) + (f < 7 ? blackPawnFiles[f + 1]! : 0);
+    if (whitePawnFiles[f]! > 0 && whiteNeighbours === 0) score -= 14;
+    if (blackPawnFiles[f]! > 0 && blackNeighbours === 0) score += 14;
+  }
+
+  // Rooks belong on open files: fully open (no pawn of either colour) is
+  // worth more than merely half-open (own pawn gone).
+  for (const f of whiteRookFiles) {
+    if (whitePawnFiles[f] === 0) score += blackPawnFiles[f] === 0 ? 18 : 9;
+  }
+  for (const f of blackRookFiles) {
+    if (blackPawnFiles[f] === 0) score -= whitePawnFiles[f] === 0 ? 18 : 9;
   }
 
   // Kings carry no material value — only their placement bonus counts.
   const kingTable = material <= 1300 ? KING_ENDGAME_PST : KING_MIDDLE_PST;
-  if (whiteKingIdx >= 0) score += kingTable[whiteKingIdx];
-  if (blackKingIdx >= 0) score -= kingTable[blackKingIdx];
+  if (whiteKingIdx >= 0) score += kingTable[whiteKingIdx]!;
+  if (blackKingIdx >= 0) score -= kingTable[blackKingIdx]!;
 
-  // small tempo bonus for the side to move
+  // Mobility proxy (the move count of the side to move) + small tempo bonus.
+  score += chess.turn() === "w" ? chess.moves().length : -chess.moves().length;
   score += chess.turn() === "w" ? 10 : -10;
   return score;
 }
+
+/* ------------------------------------------------------------------ */
+/* Move ordering                                                        */
+/* ------------------------------------------------------------------ */
 
 /** MVV-LVA move ordering: captures and promotions first for better pruning. */
 function orderedMoves(chess: Chess): Move[] {
@@ -159,7 +238,7 @@ function orderedMoves(chess: Chess): Move[] {
   return moves.sort((a, b) => {
     const score = (m: Move) => {
       let s = 0;
-      if (m.captured) s += 10 * PIECE_VALUES[m.captured] - PIECE_VALUES[m.piece];
+      if (m.captured) s += 10 * PIECE_VALUES[m.captured]! - PIECE_VALUES[m.piece]!;
       if (m.promotion) s += 900;
       return s;
     };
@@ -167,55 +246,327 @@ function orderedMoves(chess: Chess): Move[] {
   });
 }
 
-function minimax(chess: Chess, depth: number, alpha: number, beta: number, maximizing: boolean): number {
-  if (chess.isCheckmate()) return maximizing ? -MATE + depth : MATE - depth;
-  if (chess.isDraw() || chess.isStalemate() || chess.isThreefoldRepetition()) return 0;
-  if (depth === 0) return evaluate(chess);
-
+/** Order moves, hoisting a preferred move (the TT's) to the front. */
+function orderedMovesWith(chess: Chess, preferred: Move | null): Move[] {
   const moves = orderedMoves(chess);
-  if (maximizing) {
-    let best = -Infinity;
+  if (!preferred) return moves;
+  const idx = moves.findIndex(
+    (m) =>
+      m.from === preferred.from && m.to === preferred.to && m.promotion === preferred.promotion,
+  );
+  if (idx <= 0) return moves;
+  const [best] = moves.splice(idx, 1);
+  moves.unshift(best);
+  return moves;
+}
+
+/* ------------------------------------------------------------------ */
+/* Search                                                               */
+/* ------------------------------------------------------------------ */
+
+/** Bound flags for transposition-table entries. */
+const TT_EXACT = 0;
+const TT_LOWER = 1; // a lower bound: real score >= entry.score
+const TT_UPPER = 2; // an upper bound: real score <= entry.score
+
+interface TtEntry {
+  depth: number;
+  score: number;
+  flag: number;
+  from: string;
+  to: string;
+  promotion?: string;
+}
+
+/** How deep quiescence keeps resolving captures past the horizon. */
+const QUIESCENCE_DEPTH = 4;
+/** Maximum plies of consecutive check extensions, so checks can't explode. */
+const MAX_CHECK_EXTENSION_PLIES = 12;
+
+class Search {
+  private tt = new Map<string, TtEntry>();
+  private deadline = 0;
+  private stopped = false;
+  /** Set once a deadline abort mid-iteration has happened. */
+  private aborted = false;
+
+  constructor(timeMs: number) {
+    this.deadline = Date.now() + timeMs;
+  }
+
+  /** True when the search must stop now. Checked once per node. */
+  private get outOfTime(): boolean {
+    if (this.stopped) return true;
+    if (Date.now() >= this.deadline) {
+      this.stopped = true;
+      this.aborted = true;
+      return true;
+    }
+    return false;
+  }
+
+  get ranOutOfTime(): boolean {
+    return this.aborted;
+  }
+
+  /**
+   * Quiescence search: resolve captures until the position is quiet, so the
+   * returned score is one the static evaluation can back. Stand-pat bounds
+   * the search; only captures (and promotions) are tried beyond it.
+   */
+  private quiesce(
+    chess: Chess,
+    alpha: number,
+    beta: number,
+    maximizing: boolean,
+    qdepth: number,
+  ): number {
+    if (this.outOfTime) return 0;
+    if (chess.isCheckmate()) return maximizing ? -MATE : MATE;
+    if (chess.isDraw() || chess.isStalemate()) return 0;
+
+    // Stand-pat: the side to move may decline to capture at all.
+    const stand = evaluate(chess);
+    if (maximizing) {
+      if (stand >= beta) return stand;
+      if (stand > alpha) alpha = stand;
+    } else {
+      if (stand <= alpha) return stand;
+      if (stand < beta) beta = stand;
+    }
+    if (qdepth <= 0) return stand;
+
+    const moves = orderedMoves(chess).filter((m) => Boolean(m.captured) || Boolean(m.promotion));
     for (const m of moves) {
       chess.move(m);
-      const score = minimax(chess, depth - 1, alpha, beta, false);
+      const score = this.quiesce(chess, alpha, beta, !maximizing, qdepth - 1);
       chess.undo();
-      if (score > best) best = score;
-      if (best > alpha) alpha = best;
+      if (this.stopped) return 0;
+      if (maximizing) {
+        if (score > alpha) alpha = score;
+        if (alpha >= beta) break;
+      } else {
+        if (score < beta) beta = score;
+        if (alpha >= beta) break;
+      }
+    }
+    return maximizing ? alpha : beta;
+  }
+
+  /**
+   * The alpha-beta body over a negamax-like alternation (the engine keeps the
+   * explicit maximizing flag so the root and quiescence share conventions).
+   * `ply` counts plies from the root; deep checks are not extended forever.
+   */
+  private negamax(
+    chess: Chess,
+    depth: number,
+    alpha: number,
+    beta: number,
+    maximizing: boolean,
+    ply: number,
+  ): number {
+    if (this.outOfTime) return 0;
+    if (chess.isCheckmate()) return maximizing ? -MATE + ply : MATE - ply;
+    if (chess.isDraw() || chess.isStalemate()) return 0;
+
+    const key = chess.fen();
+    const cached = this.tt.get(key);
+    if (cached && cached.depth >= depth) {
+      if (cached.flag === TT_EXACT) return cached.score;
+      if (cached.flag === TT_LOWER && cached.score >= beta) return cached.score;
+      if (cached.flag === TT_UPPER && cached.score <= alpha) return cached.score;
+    }
+
+    // Check extension: checks are searched deeper (capped so perpetual lines
+    // can't explode the search). chess.js computes inCheck cheaply.
+    let d = depth;
+    if (depth > 0 && depth < 5 && ply < MAX_CHECK_EXTENSION_PLIES && chess.inCheck()) d += 1;
+
+    if (d <= 0) return this.quiesce(chess, alpha, beta, maximizing, QUIESCENCE_DEPTH);
+
+    const preferred = cached
+      ? this.ttMoveFor(chess, cached.from, cached.to, cached.promotion)
+      : null;
+    const moves = orderedMovesWith(chess, preferred);
+
+    const originalAlpha = alpha;
+    let bestScore = maximizing ? -Infinity : Infinity;
+    let bestMove: Move | null = null;
+
+    for (const m of moves) {
+      chess.move(m);
+      const score = this.negamax(chess, d - 1, alpha, beta, !maximizing, ply + 1);
+      chess.undo();
+      if (this.stopped) return 0;
+      if (maximizing) {
+        if (score > bestScore) {
+          bestScore = score;
+          bestMove = m;
+        }
+        if (bestScore > alpha) alpha = bestScore;
+      } else {
+        if (score < bestScore) {
+          bestScore = score;
+          bestMove = m;
+        }
+        if (bestScore < beta) beta = bestScore;
+      }
       if (alpha >= beta) break;
     }
-    return best;
+
+    if (!bestMove) return maximizing ? alpha : beta;
+
+    const flag = bestScore <= originalAlpha ? TT_UPPER : bestScore >= beta ? TT_LOWER : TT_EXACT;
+    this.tt.set(key, {
+      depth: d,
+      score: bestScore,
+      flag,
+      from: bestMove.from,
+      to: bestMove.to,
+      promotion: bestMove.promotion,
+    });
+    return bestScore;
   }
-  let best = Infinity;
-  for (const m of moves) {
-    chess.move(m);
-    const score = minimax(chess, depth - 1, alpha, beta, true);
-    chess.undo();
-    if (score < best) best = score;
-    if (best < beta) beta = best;
-    if (alpha >= beta) break;
+
+  /** Re-find the TT's stored move in the current position's move list. */
+  private ttMoveFor(chess: Chess, from: string, to: string, promotion?: string): Move | null {
+    if (!from || !to) return null;
+    const found = chess
+      .moves({ verbose: true })
+      .find((m) => m.from === from && m.to === to && m.promotion === promotion);
+    return found ?? null;
   }
-  return best;
+
+  /**
+   * One full root iteration at `depth`. Returns the best move, its exact
+   * score, and EVERY root move's exact score — the chooser needs all of them
+   * to pick fairly among near-equals. Scores are exact because the root runs
+   * a full window per move (no cutoffs against sibling bounds at depth 0).
+   */
+  searchRoot(
+    chess: Chess,
+    depth: number,
+    maximizing: boolean,
+  ): { completed: boolean; bestMove: Move; bestScore: number; scored: Array<{ move: Move; score: number }> } {
+    const moves = orderedMoves(chess);
+    const scored: Array<{ move: Move; score: number }> = [];
+    let bestMove: Move = moves[0]!;
+    let bestScore = maximizing ? -Infinity : Infinity;
+
+    for (const move of moves) {
+      chess.move(move);
+      const score = this.negamax(chess, depth - 1, -Infinity, Infinity, !maximizing, 1);
+      chess.undo();
+      if (this.stopped) return { completed: false, bestMove, bestScore, scored };
+      scored.push({ move, score });
+      if (maximizing ? score > bestScore : score < bestScore) {
+        bestScore = score;
+        bestMove = move;
+      }
+    }
+    return { completed: true, bestMove, bestScore, scored };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Opening book                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A compact opening book for the top levels, as SAN sequences from the start.
+ * Every line is main-line theory; the engine picks one at random and follows
+ * it while the game stays on the line, which is stronger and far more varied
+ * than search in the first moves. Keep it short and sound — this is about a
+ * sensible, varied first four moves, after which search takes over.
+ */
+const OPENING_BOOK: string[][] = [
+  ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7"], // Ruy Lopez
+  ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "d3", "Bc5", "c3", "d6"], // Italian
+  ["e4", "e5", "Nf3", "Nf6", "Nxe5", "d6", "Nf3", "Nxe4", "d4", "d5"], // Petrov main
+  ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"], // Najdorf
+  ["e4", "c5", "Nf3", "Nc6", "d4", "cxd4", "Nxd4", "g6"], // Sicilian, old
+  ["e4", "c5", "Nf3", "e6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "d6"], // Taimanov-ish
+  ["e4", "e6", "d4", "d5", "Nc3", "Bb4", "e5", "c5", "a3", "Bxc3+"], // Winawer
+  ["e4", "e6", "d4", "d5", "Nc3", "Nf6", "e5", "Nfd7", "f4", "c5"], // Steinitz
+  ["e4", "c6", "d4", "d5", "Nc3", "dxe4", "Nxe4", "Bf5", "Ng3", "Bg6"], // Caro-Kann
+  ["d4", "d5", "c4", "e6", "Nc3", "Nf6", "Nf3", "Be7", "Bg5", "O-O"], // QGD
+  ["d4", "d5", "c4", "c6", "Nf3", "Nf6", "Nc3", "e6", "Bg5", "h6"], // Semi-Slav
+  ["d4", "Nf6", "c4", "g6", "Nc3", "Bg7", "e4", "d6", "Nf3", "O-O"], // KID
+  ["d4", "Nf6", "c4", "e6", "Nf3", "b6", "g3", "Bb7", "Bg2", "Be7"], // QID
+  ["d4", "f5", "c4", "Nf6", "g3", "e6", "Bg2", "Be7", "Nf3", "O-O"], // Dutch
+  ["Nf3", "Nf6", "c4", "e6", "g3", "d5", "Bg2", "Be7", "O-O", "O-O"], // Catalan-ish
+  ["c4", "e5", "Nc3", "Nf6", "Nf3", "Nc6", "g3", "d5", "cxd5", "Nxd5"], // English
+  ["e4", "d5", "exd5", "Qxd5", "Nc3", "Qa5", "d4", "Nf6", "Nf3", "c6"], // Scandi
+  ["e4", "d6", "d4", "Nf6", "Nc3", "g6", "Be2", "Bg7", "Nf3", "O-O"], // Pirc
+  ["d4", "d5", "Bf4", "Nf6", "e3", "e6", "Nf3", "c5", "c3", "Nc6"], // London
+  ["e4", "e5", "Nc3", "Nf6", "f4", "d5", "fxe5", "Nxe4", "Nf3", "Be7"], // Vienna
+];
+
+/** Look up the book reply for the current position, if the game is on one. */
+function bookMove(sanMoves: string[]): string | null {
+  if (sanMoves.length > 10) return null;
+  outer: for (const line of OPENING_BOOK) {
+    if (line.length <= sanMoves.length) continue;
+    for (let i = 0; i < sanMoves.length; i++) {
+      if (line[i] !== sanMoves[i]) continue outer;
+    }
+    return line[sanMoves.length] ?? null;
+  }
+  return null;
 }
 
 /**
- * How many plies count as "the opening" for variety purposes, and the margin
- * used there.
- *
- * The strong levels keep a deliberately tight margin so they never trade real
- * advantage for variety — but measured at depth 3 the gaps between sound opening
- * replies are 45-60cp, far wider than that margin, so the top level answered
- * 1.e4 with Nf6 and 1.d4 with Nc6 in every single game. A crude
- * material-plus-placement evaluation simply cannot tell main-line openings
- * apart, and a 60cp "loss" it reports between Nf6, e5, d5 and Nc6 is noise
- * rather than chess. Widening the margin for the opening only buys the variety
- * where the evaluation is least meaningful, and leaves the middlegame — where
- * 60cp is a real pawn-and-a-half of tactics — on the tight margin.
- *
- * The search still ranks every candidate, so this can only ever pick a move the
- * engine already considers near-best; it is not a random opening.
+ * SAN history for the current FEN, rebuilt from the game's move records.
+ * A FEN alone carries no move list, so the book (and any future history-
+ * aware search term) needs the caller to hand the moves over.
  */
-const OPENING_PLIES = 8;
-const OPENING_VARIETY = 60;
+export function sanHistoryOf(moves: Array<{ from: string; to: string; promotion?: string }>): string[] {
+  const chess = new Chess();
+  const san: string[] = [];
+  for (const m of moves) {
+    try {
+      const move = chess.move({
+        from: m.from as never,
+        to: m.to as never,
+        promotion: (m.promotion || undefined) as never,
+      });
+      san.push(move.san);
+    } catch {
+      break; // a corrupted record ends the reconstruction, never throws
+    }
+  }
+  return san;
+}
+
+/* ------------------------------------------------------------------ */
+/* Level personalities and the chooser                                  */
+/* ------------------------------------------------------------------ */
+
+/** Per-level search parameters the levels in lib/types.ts reference. */
+export interface SearchProfile {
+  /** Hard think time in milliseconds — the iterative-deepening budget. */
+  timeMs: number;
+  /** Depth ceiling, so the weaker levels stay both fast and fallible. */
+  maxDepth: number;
+  /** Whether this level follows the opening book. */
+  book: boolean;
+}
+
+/** Mirrors AI_LEVELS in lib/types.ts by id (kept together with the search). */
+const SEARCH_PROFILES: Record<AiDifficulty, SearchProfile> = {
+  beginner: { timeMs: 120, maxDepth: 2, book: false },
+  casual: { timeMs: 200, maxDepth: 2, book: false },
+  club: { timeMs: 350, maxDepth: 3, book: false },
+  advanced: { timeMs: 600, maxDepth: 4, book: false },
+  expert: { timeMs: 1000, maxDepth: 5, book: true },
+  sovereign: { timeMs: 1600, maxDepth: 6, book: true },
+  apex: { timeMs: 2500, maxDepth: 8, book: true },
+};
+
+export function searchProfileFor(difficulty: AiDifficulty): SearchProfile {
+  return SEARCH_PROFILES[difficulty] ?? SEARCH_PROFILES.casual!;
+}
 
 export interface AiMove {
   from: string;
@@ -226,104 +577,95 @@ export interface AiMove {
 /**
  * Pick the AI's move for the given position. Returns null when the side to
  * move has no legal moves (checkmate / stalemate already handled by caller).
+ *
+ * `sanHistory` is the game's SAN move list — required for the opening book.
+ * A FEN alone carries no move list, so without it the book is skipped and
+ * the search runs: guessing the ply count from the FEN's move counter while
+ * treating the game as at move one once made the book play its opening SAN
+ * blindly into a mid-game position (the fool's-mate regression caught it).
  */
-export function chooseAiMove(fen: string, difficulty: AiDifficulty = "casual"): AiMove | null {
+export function chooseAiMove(
+  fen: string,
+  difficulty: AiDifficulty = "casual",
+  sanHistory: string[] = [],
+): AiMove | null {
   const chess = new Chess(fen);
   const moves = orderedMoves(chess);
   if (moves.length === 0) return null;
 
   const level = aiLevelFor(difficulty);
+  const profile = searchProfileFor(difficulty);
+
   // Weaker levels sometimes play a random legal move — the classic way lower
   // ratings hang pieces — while stronger levels always take the best line.
   if (level.blunderChance > 0 && Math.random() < level.blunderChance) {
-    const random = moves[Math.floor(Math.random() * moves.length)];
+    const random = moves[Math.floor(Math.random() * moves.length)]!;
     return { from: random.from, to: random.to, promotion: random.promotion };
   }
 
-  const depth = level.depth;
-  const maximizing = chess.turn() === "w";
-  // Games are usually loaded from a FEN, so history() is empty — the move
-  // number in the FEN itself is what tells us how far in we are.
+  // Opening book for the top levels: follow a real line while the game is on
+  // one, line chosen at random per game. Weaker levels just search — their
+  // imperfection is the point. The book is only consulted when the history
+  // we were handed genuinely corresponds to this position (same ply count
+  // per the FEN's move counter) — otherwise the search runs instead.
   const plies = (chess.moveNumber() - 1) * 2 + (chess.turn() === "b" ? 1 : 0);
-
-  /**
-   * Root search, widened by exactly the variety margin — no more.
-   *
-   * Plain alpha-beta at the root is what made every game identical: once alpha
-   * reaches the best score, a later move that is in fact just as good gets cut
-   * off and returns a fail-low *upper bound* instead of its real score, so it
-   * can never compare equal. The first move at the best score therefore won
-   * every tie forever, because both the evaluation and chess.js's move order
-   * are deterministic.
-   *
-   * Choosing fairly among near-equals only needs exact scores for moves inside
-   * the margin, so the bound trails the best score by `variety` instead of
-   * matching it. Children are searched with a one-sided window (the other side
-   * is infinite), so the only possible inexactness is a cutoff against that
-   * bound: a move that beats the bound it was searched with cannot have been
-   * cut off and its score is exact, while one that does not is provably outside
-   * the margin and is dropped. Full-window scoring of every root move would
-   * also work and is what the first attempt did — it cost ~5x the time.
-   */
-  const variety = plies < OPENING_PLIES ? Math.max(level.variety, OPENING_VARIETY) : level.variety;
-
-  /**
-   * Pass 1 — an ordinary, fully-pruned alpha-beta root search for the best move
-   * and its **exact** score. Identical to what the engine always did, and the
-   * reason every game was the same: once alpha reaches the best score a later
-   * move that is in fact just as good gets cut off and returns a fail-low upper
-   * bound rather than its real score, so it can never compare equal. With a
-   * deterministic evaluation and chess.js's fixed move order, the first move at
-   * the best score therefore won every tie forever.
-   */
-  let bestScore = maximizing ? -Infinity : Infinity;  let bestMove: Move = moves[0];
-  let alpha = -Infinity;
-  let beta = Infinity;
-
-  for (const move of moves) {
-    chess.move(move);
-    const score = minimax(chess, depth - 1, alpha, beta, !maximizing);
-    chess.undo();
-    if (maximizing ? score > bestScore : score < bestScore) {
-      bestScore = score;
-      bestMove = move;
-    }
-    if (maximizing) {
-      if (bestScore > alpha) alpha = bestScore;
-    } else if (bestScore < beta) beta = bestScore;
-  }
-
-  /**
-   * Pass 2 — which of the other moves are within `variety` centipawns of best?
-   *
-   * Answering that needs only a yes/no, not a score, so each move gets a
-   * **null-window** search: a window one centipawn wide straddling the
-   * threshold. That is the cheapest search shape there is — every node has an
-   * immediate cutoff available — which is what makes asking N extra questions
-   * affordable. Re-scoring each root move with a wide window would answer the
-   * same question and was the first attempt here; it cost several times this.
-   *
-   * A mate score dwarfs any margin, so a forced win is never traded away for
-   * variety — the candidate set collapses to the mating moves on its own.
-   */
-  const threshold = maximizing ? bestScore - variety : bestScore + variety;
-  const candidates: Move[] = [bestMove];
-
-  if (variety > 0) {
-    for (const move of moves) {
-      if (move === bestMove) continue;
-      chess.move(move);
-      // Maximizing: does this move reach the threshold (fail high)? Minimizing:
-      // does it stay at or under it (fail low)?
-      const score = maximizing
-        ? minimax(chess, depth - 1, threshold - 1, threshold, false)
-        : minimax(chess, depth - 1, threshold, threshold + 1, true);
-      chess.undo();
-      if (maximizing ? score >= threshold : score <= threshold) candidates.push(move);
+  if (profile.book && sanHistory.length === plies) {
+    const book = bookMove(sanHistory);
+    if (book) {
+      try {
+        const bm = chess.move(book);
+        return { from: bm.from, to: bm.to, promotion: bm.promotion };
+      } catch {
+        /* fall through to search */
+      }
     }
   }
 
-  const pick = candidates[Math.floor(Math.random() * candidates.length)];
-  return { from: pick.from, to: pick.to, promotion: pick.promotion };
+  const maximizing = chess.turn() === "w";
+
+  /**
+   * Iterative deepening with a deadline over a persistent transposition
+   * table. The best move from the last COMPLETED depth plays; a deadline
+   * abort mid-iteration simply keeps the previous depth's choice.
+   */
+  const search = new Search(profile.timeMs);
+  let best: AiMove = { from: moves[0]!.from, to: moves[0]!.to, promotion: moves[0]!.promotion };
+  let lastScored: Array<{ move: Move; score: number }> = [];
+  let completed = false;
+
+  for (let depth = 1; depth <= profile.maxDepth; depth++) {
+    const result = search.searchRoot(chess, depth, maximizing);
+    if (!result.completed) break;
+    best = {
+      from: result.bestMove.from,
+      to: result.bestMove.to,
+      promotion: result.bestMove.promotion,
+    };
+    lastScored = result.scored;
+    completed = true;
+    if (Math.abs(result.bestScore) > MATE - 1000) break; // mate found
+  }
+
+  /**
+   * Variety: among the root moves the last completed depth scored within the
+   * level's margin of best, pick at random. The engine is deterministic, so
+   * this is the whole reason two games against the same level differ. Mate
+   * scores dwarf any margin, so a forced win is never traded away — the
+   * candidate set collapses to the mating moves on its own.
+   */
+  if (completed && lastScored.length > 1 && level.variety > 0) {
+    const bestEntry = lastScored.reduce((a, b) =>
+      maximizing ? (b.score > a.score ? b : a) : (b.score < a.score ? b : a),
+    );
+    const threshold = maximizing ? bestEntry.score - level.variety : bestEntry.score + level.variety;
+    const inMargin = lastScored.filter((r) =>
+      maximizing ? r.score >= threshold : r.score <= threshold,
+    );
+    if (inMargin.length > 1) {
+      const pick = inMargin[Math.floor(Math.random() * inMargin.length)]!.move;
+      best = { from: pick.from, to: pick.to, promotion: pick.promotion };
+    }
+  }
+
+  return best;
 }
-
