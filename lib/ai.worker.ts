@@ -29,7 +29,10 @@ export interface AiWorkerResponse {
 self.onmessage = (event: MessageEvent<AiWorkerRequest>) => {
   const { id, fen, difficulty, sanHistory } = event.data;
   try {
-    const move = chooseAiMove(fen, difficulty, sanHistory);
+    // Native Stockfish never reaches this worker (it owns a UCI worker of
+    // its own — see lib/ai-runner.ts). If a misrouted request ever arrives,
+    // search at the top built-in profile instead of returning garbage.
+    const move = chooseAiMove(fen, difficulty === "stockfish" ? "apex" : difficulty, sanHistory);
     const response: AiWorkerResponse = { id, move };
     (self as unknown as Worker).postMessage(response);
   } catch (err) {

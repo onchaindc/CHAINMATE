@@ -29,7 +29,7 @@ import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
-import { AI_PLAYER_ID, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
+import { AI_BRAND_SHORT, AI_PLAYER_ID, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -322,7 +322,7 @@ export function Lobby() {
 
                 <div className="mt-3 grid max-w-lg gap-2 sm:grid-cols-2">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />
-                  <LobbyLink href="/solo" icon={Bot} label="Play the computer" />
+                  <LobbyLink href="/solo" icon={Bot} label="Play the Grandmaster" />
                   <LobbyLink href="/join" icon={Link2} label="Join by link" />
                   <LobbyLink href="/tournaments" icon={Trophy} label="Join tournament" />
                 </div>
@@ -541,7 +541,7 @@ export function Lobby() {
 }
 
 function liveName(p: { id: string; name?: string; isAi?: boolean }): string {
-  if (p.isAi || p.id === AI_PLAYER_ID) return "Computer";
+  if (p.isAi || p.id === AI_PLAYER_ID) return AI_BRAND_SHORT;
   if (!p.id) return "Waiting…";
   return guestDisplayName(p.name);
 }

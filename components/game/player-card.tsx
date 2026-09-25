@@ -6,7 +6,7 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
-import { AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
+import { AI_BRAND_SHORT, AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -85,7 +85,7 @@ export function PlayerCard({
         {avatarUrl && !isAi ? (
           <PlayerAvatar name={displayName} avatarUrl={avatarUrl} size="md" />
         ) : isAi ? (
-          /* The computer keeps its own mark — a bot, not a person. */
+          /* The bot keeps its own mark — an engine, not a person. */
           <span
             className={cn(
               "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
@@ -128,7 +128,7 @@ export function PlayerCard({
                 is the more useful of the two mid-game. */}
             {captures ?? null}
             <span className="truncate">
-              {isAi ? "Computer" : waiting ? "Waiting…" : name ? "" : "Guest"}
+              {isAi ? AI_BRAND_SHORT : waiting ? "Waiting…" : name ? "" : "Guest"}
             </span>
             {inCheck && active && (
               <span className="shrink-0 font-semibold uppercase tracking-wide text-negative">

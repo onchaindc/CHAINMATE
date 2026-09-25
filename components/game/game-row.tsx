@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  AI_BRAND_SHORT,
   AI_PLAYER_ID,
   isGameOver,
   type GameIndexEntry,
@@ -37,7 +38,7 @@ interface GameRowProps {
    * This browser's real display name, when the row's store can't supply one.
    * Local/AI games run on the device store, whose records carry no server
    * profile — without this the signed-in player's OWN row fell back to the
-   * generic guest label ("Guest vs Computer"), which read as a data bug.
+   * generic guest label ("Guest vs CM Grandmaster"), which read as a data bug.
    */
   meName?: string;
 }
@@ -69,7 +70,7 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
    */
   const nameFor = (id: string) =>
     id === AI_PLAYER_ID
-      ? "Computer"
+      ? AI_BRAND_SHORT
       : id === me && meName
         ? meName
         : guestDisplayName(players?.[id]?.name);

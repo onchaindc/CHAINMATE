@@ -5,6 +5,7 @@
   "description": "ChainMate — a GenLayer-powered chess dApp with AI commentary and post-game analysis",
   "scripts": {
     "db:bundle": "node scripts/bundle-migrations.mjs",
+    "engine:sync": "node scripts/copy-stockfish.mjs",
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
     "start": "next start -H 0.0.0.0",
@@ -28,6 +29,7 @@
     "react-chessboard": "^5.12.0",
     "react-dom": "^19.0.0",
     "sharp": "^0.33.5",
+    "stockfish.js": "^10.0.2",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {

@@ -10,20 +10,30 @@ export type AiDifficulty =
   | "advanced"
   | "expert"
   | "sovereign"
-  | "apex";
+  | "apex"
+  | "stockfish";
+
+/**
+ * The house brand for the AI roster. ChainMate's bots play under one name —
+ * the ChainMate Grandmaster — with each level a different strength of the
+ * same opponent, the way a titled player might give you a simultaneous
+ * exhibition at chosen odds.
+ */
+export const AI_BRAND_NAME = "ChainMate Grandmaster";
+export const AI_BRAND_SHORT = "CM Grandmaster";
 
 /** One named computer opponent — a real name and rating, chess.com-style. */
 export interface AiLevel {
   id: AiDifficulty;
-  /** Display name of this computer opponent. */
+  /** Display name of this opponent. */
   name: string;
-  /** Rating the computer plays at (display only — computer games are casual). */
+  /** Rating the opponent plays at (display only — bot games are casual). */
   rating: number;
   /** Short player-facing description. */
   blurb: string;
   /** Search depth in ply — higher is stronger (and slower). */
   depth: number;
-  /** Chance the computer plays a random legal move instead of its best. */
+  /** Chance the bot plays a random legal move instead of its best. */
   blunderChance: number;
   /**
    * How far below best a move may score, in centipawns, and still be picked.
@@ -45,7 +55,21 @@ export const AI_LEVELS: AiLevel[] = [
   { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless, bring your A-game.", depth: 4, blunderChance: 0, variety: 10 },
   { id: "sovereign", name: "Sovereign", rating: 2200, blurb: "Master-level play. Opens from real theory and never blinks.", depth: 5, blunderChance: 0, variety: 6 },
   { id: "apex", name: "Apex", rating: 2400, blurb: "The house engine. Deep, patient, and brutally unforgiving.", depth: 6, blunderChance: 0, variety: 0 },
+  {
+    id: "stockfish",
+    name: "Stockfish",
+    rating: 3200,
+    blurb: "The strongest chess entity on Earth — the real Stockfish, running on your device. For the brave.",
+    depth: 0, // native — Stockfish manages its own search
+    blunderChance: 0,
+    variety: 0,
+  },
 ];
+
+/** True when this level is the native Stockfish engine rather than the built-in search. */
+export function isStockfishLevel(d?: string): boolean {
+  return d === "stockfish";
+}
 
 /** Map any stored difficulty value (incl. legacy ids) onto a known level. */
 export function normalizeAiDifficulty(d?: string): AiDifficulty {

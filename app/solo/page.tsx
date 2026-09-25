@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bot, Loader2 } from "lucide-react";
+import { ArrowRight, Bot, Crown, Loader2 } from "lucide-react";
 import { ChessBoard } from "@/components/game/chess-board";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -24,20 +24,30 @@ import { cn } from "@/lib/utils";
  * being one.
  *
  * There is exactly one control here. Everything else about a solo game — your
- * colour is drawn per game, unrated, untimed — is fixed, so it is stated once
- * as a fact rather than offered as five more things to configure.
+ * colour is drawn per game, unrated — is fixed, so it is stated once as a
+ * fact rather than offered as five more things to configure.
  *
  * No `RequireProfile`: solo games live in the on-device store, so a guest can
  * play without an account.
  */
 
-const TIME_CONTROLS = ["No clock", "5 + 0", "10 + 0", "15 + 10"] as const;
+/**
+ * Standard chess time controls — the classical trio plus a blitz and a
+ * bullet option. Chess.com/Lichess-style "minutes + increment" notation the
+ * clock parser (lib/clocks.ts) reads natively, so any label here works
+ * end to end: clocks, flag fall, the lot. Casual untimed play is what solo
+ * is FOR, so a clock stays optional rather than assumed.
+ */
+const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0", "15 + 10", "No clock"] as const;
+
+/** Rating from which an opponent wears the master's crown in the roster. */
+const CROWN_FROM = 2000;
 
 export default function SoloPage() {
   const router = useRouter();
   const { pieceSet } = useBoardPrefs();
   const [difficulty, setDifficulty] = useState<AiDifficulty>(normalizeAiDifficulty());
-  const [timeControl, setTimeControl] = useState<string>("10 + 0");
+  const [timeControl, setTimeControl] = useState<string>("5 + 0");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,8 +98,8 @@ export default function SoloPage() {
           <PageHeader
             eyebrow="Solo"
             eyebrowIcon={Bot}
-            title="Play the computer"
-            description="Seven engine levels, 600 to 2400. Unrated."
+            title="Play the Grandmaster"
+            description="Eight opponents, Pawn 600 to Stockfish 3200. Unrated."
           />
 
           <Panel className="mt-8 animate-fade-in-up [animation-delay:80ms]">
@@ -112,7 +122,7 @@ export default function SoloPage() {
                         bar and the name coming forward — rather than by a radio
                         disc. Discs down the left edge made the old list read as
                         a form to fill in instead of a roster to pick from.
-                        Master-level bots (2000+) get a small crown: they are a
+                        Master-tier bots (2000+) get a small crown: they are a
                         different weight of opponent and the roster should say
                         so at a glance. */}
                     {active && (
@@ -130,6 +140,12 @@ export default function SoloPage() {
                       )}
                     >
                       {level.name}
+                      {level.rating >= CROWN_FROM && (
+                        <Crown
+                          className="ml-1.5 inline h-3.5 w-3.5 -translate-y-0.5 text-primary/80"
+                          aria-label="master tier"
+                        />
+                      )}
                     </span>
                     <span
                       className={cn(
@@ -155,10 +171,11 @@ export default function SoloPage() {
             {selected.blurb}
           </p>
 
-          {/* Clock — off by default for casual practice, one tap for a timed
-              game. Same controls the online play box uses. */}
+          {/* Clock — standard chess time controls, off by default for casual
+              practice, one tap for a timed game. Same controls the online play
+              box uses. */}
           <div
-            className="mt-4 grid grid-cols-4 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+            className="mt-4 grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1 sm:grid-cols-6"
             role="radiogroup"
             aria-label="Time control"
           >

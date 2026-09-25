@@ -760,7 +760,7 @@ export default function GamePage() {
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-2xs tabular-nums text-muted-foreground">
       {isAiGame && <span>vs {aiLevelFor(game?.aiDifficulty).name}</span>}
       {game.timeControl && <span>· {game.timeControl}</span>}
-      <span>· {isAiGame ? "Computer" : "Online"}</span>
+      <span>· {isAiGame ? "Bot match" : "Online"}</span>
       {game.endedAt && (
         <span>
           ·{" "}
@@ -788,7 +788,7 @@ export default function GamePage() {
         <div className="min-h-8 min-w-0 flex-1">
           {!gameOver && (
             <p className="truncate text-2xs text-muted-foreground">
-              {isAiGame ? "vs Computer" : "Online match"}
+              {isAiGame ? "Bot match" : "Online match"}
               {game.timeControl ? ` · ${game.timeControl}` : ""}
             </p>
           )}

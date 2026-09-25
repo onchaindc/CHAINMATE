@@ -24,8 +24,10 @@ npm run dev
 That's it. The app runs with zero configuration and zero API keys. Out of the
 box you get:
 
-- **Play vs AI**: a single-player match against the on-device engine (Pawn
-  600 through Apex 2400), no opponent or setup needed
+- **Play vs AI**: a single-player match against the ChainMate Grandmaster —
+  eight opponents from Pawn 600 through Apex 2400, plus native Stockfish
+  (3200) running on-device via WebAssembly. Standard clocks available:
+  1+0 bullet through 15+10 rapid, or untimed
 - **Online multiplayer**: create a game, share the link, and your friend
   joins from any device. Games live in a shared server store: durable KV when
   configured, otherwise a built-in file store for zero-setup development

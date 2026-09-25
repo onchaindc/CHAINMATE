@@ -562,6 +562,11 @@ const SEARCH_PROFILES: Record<AiDifficulty, SearchProfile> = {
   expert: { timeMs: 1000, maxDepth: 5, book: true },
   sovereign: { timeMs: 1600, maxDepth: 6, book: true },
   apex: { timeMs: 2500, maxDepth: 8, book: true },
+  // Native Stockfish normally never reaches the built-in search — it plays
+  // through its own UCI worker. This profile only answers when the native
+  // engine is unavailable (no worker support, load failure), so the level
+  // degrades to the house maximum instead of stalling the game.
+  stockfish: { timeMs: 2500, maxDepth: 8, book: true },
 };
 
 export function searchProfileFor(difficulty: AiDifficulty): SearchProfile {

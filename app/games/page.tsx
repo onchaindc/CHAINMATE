@@ -155,7 +155,7 @@ function GamesContent() {
           <EmptyState
             icon={Gamepad2}
             title="No games yet"
-            description="Create a game or play the computer."
+            description="Create a game or play the Grandmaster."
             action={{ href: "/create", label: "Create a game" }}
           />
         ) : (completedGames ?? []).length === 0 ? (

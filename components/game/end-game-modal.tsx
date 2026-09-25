@@ -10,6 +10,7 @@ import { guestDisplayName } from "@/lib/identity";
 import { displaySummary, keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
+  AI_BRAND_SHORT,
   AI_PLAYER_ID,
   aiLevelFor,
   type GameState,
@@ -147,7 +148,7 @@ export function EndGameModal({
             <span className="text-foreground/80">
               {isAi ? aiLevelFor(game.aiDifficulty).rating : 1200}
             </span>
-            <span className="normal-case">{isAi ? "Computer" : "provisional"}</span>
+            <span className="normal-case">{isAi ? AI_BRAND_SHORT : "provisional"}</span>
           </p>
         )}
       </div>
@@ -212,7 +213,7 @@ export function EndGameModal({
         {/* Casual games are casual by design — say so, don't leave it unexplained. */}
         {isAiGame && (
           <p className="mt-2.5 text-center text-2xs leading-snug text-muted-foreground">
-            Casual match, games against the computer never change your rating.
+            Casual match, bot games never change your rating.
           </p>
         )}
         {!isAiGame &&

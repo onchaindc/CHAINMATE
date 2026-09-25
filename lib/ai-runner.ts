@@ -1,12 +1,19 @@
 "use client";
 
-import type { AiDifficulty } from "@/lib/types";
+import { isStockfishLevel, type AiDifficulty } from "@/lib/types";
 import type { AiWorkerRequest, AiWorkerResponse } from "@/lib/ai.worker";
 
 /**
  * Run the engine off the main thread when the browser allows it, and fall
  * back to a synchronous search when it does not (SSR, tests, hardened CSPs).
  * The caller only ever awaits a move either way.
+ *
+ * Two engines live behind this one door:
+ *   - the built-in search (lib/ai-engine.ts), inside our own worker;
+ *   - native Stockfish (lib/stockfish.ts), a UCI worker of its own — the
+ *     WASM build must be a worker's top-level script, so it cannot share
+ *     ours. The main thread only relays its messages; the search itself
+ *     never blocks the board either way.
  */
 
 interface PendingRequest {
@@ -52,11 +59,21 @@ function getWorker(): Worker | null {
 }
 
 /** Ask the worker (or the sync engine) for the AI's move. */
-export function requestAiMove(
+export async function requestAiMove(
   fen: string,
   difficulty: AiDifficulty,
   sanHistory: string[],
 ): Promise<{ from: string; to: string; promotion?: string } | null> {
+  // The native engine answers for its own level. It is only available in a
+  // real browser; anywhere else the request falls through to the built-in
+  // search at its profile, so Stockfish never silently stops playing.
+  if (isStockfishLevel(difficulty) && typeof window !== "undefined") {
+    const { stockfishMove } = await import("@/lib/stockfish");
+    const move = await stockfishMove(fen, { movetime: 1200 });
+    if (move) return move;
+    // Engine missing or found nothing legal — degrade to the top built-in
+    // level rather than hanging the game on a null reply.
+  }
   const w = getWorker();
   if (!w) {
     // Fallback: synchronous search (blocks, but only in environments where
