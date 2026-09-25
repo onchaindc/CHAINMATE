@@ -1156,11 +1156,12 @@ function Dashboard({
                         </Button>
                       )}
                     </div>
-                    {/* Two consoles, split by lifecycle: the pool top-up
-                        funds a NEW/LIVE event (an ended one needs no money
-                        in), while prize distribution + refunds belong to an
-                        ENDED one. Each tournament shows exactly the console
-                        its state can act on. */}
+                    {/* Two consoles, split by lifecycle: a LIVE event gets
+                        the money console (top-up in, withdraw out — money
+                        flows both ways while the event runs), while prize
+                        distribution + refunds belong to an ENDED one. Each
+                        tournament shows exactly the console its state can
+                        act on. */}
                     {(t.status === "completed" || t.status === "cancelled") ? (
                       <PrizeSettlement
                         row={t}
@@ -1176,6 +1177,7 @@ function Dashboard({
                         passcodeToken={passcodeToken}
                         busy={busy}
                         onDone={() => void load()}
+                        onWithdrawDone={() => void load()}
                       />
                     )}
                   </li>
@@ -1420,12 +1422,15 @@ function PoolTopUp({
   passcodeToken,
   busy,
   onDone,
+  onWithdrawDone,
 }: {
   row: AdminTournamentRow;
   playerId: string;
   passcodeToken: string;
   busy: boolean;
   onDone: () => void;
+  /** Withdrawals settle on their own cycle; the caller refreshes too. */
+  onWithdrawDone: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
@@ -1635,6 +1640,19 @@ function PoolTopUp({
               </div>
             </>
           )}
+
+          {/* Money flows both ways on a LIVE event: the withdraw block sits
+              beside the top-up here (its server mirror), NOT in the ended
+              settlement console - an ended pool belongs to prizes and
+              refunds, so there is nothing legitimately uncommitted. */}
+          <PoolWithdraw
+            row={row}
+            playerId={playerId}
+            passcodeToken={passcodeToken}
+            working={working || busy}
+            busy={busy}
+            onDone={onWithdrawDone}
+          />
         </div>
       )}
     </div>
@@ -1904,20 +1922,6 @@ function PrizeSettlement({
               })}
             </ul>
           )}
-
-          {/* ---- Withdraw what remains (the mirror of the top-up) ----
-              Uncommitted pool funds only: the server caps the amount at the
-              pool minus planned prizes, owed refunds and prior withdrawals,
-              so players' money can never leave. Money lands in the admin's
-              own linked wallet - resolved server-side, never typed in. */}
-          <PoolWithdraw
-            row={row}
-            playerId={playerId}
-            passcodeToken={passcodeToken}
-            working={working !== null}
-            busy={busy}
-            onDone={onDone}
-          />
         </div>
       )}
     </div>

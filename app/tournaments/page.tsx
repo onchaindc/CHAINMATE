@@ -241,20 +241,23 @@ function TournamentCard({
                 Free
               </span>
             )}
-            {/* The pool, where there is one: live verified pool (when the
-                server has resolved entries) or the entry fee × field, plus
+            {/* The pool, where there is one: the verified ledger sum for
+                PAID and FREE events alike (a topped-up free event has a
+                purse too — hiding it read as "no prize"), or the entry
+                fee × field estimate for a paid event not yet funded, plus
                 the preset split so players see what 1st/2nd/3rd get. */}
-            {t.entryFeeLuna && t.entryFeeLuna !== "0" && (
+            {(t.verifiedPoolLuna && t.verifiedPoolLuna !== "0") ||
+            (t.entryFeeLuna && t.entryFeeLuna !== "0") ? (
               <span className="inline-flex items-center gap-1 text-primary">
                 <Trophy className="h-3 w-3" aria-hidden />
                 {t.verifiedPoolLuna && t.verifiedPoolLuna !== "0"
                   ? `${formatEntryFee(t.verifiedPoolLuna)} NIM pool`
-                  : `up to ${formatEntryFee((BigInt(t.entryFeeLuna) * BigInt(Math.max(t.playerCount, 1))).toString())} NIM pool`}
+                  : `up to ${formatEntryFee((BigInt(t.entryFeeLuna!) * BigInt(Math.max(t.playerCount, 1))).toString())} NIM pool`}
                 {presetShareLabel(t.prizePreset) &&
                   t.prizePreset !== "winner" &&
                   ` · ${presetShareLabel(t.prizePreset)}`}
               </span>
-            )}
+            ) : null}
             {hostName && <span className="truncate">Host: {hostName}</span>}
             {/* Scheduled start: the whole point is that players show up on
                 time — so the list advertises it on every pre-start card. */}

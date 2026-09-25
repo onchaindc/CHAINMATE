@@ -28,11 +28,14 @@
  *   A withdrawal larger than that is refused, so prizes and refunds stay
  *   fully funded no matter what the operator asks to pull out.
  *
- * WHEN: only an ENDED tournament (completed/cancelled) lets money leave —
- * a live event's pool is implicitly committed to its players, exactly as a
- * top-up is refused on an ended one. On a completed PAID tournament with a
- * preset but no cut purse the operator is told to distribute first, so the
- * whole prize can never be withdrawn before it is even planned.
+ * WHEN: only a LIVE tournament lets money leave — the operator may pull
+ * uncommitted surplus out of a running event (top-ups that outgrew the
+ * field), exactly as a top-up only goes INTO a live event. An ENDED one
+ * refuses withdrawals: its pool is fully spoken for by prizes and refunds,
+ * so there is nothing legitimately uncommitted to take.
+ * On a completed PAID tournament the purse-cut rule still applies: the
+ * operator is told to distribute first, so the whole prize can never be
+ * withdrawn before it is even planned.
  *
  * WHO: ChainMate only (the same accountable-money-mover rule as payouts),
  * and the destination is ALWAYS the admin's own linked wallet — the server
@@ -379,12 +382,15 @@ export async function withdrawPool(
     const doc = await (deps.getDoc ?? getTournamentDoc)(tournamentId);
     if (!doc) throw new WithdrawError("not-found", "Tournament not found", 404);
 
-    // Money only leaves an ENDED event — a live pool is implicitly
-    // committed to its players (the mirror image of the top-up rule).
-    if (doc.status !== "completed" && doc.status !== "cancelled") {
+    // Money only leaves a LIVE event — the mirror image of the top-up rule
+    // (top-ups go INTO live events only; withdrawals come OUT of them only).
+    // An ended event's pool is fully committed to prizes and refunds.
+    if (doc.status === "completed" || doc.status === "cancelled") {
       throw new WithdrawError(
-        "tournament-live",
-        "The tournament is still live — its pool is committed to the players. Withdraw after it completes or is cancelled.",
+        "tournament-ended",
+        doc.status === "completed"
+          ? "This tournament has ended — its pool belongs to the prizes. Withdrawals only work on live events."
+          : "This tournament was cancelled — its pool is being refunded. Withdrawals only work on live events.",
         409,
       );
     }
@@ -465,9 +471,11 @@ export async function withdrawPool(
     }
 
     // A paid tournament with a preset but NO cut purse must not be drained
-    // before the winners are even planned — cut the purse first.
+    // before the winners are even planned — cut the purse first. (Only
+    // reachable on a live event whose operator pre-cut nothing; an ended
+    // one is refused outright above.)
     const { isPaidTournamentDoc } = await import("@/lib/server/tournament-economy-doc");
-    if (doc.status === "completed" && isPaidTournamentDoc(doc) && doc.prizePreset) {
+    if (isPaidTournamentDoc(doc) && doc.prizePreset) {
       const payouts = await (deps.payoutStore ?? fastStorePayoutStore).listByTournament(tournamentId);
       if (payouts.length === 0) {
         throw new WithdrawError(
