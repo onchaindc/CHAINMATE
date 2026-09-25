@@ -396,6 +396,7 @@ export function Lobby() {
                       key={g.id}
                       game={g}
                       me={g.backend === "local" ? localMe : playerId}
+                      meName={g.backend === "local" ? identity.username : undefined}
                       delta={deltas.get(g.id) ?? null}
                       players={mergedPlayers}
                     />

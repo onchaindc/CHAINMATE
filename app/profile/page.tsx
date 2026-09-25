@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Settings, Gamepad2, UserRound } from "lucide-react";
@@ -46,15 +46,6 @@ function ProfileContent() {
   const [games, setGames] = useState<GameState[] | null>(null);
   const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
   const [error, setError] = useState<string | null>(null);
-
-  // Real usernames for everyone in the recent-games list.
-  const names = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const info of Object.values(players)) {
-      if (info.name) map[info.id] = info.name;
-    }
-    return map;
-  }, [players]);
 
   // The active player id: the account's id when signed in, the device
   // guest id otherwise.
@@ -260,6 +251,9 @@ function ProfileContent() {
                     key={game.id}
                     game={game}
                     me={game.backend === "local" ? localMe : playerId}
+                    /* Local (solo) rows have no server player map, so the own
+                       name must be handed over or the row calls you Guest. */
+                    meName={game.backend === "local" ? name : undefined}
                     /* Local games are never rated, so they hold the column open
                        with a blank rather than claiming a delta of zero. */
                     delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}

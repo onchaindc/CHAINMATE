@@ -17,6 +17,7 @@ import {
 import {
   AI_BRAND_SHORT,
   AI_PLAYER_ID,
+  aiLevelFor,
   isGameOver,
   type GameIndexEntry,
   type GameState,
@@ -71,7 +72,12 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
    */
   const nameFor = (id: string) =>
     id === AI_PLAYER_ID
-      ? AI_BRAND_SHORT
+      ? // WHICH bot you played — Pawn, Apex, Stockfish — not the house brand.
+        // The brand alone made every history row read identically. (Bare
+        // index entries carry no level; those keep the brand.)
+        "aiDifficulty" in game
+        ? aiLevelFor(game.aiDifficulty).name
+        : AI_BRAND_SHORT
       : id === me && meName
         ? meName
         : guestDisplayName(players?.[id]?.name);
