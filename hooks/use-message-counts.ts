@@ -11,8 +11,8 @@ import { getIdentityToken } from "@/lib/identity";
  *   - dmUnread:    player-to-player messages (and official replies) waiting
  *                  in /messages. Shown as the superscript on the hamburger's
  *                  Messages entry, cleared the moment the thread is read.
- *   - bellUnread:  official announcements only. Shown on the bell; DMs never
- *                  inflate it.
+ *   - bellUnread:  official announcements addressed to this player. Shown on
+ *                  the bell; DMs never inflate it.
  *   - eventUnread: notification events — friend requests, accepted requests,
  *                  challenges. Also shown on the bell: the bell is "things
  *                  that happened", announcements are just one kind.
@@ -52,10 +52,17 @@ async function fetchCounts(playerId: string): Promise<void> {
       eventUnread?: number;
     };
     const messages = data.messages ?? [];
+    // DM unread = envelopes from OTHERS addressed to me. My own sent copy
+    // (toPlayerId = the peer) shares readAt === null forever and must never
+    // count — that was the phantom extra unread message.
     const dm = messages.filter((m) => m.kind === "dm" && m.readAt === null).length;
-    const bell = messages.filter(
-      (m) => (m.kind === "broadcast" || m.kind === "support") && m.readAt === null,
-    ).length;
+    // Bell unread = announcements TO me (feed copies are broadcast envelopes
+    // for players who never received a direct copy). Support copies the
+    // player SENT are theirs, not notifications — counting them made the
+    // badge show 2 when there was 1 real notification, and never clear.
+    // Official replies ride the DM counter below instead of the bell, which
+    // also matches the bell body (it lists events + announcements only).
+    const bell = messages.filter((m) => m.kind === "broadcast" && m.readAt === null).length;
     const eventUnread = Math.max(0, data.eventUnread ?? 0);
     if (dm !== current.dmUnread || bell !== current.bellUnread || eventUnread !== current.eventUnread) {
       current = { dmUnread: dm, bellUnread: bell, eventUnread };

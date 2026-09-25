@@ -222,12 +222,14 @@ export function SettingsList({ stats }: { stats: PlayerStats | null }) {
                 boardTheme === t.id ? "border-primary ring-2 ring-primary/40" : "border-border/60",
               )}
               style={{
-                background:
-                  "linear-gradient(135deg, hsl(var(--board-light)) 0 50%, hsl(var(--board-dark)) 50% 100%)",
-                /* The swatch hues ride on data-board; approximate per theme
-                   from the same tokens the board itself uses. */
+                /* Each swatch paints ITSELF in its theme's colours, straight
+                   from the same tokens the board reads (theme.swatch is the
+                   picker source of truth). The old version set data-board on
+                   the button and relied on the CSS variable override — but
+                   those overrides only exist at :root, so every swatch just
+                   rendered whatever theme was currently selected. */
+                background: `linear-gradient(135deg, hsl(${t.swatch.light}) 0 50%, hsl(${t.swatch.dark}) 50% 100%)`,
               }}
-              data-board={t.id}
             />
           ))}
           <span className="mx-1 h-5 w-px bg-border" aria-hidden />
