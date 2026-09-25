@@ -1,12 +1,13 @@
 "use client";
 
-import { Bot, Crown } from "lucide-react";
+import { Crown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { BotAvatar } from "@/components/game/bot-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
-import { AI_BRAND_SHORT, AI_PLAYER_ID, type PlayerSide } from "@/lib/types";
+import { AI_BRAND_SHORT, AI_PLAYER_ID, type AiDifficulty, type PlayerSide } from "@/lib/types";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -30,6 +31,8 @@ interface PlayerCardProps {
   inCheck?: boolean;
   /** The pieces this player has captured — <CaptureTray /> from the caller. */
   captures?: React.ReactNode;
+  /** Which Grandmaster strength the bot is playing (bot cards only). */
+  aiDifficulty?: AiDifficulty;
 }
 
 export function PlayerCard({
@@ -47,9 +50,10 @@ export function PlayerCard({
   clockLow,
   inCheck,
   captures,
+  aiDifficulty,
 }: PlayerCardProps) {
   const isAi = playerId === AI_PLAYER_ID;
-  const displayName = name ?? (isAi ? "ChainMate AI" : "Guest");
+  const displayName = name ?? (isAi ? AI_BRAND_SHORT : "Guest");
   const active = isTurn && !waiting;
 
   return (
@@ -85,18 +89,9 @@ export function PlayerCard({
         {avatarUrl && !isAi ? (
           <PlayerAvatar name={displayName} avatarUrl={avatarUrl} size="md" />
         ) : isAi ? (
-          /* The bot keeps its own mark — an engine, not a person. */
-          <span
-            className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
-              side === "white"
-                ? "border-piece-outline/25 bg-piece-light text-piece-dark"
-                : "border-piece-light/25 bg-piece-dark text-piece-light",
-            )}
-            aria-hidden
-          >
-            <Bot className="h-4 w-4" />
-          </span>
+          /* The bot wears its painted portrait — a character, not a gear icon.
+             Each Grandmaster strength has its own face and headwear. */
+          <BotAvatar level={aiDifficulty} size="md" />
         ) : (
           /* Default player avatar: a user silhouette on the side-coloured
              disc. The old crown read as a rank badge ("why do they have a

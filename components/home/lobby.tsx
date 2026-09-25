@@ -28,7 +28,9 @@ import { guestDisplayName } from "@/lib/identity";
 import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
+import { LocalGameStore } from "@/lib/store/local-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
+import { mergeGamesById } from "@/lib/utils";
 import { AI_BRAND_SHORT, AI_PLAYER_ID, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +75,9 @@ export function Lobby() {
 
   const playerId = identity.playerId;
   const ready = identity.status !== "loading" && Boolean(playerId);
+  /** The device's local player id — solo games are recorded under it, so the
+      rows need it to decide Win/Loss for backend="local" games. */
+  const localMe = useMemo(() => getStore("local").getMyPlayerId(), []);
 
   // Cached read: the lobby's four server reads are keyed per player, so a
   // returning player sees their last-known lobby instantly on navigation and
@@ -85,13 +90,18 @@ export function Lobby() {
 
   const load = useCallback(async (me: string) => {
     const store = getStore("hosted") as HostedGameStore;
-    /* Four independent reads, all existing endpoints. `friends` is allowed to
-       fail on its own — a friends outage should not blank the play button. */
-    const [profile, mine, watch, friends] = await Promise.all([
+    /* Five independent reads, all existing sources. `friends` is allowed to
+       fail on its own — a friends outage should not blank the play button.
+       Local games (solo matches against the Grandmaster) ride along here so
+       the recent list is the WHOLE record, not only the rated online one. */
+    const [profile, mine, watch, friends, localGames] = await Promise.all([
       store.myProfile(me),
       store.listMine(),
       store.listWatch().catch(() => ({ live: [] as LiveGameEntry[] })),
       store.friends().catch(() => ({ friends: [] as PlayerStats[] })),
+      Promise.resolve(
+        (getStore("local") as LocalGameStore).listMyGames().filter(isPlayedGame),
+      ),
     ]);
     const unfinished = mine.games.filter(
       (g) =>
@@ -110,7 +120,9 @@ export function Lobby() {
       stats: profile.stats,
       mine: resumable,
       sent,
-      recent: profile.games.filter(isPlayedGame),
+      // One merged record: server games first (newest first), local solo
+      // games interleaved by recency, deduped by id.
+      recent: mergeGamesById([...profile.games, ...localGames]).filter(isPlayedGame),
       players: { ...mine.players, ...profile.players },
       live: watch.live,
       friends: friends.friends,
@@ -383,7 +395,7 @@ export function Lobby() {
                     <GameRow
                       key={g.id}
                       game={g}
-                      me={playerId}
+                      me={g.backend === "local" ? localMe : playerId}
                       delta={deltas.get(g.id) ?? null}
                       players={mergedPlayers}
                     />

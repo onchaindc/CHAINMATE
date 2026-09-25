@@ -488,6 +488,7 @@ export default function GamePage() {
         isTurn={!replayMode && turnSide === side && !gameOver && !waiting}
         inCheck={inCheck && turnSide === side}
         waiting={waiting && !game.opponent}
+        aiDifficulty={playerId === AI_PLAYER_ID ? game?.aiDifficulty : undefined}
         /* Read off the position on screen, so the trays rewind with the board
            during a replay instead of always showing the final material. */
         captures={

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bot, Crown, Loader2 } from "lucide-react";
+import { ArrowRight, Bot, Loader2 } from "lucide-react";
+import { BotAvatar } from "@/components/game/bot-avatar";
 import { ChessBoard } from "@/components/game/chess-board";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -39,9 +40,6 @@ import { cn } from "@/lib/utils";
  * is FOR, so a clock stays optional rather than assumed.
  */
 const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0", "15 + 10", "No clock"] as const;
-
-/** Rating from which an opponent wears the master's crown in the roster. */
-const CROWN_FROM = 2000;
 
 export default function SoloPage() {
   const router = useRouter();
@@ -114,7 +112,7 @@ export default function SoloPage() {
                     aria-checked={active}
                     onClick={() => setDifficulty(level.id)}
                     className={cn(
-                      "relative flex w-full items-baseline justify-between gap-4 px-5 py-3.5 text-left transition-colors",
+                      "relative flex w-full items-center justify-between gap-4 px-5 py-3 text-left transition-colors",
                       active ? "bg-primary/[0.06]" : "hover:bg-secondary/40",
                     )}
                   >
@@ -131,6 +129,9 @@ export default function SoloPage() {
                         aria-hidden
                       />
                     )}
+                    {/* The opponent's face — the painted portrait marks each
+                        strength as a character of its own. */}
+                    <BotAvatar level={level.id} size="sm" />
                     <span
                       className={cn(
                         "truncate text-base transition-colors",
@@ -140,12 +141,6 @@ export default function SoloPage() {
                       )}
                     >
                       {level.name}
-                      {level.rating >= CROWN_FROM && (
-                        <Crown
-                          className="ml-1.5 inline h-3.5 w-3.5 -translate-y-0.5 text-primary/80"
-                          aria-label="master tier"
-                        />
-                      )}
                     </span>
                     <span
                       className={cn(

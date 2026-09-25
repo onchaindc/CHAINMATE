@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { guestDisplayName } from "@/lib/identity";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { BotAvatar } from "@/components/game/bot-avatar";
 import { cn } from "@/lib/utils";
 import {
   Award,
@@ -86,6 +87,9 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
 
   const primaryName = nameFor(primaryId);
   const isVsComputer = primaryId === AI_PLAYER_ID;
+  /** The bot's strength — absent on bare index entries, where the portrait
+      falls back to the generic face rather than guessing. */
+  const botLevel = "aiDifficulty" in game ? game.aiDifficulty : undefined;
   const secondaryName = secondaryId ? nameFor(secondaryId) : "";
   /** Which side the row's primary player sat on. */
   const primaryIsWhite = primaryId === creator;
@@ -147,8 +151,13 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
       className="group flex items-center gap-3 rounded-md px-3 py-2.5 transition-colors hover:bg-secondary/40"
     >
       {/* Who: the OPPONENT leads the row, with their real picture (or their
-          initial — never random glyphs) at a size you can actually see. */}
-      <PlayerAvatar name={primaryName} avatarUrl={players?.[primaryId]?.avatarUrl} size="md" />
+          initial — never random glyphs) at a size you can actually see. A bot
+          opponent wears its painted portrait instead of a silhouette. */}
+      {isVsComputer ? (
+        <BotAvatar level={botLevel} size="md" />
+      ) : (
+        <PlayerAvatar name={primaryName} avatarUrl={players?.[primaryId]?.avatarUrl} size="md" />
+      )}
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-1.5">
           <span className="truncate text-sm font-medium text-foreground">
