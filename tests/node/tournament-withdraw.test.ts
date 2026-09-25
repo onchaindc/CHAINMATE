@@ -229,6 +229,82 @@ test("a sent withdrawal immediately counts against the cap", async () => {
   assert.equal(cap.availableLuna, 4_800_000n);
 });
 
+test("a read-only payout endpoint refuses before any intent is written", async () => {
+  const txStore = await seededPool();
+  const store = makeWithdrawStore();
+  // The endpoint answers reads but cannot broadcast (public RPC proxy).
+  const deps = fullDeps(
+    {},
+    {
+      txStore,
+      store,
+      signer: {
+        async canSign() {
+          return false;
+        },
+        async sendPayout() {
+          throw new Error("must never be reached when canSign is false");
+        },
+      },
+    },
+  );
+
+  await assert.rejects(
+    () => withdraw.withdrawPool("tour_live", "acct_admin", "2", deps),
+    (err: unknown) =>
+      err instanceof withdraw.WithdrawError && err.kind === "no-signer" && err.status === 503,
+  );
+  assert.equal((await store.listByTournament("tour_live")).length, 0, "no WAL row was written");
+});
+
+test("a dead endpoint fails the stranded intent instead of looping forever", async () => {
+  const txStore = await seededPool();
+  const store = makeWithdrawStore();
+  // A stranded 'dispatching' row from when the endpoint still looked alive.
+  await store.append({
+    id: "withdraw_stuck",
+    tournamentId: "tour_live",
+    amountLuna: "200000",
+    recipientAddress: ADMIN_WALLET,
+    network: "test",
+    status: "dispatching",
+    withdrawTxHash: null,
+    senderAddress: TREASURY,
+    validityStartHeight: 999,
+    dispatchAttempts: 1,
+    lastBroadcastAt: null,
+    failureReason: null,
+    requestedAt: 1,
+    sentAt: null,
+    verifiedAt: null,
+  });
+  const deps = fullDeps(
+    {},
+    {
+      txStore,
+      store,
+      signer: {
+        async canSign() {
+          return false;
+        },
+        async sendPayout() {
+          throw new Error("must never be reached when canSign is false");
+        },
+      },
+    },
+  );
+
+  await assert.rejects(
+    () => withdraw.withdrawPool("tour_live", "acct_admin", "2", deps),
+    (err: unknown) =>
+      err instanceof withdraw.WithdrawError && err.kind === "no-signer" && err.status === 503,
+  );
+  const rows = await store.listByTournament("tour_live");
+  assert.equal(rows[0]?.status, "failed", "the stranded intent was settled, not stuck");
+  assert.match(rows[0]?.failureReason ?? "", /cannot sign/);
+});
+
+
 test("the cap never releases money promised to planned payouts", async () => {
   const txStore = await seededPool();
   const deps = fullDeps(

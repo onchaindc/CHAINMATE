@@ -490,6 +490,14 @@ export interface TreasurySigner {
   getChainHeight?(): Promise<number>;
   /** The address this signer signs from (write-ahead metadata). */
   getSenderAddress?(): string | null;
+  /**
+   * Can this signer actually broadcast? Probed BEFORE any money intent is
+   * written, so a read-only RPC endpoint (public gateways answer reads but
+   * implement no keystore methods) is reported as unconfigured rather than
+   * discovered mid-broadcast with a withdrawal row already in flight.
+   * Optional: when absent the signer is assumed able to sign.
+   */
+  canSign?: () => Promise<boolean>;
 }
 
 let configuredSigner: TreasurySigner | null = null;

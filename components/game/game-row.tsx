@@ -70,17 +70,19 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
    * column, so the server can hand back a non-empty name that `||` passes
    * straight through — putting the short id back on screen.
    */
-  const nameFor = (id: string) =>
-    id === AI_PLAYER_ID
-      ? // WHICH bot you played — Pawn, Apex, Stockfish — not the house brand.
-        // The brand alone made every history row read identically. (Bare
-        // index entries carry no level; those keep the brand.)
-        "aiDifficulty" in game
-        ? aiLevelFor(game.aiDifficulty).name
-        : AI_BRAND_SHORT
-      : id === me && meName
-        ? meName
-        : guestDisplayName(players?.[id]?.name);
+  const nameFor = (id: string) => {
+    if (id === AI_PLAYER_ID) {
+      // WHICH bot you played — Pawn, Apex, Stockfish — not the house brand.
+      // The brand alone made every history row read identically. (Bare
+      // index entries carry no level; those keep the brand.)
+      return "aiDifficulty" in game ? aiLevelFor(game.aiDifficulty).name : AI_BRAND_SHORT;
+    }
+    // Your own side NEVER reads as "Guest": when no username has resolved
+    // (device guest id, local rows without a name map), the row says "You" —
+    // honest at every identity state, and it can never mislabel the player.
+    if (id === me) return meName || "You";
+    return guestDisplayName(players?.[id]?.name);
+  };
 
   /**
    * The row is ABOUT the opponent — the person you played. A waiting game

@@ -337,7 +337,14 @@ export async function quotePoolWithdrawal(
 
   let signerConfigured = true;
   try {
-    signerConfigured = (await resolveSigner(deps)) !== null;
+    const signer = await resolveSigner(deps);
+    if (!signer) {
+      signerConfigured = false;
+    } else if (signer.canSign) {
+      // A configured RPC endpoint may still be a read-only proxy that cannot
+      // broadcast — probe it so the console reports the truth up front.
+      signerConfigured = await signer.canSign();
+    }
   } catch {
     signerConfigured = false; // misconfigured signer = cannot sign
   }
@@ -434,6 +441,22 @@ export async function withdrawPool(
     // recorded fields (byte-identical tx, same hash), not re-planned. The
     // requested amount is ignored — the row's amount is what was committed.
     if (active?.status === "dispatching") {
+      // A dead endpoint must not loop: recovery re-broadcasts with the
+      // recorded fields, which fails identically forever on a read-only
+      // proxy. If this endpoint provably cannot sign, the intent is dead —
+      // settle it as failed and tell the operator why, nothing stuck.
+      if (signer.canSign && !(await signer.canSign())) {
+        await store.replace({
+          ...active,
+          status: "failed",
+          failureReason: "Payout endpoint cannot sign transactions — configure a signing node, then withdraw again",
+        });
+        throw new WithdrawError(
+          "no-signer",
+          "This deployment's payout endpoint can't sign transactions — the pending withdrawal was cancelled; configure a signing node and try again",
+          503,
+        );
+      }
       const staleVsh =
         typeof active.validityStartHeight === "number" &&
         (await currentHeight(deps, signer)) - active.validityStartHeight > VSH_STALENESS_BLOCKS;
@@ -456,6 +479,19 @@ export async function withdrawPool(
         const { availableLuna } = await availablePoolLuna(tournamentId, deps);
         return toResult(sent, availableLuna);
       }
+    }
+
+    // Pre-flight BEFORE any new intent is written: a read-only RPC endpoint
+    // can never broadcast, and discovering that after the WAL row exists
+    // would strand a 'dispatching' withdrawal that recovery then re-fails
+    // forever. (Existing intents were settled above; this protects only the
+    // fresh path.)
+    if (signer.canSign && !(await signer.canSign())) {
+      throw new WithdrawError(
+        "no-signer",
+        "This deployment's payout endpoint can't sign transactions — withdrawals need a payout node holding the treasury key",
+        503,
+      );
     }
 
     // Fresh withdrawal: validate the amount.

@@ -2095,8 +2095,14 @@ function PoolWithdraw({
       </div>
       {quoteError && <p className="mt-1 text-2xs text-warning">{quoteError}</p>}
       {quote && !quote.signerConfigured && (
-        <p className="mt-1 text-2xs leading-snug text-warning">
-          This deployment has no treasury payout node configured, so withdrawals cannot be signed.
+        /* The form below is HIDDEN, not warned beside: a read-only payout
+           endpoint can never broadcast, and an input that always fails is a
+           trap. The fix is operator-side - point NIMIQ_PAYOUT_RPC_URL at a
+           node holding the treasury key in its keystore. */
+        <p className="mt-2 rounded-md border border-warning/30 bg-warning/[0.08] px-3 py-2 text-2xs leading-snug text-warning">
+          This deployment&apos;s payout endpoint can&apos;t sign transactions, so withdrawals
+          are unavailable. Point NIMIQ_PAYOUT_RPC_URL at a node holding the treasury key
+          to enable them.
         </p>
       )}
       {quote?.recipientAddress && (
@@ -2119,7 +2125,7 @@ function PoolWithdraw({
           </Button>
         </div>
       )}
-      {!sentHash && (
+      {!sentHash && quote?.signerConfigured && (
         <div className="mt-2 flex items-center gap-2">
           <input
             value={amount}

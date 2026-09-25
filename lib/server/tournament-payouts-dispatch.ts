@@ -211,9 +211,65 @@ export function buildRpcTreasurySigner(
     timeoutMs: 15_000,
   };
 
+  /**
+   * The unlock probe, shared by the pre-flight `canSign` and the broadcast
+   * itself. A read-only RPC proxy (public gateways answer reads but implement
+   * no keystore methods) is positive evidence this endpoint can NEVER sign —
+   * surfaced as its own kind so callers can react before writing any
+   * withdrawal intent, not discover it mid-broadcast.
+   */
+  const assertCanSign = async (): Promise<void> => {
+    let isUnlocked: boolean;
+    try {
+      isUnlocked = await unlocked(config.treasuryAddress, overrides);
+    } catch (unlockErr) {
+      // Distinguish "node unreachable" from "node cannot answer a
+      // keystore method": public gateways (e.g. api.nimiqscan.com)
+      // are read-only proxies — isAccountUnlocked is a node-keystore
+      // method they never implement. The operator must point
+      // NIMIQ_PAYOUT_RPC_URL at a node holding the treasury key in
+      // its keystore; no retry can fix a read-only endpoint.
+      const methodShaped =
+        unlockErr instanceof NimiqRpcError &&
+        (String(unlockErr.code) === "-32601" || /method not/i.test(unlockErr.message));
+      throw new PayoutDispatchError(
+        "rpc-unavailable",
+        methodShaped
+          ? "This deployment's payout endpoint can't sign transactions, so prizes are paid from the host wallet instead."
+          : "Could not reach the payout node to check the treasury wallet",
+      );
+    }
+    if (typeof isUnlocked !== "boolean") {
+      throw new PayoutDispatchError(
+        "malformed-response",
+        "Node returned a non-boolean unlock state",
+      );
+    }
+    if (!isUnlocked) {
+      throw new PayoutDispatchError(
+        "wallet-locked",
+        "The treasury wallet is locked on the payout node, unlock it and retry",
+      );
+    }
+  };
+
   return {
     getSenderAddress(): string | null {
       return config.treasuryAddress;
+    },
+    /** Pre-flight: false means this endpoint provably cannot broadcast. */
+    async canSign(): Promise<boolean> {
+      try {
+        await assertCanSign();
+        return true;
+      } catch (err) {
+        // A locked wallet is a normal operating state (unlock and retry) —
+        // the endpoint itself CAN sign. Only structural inability (read-only
+        // proxy) or an unreachable node reports false, and the caller's
+        // dedicated error kinds carry the distinction.
+        if (err instanceof PayoutDispatchError && err.kind === "wallet-locked") return true;
+        return false;
+      }
     },
     async getChainHeight(): Promise<number> {
       try {
@@ -239,38 +295,7 @@ export function buildRpcTreasurySigner(
     async sendPayout(address: string, amountLuna: bigint, validityStartHeight?: number): Promise<string> {
       try {
         if (deps.checkUnlocked !== false) {
-          let isUnlocked: boolean;
-          try {
-            isUnlocked = await unlocked(config.treasuryAddress, overrides);
-          } catch (unlockErr) {
-            // Distinguish "node unreachable" from "node cannot answer a
-            // keystore method": public gateways (e.g. api.nimiqscan.com)
-            // are read-only proxies — isAccountUnlocked is a node-keystore
-            // method they never implement. The operator must point
-            // NIMIQ_PAYOUT_RPC_URL at a node holding the treasury key in
-            // its keystore; no retry can fix a read-only endpoint.
-            const methodShaped =
-              unlockErr instanceof NimiqRpcError &&
-              (String(unlockErr.code) === "-32601" || /method not/i.test(unlockErr.message));
-            throw new PayoutDispatchError(
-              "rpc-unavailable",
-              methodShaped
-                ? "This deployment's payout endpoint can't sign transactions, so prizes are paid from the host wallet instead."
-                : "Could not reach the payout node to check the treasury wallet",
-            );
-          }
-          if (typeof isUnlocked !== "boolean") {
-            throw new PayoutDispatchError(
-              "malformed-response",
-              "Node returned a non-boolean unlock state",
-            );
-          }
-          if (!isUnlocked) {
-            throw new PayoutDispatchError(
-              "wallet-locked",
-              "The treasury wallet is locked on the payout node, unlock it and retry",
-            );
-          }
+          await assertCanSign();
         }
 
         const height = await heightOf(overrides);
