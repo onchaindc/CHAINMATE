@@ -25,7 +25,7 @@ That's it. The app runs with zero configuration and zero API keys. Out of the
 box you get:
 
 - **Play vs AI**: a single-player match against the on-device engine (Pawn
-  600 through Zenith 2000), no opponent or setup needed
+  600 through Apex 2400), no opponent or setup needed
 - **Online multiplayer**: create a game, share the link, and your friend
   joins from any device. Games live in a shared server store: durable KV when
   configured, otherwise a built-in file store for zero-setup development
@@ -142,7 +142,7 @@ lib/
   nimiq/                    config, verification, payout dispatch
 lib/server/nimiq/           verification pipeline + payout node client
 supabase/migrations/        full SQL schema, applied in filename order
-tests/node/                 node:test suites (293 tests)
+tests/node/                 node:test suites (344 tests)
 contracts/                  optional GenLayer contract (legacy backend)
 ```
 
@@ -287,7 +287,7 @@ code, the browser bundle, or logs.
 ## Tests
 
 ```bash
-npm test          # 293 node:test suites, fully offline
+npm test          # 344 node:test suites, fully offline
 npx tsc --noEmit  # strict typecheck
 ```
 
