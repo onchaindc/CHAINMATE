@@ -988,7 +988,7 @@ function Dashboard({
                           className={`h-1.5 w-1.5 shrink-0 rounded-full ${unread ? "bg-primary" : "bg-transparent"}`}
                         />
                         <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        <span className="w-0 grow truncate text-xs font-medium">
                           {m.fromName}
                           <span className="ml-2 font-normal text-muted-foreground">
                             {m.body.split("\n")[0].slice(0, 60) || "(no text)"}
@@ -1343,7 +1343,7 @@ function PayoutRow({
     <li className="flex flex-col gap-2 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="w-6 shrink-0 text-right font-mono tabular-nums text-muted-foreground">{line.payoutRank}</span>
-        <span className="min-w-0 flex-1 truncate font-medium">{line.playerName ?? line.playerId}</span>
+        <span className="w-0 grow truncate font-medium">{line.playerName ?? line.playerId}</span>
         <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{line.shareBps / 100}%</span>
         <span className="shrink-0 font-mono tabular-nums font-semibold text-primary">{formatNim(BigInt(line.amountLuna))} NIM</span>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium ${pill.cls}`}>
@@ -1379,7 +1379,7 @@ function PayoutRow({
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder="NQ… destination address"
-            className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+            className="w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
           />
           <Button
             size="sm"
@@ -1450,7 +1450,7 @@ function PoolTopUp({
   })();
 
   const post = useCallback(
-    (action: string, txHash?: string) => {
+    (action: string, txHash?: string, amountNim?: string) => {
       const token = getIdentityToken();
       return fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
         method: "POST",
@@ -1459,7 +1459,7 @@ function PoolTopUp({
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           "X-Admin-Session": passcodeToken,
         },
-        body: JSON.stringify({ playerId, action, targetPlayerId: "", txHash }),
+        body: JSON.stringify({ playerId, action, targetPlayerId: "", txHash, amountNim }),
       }).then(async (res) => {
         const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
         if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
@@ -1528,7 +1528,7 @@ function PoolTopUp({
     setError(null);
     setNotice(null);
     try {
-      const prep = await post("topup-prepare");
+      const prep = await post("topup-prepare", undefined, topupNim);
       if (!prep.intent) throw new Error("Top-up prepare returned no payment intent");
       const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
       const { canonicalAddress } = await import("@/lib/nimiq/address");
@@ -1620,7 +1620,7 @@ function PoolTopUp({
                   onChange={(e) => setTopupNim(e.target.value.replace(/[^0-9.]/g, ""))}
                   placeholder="NIM, e.g. 25"
                   inputMode="decimal"
-                  className="min-w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1.5 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+                  className="w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1.5 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
                   aria-label="Top-up amount in NIM"
                 />
                 <Button
@@ -1880,7 +1880,7 @@ function PrizeSettlement({
                 return (
                   <li key={r.playerId} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-xs">
                     <span className="w-6 shrink-0 text-right font-mono tabular-nums text-muted-foreground">R</span>
-                    <span className="min-w-0 flex-1 truncate font-medium">
+                    <span className="w-0 grow truncate font-medium">
                       {r.playerName ?? r.playerId}
                     </span>
                     <span className="shrink-0 font-mono tabular-nums text-foreground/80">

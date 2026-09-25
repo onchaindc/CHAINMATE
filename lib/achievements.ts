@@ -229,6 +229,11 @@ export function validateUsername(raw: string): string | null {
     "me",
     "search",
     "friends",
+    /* Prevents accidental value-like names (e.g. a crash report pasted into
+       the field, or mobile autocapitalize turning "undefined" into a name). */
+    "undefined",
+    "null",
+    "none",
   ]);
   if (reserved.has(username.toLowerCase())) {
     return "That username is reserved.";
