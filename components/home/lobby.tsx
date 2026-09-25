@@ -31,7 +31,7 @@ import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
 import { mergeGamesById } from "@/lib/utils";
-import { AI_BRAND_SHORT, AI_PLAYER_ID, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
+import { AI_BRAND_SHORT, AI_PLAYER_ID, isGameOver, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -121,8 +121,13 @@ export function Lobby() {
       mine: resumable,
       sent,
       // One merged record: server games first (newest first), local solo
-      // games interleaved by recency, deduped by id.
-      recent: mergeGamesById([...profile.games, ...localGames]).filter(isPlayedGame),
+      // games interleaved by recency, deduped by id — FINISHED games only.
+      // "Recent games" is a record of results; merging without the terminal
+      // filter leaked in-progress solo games as half-empty Live rows, which
+      // is what unaligned the section after the local-merge landed.
+      recent: mergeGamesById([...profile.games, ...localGames]).filter(
+        (g) => isPlayedGame(g) && isGameOver(g.status),
+      ),
       players: { ...mine.players, ...profile.players },
       live: watch.live,
       friends: friends.friends,
