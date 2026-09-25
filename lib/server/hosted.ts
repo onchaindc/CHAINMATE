@@ -10,6 +10,7 @@ import {
   type GameAnalyzer,
 } from "@/lib/server/genlayer";
 import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
+import { aiLevelFor } from "@/lib/types";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
   claimWaitingRow,
@@ -38,6 +39,7 @@ import {
   AI_PLAYER_ID,
   isGameOver,
   isStaleGameState,
+  type AiDifficulty,
   type CreateGameOptions,
   type GameIndexEntry,
   type GameState,
@@ -155,6 +157,8 @@ interface LiveRegistryEntry {
   opponent: string;
   visibility: "public" | "private";
   timeControl?: string;
+  /** The bot's strength on an AI game, so the feed names the right Grandmaster. */
+  aiDifficulty?: string;
   moveCount: number;
   startedAt?: number;
   updatedAt: number;
@@ -206,6 +210,7 @@ async function upsertLive(game: GameState): Promise<void> {
     opponent: game.opponent,
     visibility: game.visibility === "private" ? "private" : "public",
     timeControl: game.timeControl,
+    aiDifficulty: game.aiDifficulty,
     moveCount: game.moves.length,
     startedAt: game.startedAt,
     updatedAt: game.updatedAt ?? Date.now(),
@@ -223,10 +228,15 @@ async function removeLive(id: string): Promise<void> {
   await writeLiveRegistry(entries.filter((e) => e.id !== id));
 }
 
-/** Real display info for one player in the live feed (username + rating). */
-async function livePlayerInfo(playerId: string): Promise<LivePlayerInfo> {
+/**
+ * Real display info for one player in the live feed (username + rating).
+ * The bot side resolves through the roster so the feed says WHICH Grandmaster
+ * is playing — Stockfish, Apex, Pawn — with its rating, not a generic label.
+ */
+async function livePlayerInfo(playerId: string, aiDifficulty?: string): Promise<LivePlayerInfo> {
   if (playerId === AI_PLAYER_ID) {
-    return { id: playerId, name: "ChainMate AI", isAi: true };
+    const level = aiLevelFor(aiDifficulty);
+    return { id: playerId, name: level.name, rating: level.rating, isAi: true };
   }
   if (!playerId) {
     return { id: playerId, name: "Waiting…" };
@@ -246,13 +256,16 @@ async function enrichLive(entries: LiveRegistryEntry[]): Promise<LiveGameEntry[]
   for (const e of entries) {
     const [creator, opponent] = await Promise.all([
       livePlayerInfo(e.creator),
-      livePlayerInfo(e.opponent),
+      // The registry row carries the game's difficulty so the bot's name
+      // resolves per game rather than falling back to the default level.
+      livePlayerInfo(e.opponent, e.aiDifficulty),
     ]);
     out.push({
       id: e.id,
       creator,
       opponent,
       timeControl: e.timeControl,
+      aiDifficulty: e.aiDifficulty,
       moveCount: e.moveCount,
       startedAt: e.startedAt,
       updatedAt: e.updatedAt,
@@ -784,6 +797,93 @@ export async function createHostedGame(
   };
   await writeGame(game);
   return game;
+}
+
+/**
+ * Start a hosted game against a bot — server-recorded like any other.
+ *
+ * Solo games were device-local: they never existed for anyone else, the Watch
+ * feed could not show them, and a player's record differed per device. The
+ * server now records bot games exactly like human ones — with the opponent as
+ * the AI player id and the chosen difficulty stamped on the game — so the whole
+ * app (Watch, recent games, profiles) sees who played which Grandmaster.
+ * Bot games are casual by definition: the rating engine already skips any game
+ * involving the AI id, and clock machinery works unchanged.
+ */
+export async function createHostedAiGame(
+  playerId: string,
+  difficulty: AiDifficulty,
+  options: CreateGameOptions = {},
+): Promise<GameState> {
+  const now = Date.now();
+  // The hosted_ prefix is the store contract: the client router picks the
+  // store that OWNS a game by its id, and any non-prefixed id falls through
+  // to the default backend. A hosted bot game must route exactly like a
+  // hosted human game.
+  const id = `hosted_${randomHex(6)}`;
+  const game: GameState = {
+    id,
+    creator: playerId,
+    opponent: AI_PLAYER_ID,
+    status: "active",
+    winner: "",
+    fen: START_FEN,
+    moves: [],
+    commentary: [],
+    summary: "",
+    backend: "hosted",
+    aiDifficulty: difficulty,
+    // A solo game is one player at the board: the clock starts at once (no
+    // arrival handshake with a bot) whenever a time control is set.
+    timeControl: options.timeControl,
+    startedAt: now,
+    clockStartedAt: now,
+    visibility: "public",
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeGame(game);
+  return game;
+}
+
+/**
+ * The bot's reply, computed server-side and appended like a human's move.
+ *
+ * The engine request runs here rather than in the browser so the move lands in
+ * the shared record: every client polling the game sees the bot's move arrive,
+ * the Watch feed advances, and history rows carry the real SAN list. Validation
+ * is the same applyMoveToGame path humans go through — an engine glitch can
+ * never inject an illegal move.
+ */
+export async function submitAiMove(id: string): Promise<GameState> {
+  const game = await getHostedGame(id);
+  if (!game) throw new Error("Game not found");
+  if (game.opponent !== AI_PLAYER_ID) throw new Error("Not a bot game");
+  if (game.status !== "active") throw new Error("The game is not active");
+
+  const { chooseAiMove, sanHistoryOf } = await import("@/lib/ai-engine");
+  const move = chooseAiMove(game.fen, game.aiDifficulty ?? "casual", sanHistoryOf(game.moves));
+  if (!move) return game; // bot has no legal reply (mate/stalemate already set)
+
+  const res = applyMoveToGame(game, AI_PLAYER_ID, move.from, move.to, move.promotion);
+  // A benign race (two tab triggers, a replayed request) lands here when the
+  // bot has already moved — return the current state rather than a 500, the
+  // same contract the local store uses.
+  if (!res.ok) return getHostedGame(id).then((g) => g ?? game);
+  let next: GameState = stampMoveTime(res.game);
+  if (isGameOver(next.status) && !next.endedAt) {
+    next = {
+      ...next,
+      endedAt: Date.now(),
+      updatedAt: Date.now(),
+      summary: next.summary || buildRuleSummary(next),
+    };
+    await applyRatingsIfFinished(game, next);
+  } else {
+    next = { ...next, updatedAt: Date.now() };
+  }
+  await writeGame(next);
+  return next;
 }
 
 /**

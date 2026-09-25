@@ -143,8 +143,25 @@ export class HostedGameStore implements GameStore {
     return data.game;
   }
 
-  async createAiGame(_difficulty?: AiDifficulty): Promise<GameState> {
-    throw new Error("Single-player games run in the built-in offline store");
+  /**
+   * Start a bot game ON THE SERVER, recorded like any human match.
+   *
+   * Solo games were device-local — invisible to Watch, history and other
+   * players. Through the hosted store the game enters the shared record with
+   * the AI player as the opponent, so the whole app sees who played which
+   * Grandmaster (and the engine answers server-side via submitAiMove).
+   */
+  async createAiGame(difficulty?: AiDifficulty, options?: CreateGameOptions): Promise<GameState> {
+    const data = await api("/api/hosted/games", {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: getMyPlayerId(),
+        aiDifficulty: difficulty ?? "casual",
+        timeControl: options?.timeControl,
+      }),
+    });
+    if (!data.game) throw new Error("Failed to start the bot game");
+    return data.game;
   }
 
   async joinGame(id: string): Promise<GameState> {
@@ -179,8 +196,14 @@ export class HostedGameStore implements GameStore {
     return data.game;
   }
 
-  async submitAiMove(): Promise<GameState> {
-    throw new Error("AI games run in the built-in offline store");
+  /** Ask the server to compute and record the bot's reply. */
+  async submitAiMove(id: string): Promise<GameState> {
+    const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "ai-move", playerId: getMyPlayerId() }),
+    });
+    if (!data.game) throw new Error("The bot's move failed");
+    return data.game;
   }
 
   async resign(id: string): Promise<GameState> {

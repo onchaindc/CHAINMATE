@@ -11,7 +11,8 @@ import { Panel } from "@/components/ui/panel";
 import { ErrorNote } from "@/components/ui/states";
 import { useBoardPrefs } from "@/hooks/use-board-prefs";
 import { getStore } from "@/lib/store";
-import { AI_LEVELS, START_FEN, aiLevelFor, normalizeAiDifficulty, type AiDifficulty } from "@/lib/types";
+import { useIdentity } from "@/lib/identity-context";
+import { AI_LEVELS, START_FEN, aiLevelFor, normalizeAiDifficulty, type AiDifficulty, type GameState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -43,6 +44,7 @@ const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0", "15 + 10", "No clock
 
 export default function SoloPage() {
   const router = useRouter();
+  const identity = useIdentity();
   const { pieceSet } = useBoardPrefs();
   const [difficulty, setDifficulty] = useState<AiDifficulty>(normalizeAiDifficulty());
   const [timeControl, setTimeControl] = useState<string>("5 + 0");
@@ -75,7 +77,23 @@ export default function SoloPage() {
     setBusy(true);
     setError(null);
     try {
-      const game = await getStore("local").createAiGame(
+      // Hosted first: a server-recorded bot game is visible to everyone —
+      // the Watch feed, recent games and both players' profiles — and works
+      // across devices. The offline store is the fallback for guests (whose
+      // identity the server cannot attribute) or when the server is down,
+      // so solo play never breaks.
+      let game: GameState | null = null;
+      if (identity.status === "user") {
+        try {
+          game = await getStore("hosted").createAiGame(
+            difficulty,
+            timeControl === "No clock" ? undefined : { timeControl },
+          );
+        } catch {
+          game = null; // fall through to the on-device store
+        }
+      }
+      game ??= await getStore("local").createAiGame(
         difficulty,
         timeControl === "No clock" ? undefined : { timeControl },
       );
@@ -84,7 +102,7 @@ export default function SoloPage() {
       setError(err instanceof Error ? err.message : "Failed to start the game");
       setBusy(false);
     }
-  }, [router, difficulty, timeControl]);
+  }, [router, difficulty, timeControl, identity.status]);
 
   return (
     /* A wider page: the roster + board pair read as a narrow strip in the

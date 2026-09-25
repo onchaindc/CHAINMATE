@@ -274,6 +274,8 @@ export interface LiveGameEntry {
   creator: LivePlayerInfo;
   opponent: LivePlayerInfo;
   timeControl?: string;
+  /** The bot's strength on an AI game (drives the portrait + name). */
+  aiDifficulty?: string;
   /** Real ply count — updates with every move. */
   moveCount: number;
   startedAt?: number;

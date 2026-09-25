@@ -9,6 +9,7 @@ import {
   rematchHostedGame,
   resignHostedGame,
   respondHostedDraw,
+  submitAiMove,
   submitHostedMove,
   summarizeHostedGame,
 } from "@/lib/server/hosted";
@@ -28,6 +29,25 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 type Params = { params: Promise<{ id: string }> };
+
+/** Body shape for the actions below. */
+interface ActionBody {
+  action:
+    | "join"
+    | "move"
+    | "ai-move"
+    | "resign"
+    | "draw-offer"
+    | "draw-respond"
+    | "abort"
+    | "rematch"
+    | "timeout"
+    | "arrive"
+    | "summary";
+  playerId?: string;
+  move?: { from: string; to: string; promotion?: string };
+  accept?: boolean;
+}
 
 /**
  * GET /api/hosted/games/[id] — read current game state.
@@ -54,23 +74,6 @@ export async function GET(req: NextRequest, { params }: Params) {
     const message = err instanceof Error ? err.message : "Failed to load game";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-interface ActionBody {
-  action:
-    | "join"
-    | "move"
-    | "resign"
-    | "draw-offer"
-    | "draw-respond"
-    | "abort"
-    | "rematch"
-    | "timeout"
-    | "arrive"
-    | "summary";
-  playerId?: string;
-  move?: { from: string; to: string; promotion?: string };
-  accept?: boolean;
 }
 
 /** POST /api/hosted/games/[id] — state-changing actions. */
@@ -114,6 +117,11 @@ export async function POST(req: NextRequest, { params }: Params) {
             body.move.promotion,
           ),
         });
+      case "ai-move":
+        // The bot's reply. Server-computed so the move lands in the shared
+        // record (Watch, history) exactly like a human's — no client may
+        // author it, and the same legality validation applies.
+        return NextResponse.json({ game: await submitAiMove(id) });
       case "resign":
         return NextResponse.json({ game: await resignHostedGame(id, playerId) });
       case "draw-offer":

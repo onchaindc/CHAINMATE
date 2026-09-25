@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
-import { createHostedGame, listHostedGames } from "@/lib/server/hosted";
+import { createHostedAiGame, createHostedGame, listHostedGames } from "@/lib/server/hosted";
+import { normalizeAiDifficulty } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -8,9 +9,11 @@ interface CreateBody {
   playerId?: string;
   timeControl?: string;
   visibility?: "public" | "private";
+  /** Set to start a hosted bot game instead of a waiting multiplayer one. */
+  aiDifficulty?: string;
 }
 
-/** POST /api/hosted/games — create a shared multiplayer game. */
+/** POST /api/hosted/games — create a shared game (multiplayer or vs a bot). */
 export async function POST(req: NextRequest) {
   let body: CreateBody;
   try {
@@ -29,6 +32,19 @@ export async function POST(req: NextRequest) {
   const playerId = acting.playerId;
 
   try {
+    // mode=ai records a server-side game against the bot roster. The game
+    // enters the same shared store as a human match — Watch, history and
+    // profiles all see it — which is the whole point of hosting it.
+    if (body.aiDifficulty) {
+      const game = await createHostedAiGame(
+        playerId,
+        normalizeAiDifficulty(body.aiDifficulty),
+        {
+          timeControl: typeof body.timeControl === "string" ? body.timeControl : undefined,
+        },
+      );
+      return NextResponse.json({ game });
+    }
     const game = await createHostedGame(playerId, {
       timeControl: typeof body.timeControl === "string" ? body.timeControl : undefined,
       visibility: body.visibility === "public" ? "public" : "private",

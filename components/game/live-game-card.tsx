@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
+import { BotAvatar } from "@/components/game/bot-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
-import { type LiveGameEntry } from "@/lib/types";
+import { AI_BRAND_SHORT, aiLevelFor, type LiveGameEntry } from "@/lib/types";
 
 /**
  * One live match card in the Watch feed. Backed entirely by the server's
@@ -23,11 +24,15 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
    * the stored username, which is `Guest_XXXX` for a guest, and `||` would pass
    * that non-empty string through with the short id still on it.
    */
-  const whiteName = guestDisplayName(white.name);
-  const blackName = black.name
-    ? guestDisplayName(black.name)
-    : black.isAi
-      ? "ChainMate AI"
+  // The bot's side is named by its LEVEL (Pawn, Apex, Stockfish…), falling
+  // back to the brand when the entry carries no difficulty — and always a
+  // string, since PlayerAvatar requires one.
+  const botName = entry.aiDifficulty ? aiLevelFor(entry.aiDifficulty).name : AI_BRAND_SHORT;
+  const whiteName = white.isAi ? botName : guestDisplayName(white.name);
+  const blackName = black.isAi
+    ? botName
+    : black.name
+      ? guestDisplayName(black.name)
       : black.id
         ? "Guest"
         : "Waiting…";
@@ -48,14 +53,16 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <span className="flex min-w-0 items-center gap-2 text-sm">
-            {/* The player's real face when they uploaded one, the side-coloured
-                user disc otherwise (see side-avatar.tsx for why not a crown). */}
-            {white.avatarUrl ? (
+            {/* A real face when uploaded, the bot's portrait when it is one,
+                the side-coloured user disc otherwise. */}
+            {white.isAi ? (
+              <BotAvatar level={entry.aiDifficulty ?? "stockfish"} size="xs" className="shrink-0" />
+            ) : white.avatarUrl ? (
               <PlayerAvatar name={whiteName} avatarUrl={white.avatarUrl} size="xs" className="shrink-0" />
             ) : (
               <SideAvatar side="white" className="h-5 w-5" iconClassName="h-3 w-3" />
             )}
-            <CountryFlag code={white.country} />
+            {!white.isAi && <CountryFlag code={white.country} />}
             <span className="truncate font-medium text-foreground/90">{whiteName}</span>
             {typeof white.rating === "number" && (
               <span className="shrink-0 font-mono text-xs tabular-nums text-primary">
@@ -67,12 +74,14 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
             vs
           </span>
           <span className="flex min-w-0 items-center gap-2 text-sm">
-            {black.avatarUrl ? (
+            {black.isAi ? (
+              <BotAvatar level={entry.aiDifficulty ?? "stockfish"} size="xs" className="shrink-0" />
+            ) : black.avatarUrl ? (
               <PlayerAvatar name={blackName} avatarUrl={black.avatarUrl} size="xs" className="shrink-0" />
             ) : (
               <SideAvatar side="black" className="h-5 w-5" iconClassName="h-3 w-3" />
             )}
-            <CountryFlag code={black.country} />
+            {!black.isAi && <CountryFlag code={black.country} />}
             <span className="truncate font-medium text-foreground/90">{blackName}</span>
             {typeof black.rating === "number" && (
               <span className="shrink-0 font-mono text-xs tabular-nums text-primary">
