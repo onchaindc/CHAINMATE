@@ -1,8 +1,9 @@
-import { applyChessMove, describePosition } from "@/lib/chess";
+import { applyChessMove, describePosition, isThreefoldRepetition } from "@/lib/chess";
 import type {
   CommentaryEntry,
   GameState,
   GameStatus,
+  MoveRecord,
   PlayerSide,
 } from "@/lib/types";
 import type { Move } from "chess.js";
@@ -92,6 +93,18 @@ export function applyMoveToGame(
     return { ok: false, error: outcome.error ?? "Illegal move" };
   }
 
+  const nextMoves: MoveRecord[] = [
+    ...game.moves,
+    {
+      number: game.moves.length + 1,
+      side: mySide,
+      from,
+      to,
+      promotion: promotion ?? "",
+      san: outcome.move.san,
+    },
+  ];
+
   const after = describePosition(outcome.fen);
   const entry: CommentaryEntry = {
     move: outcome.move.san,
@@ -101,6 +114,10 @@ export function applyMoveToGame(
   };
 
   // Playing a move cancels any pending draw offer (the game moved on).
+  // Draws: stalemate, FEN-derived draws (insufficient material, fifty-move)
+  // and THREEFOLD REPETITION — the whole-game check replays the recorded
+  // move list, which a FEN alone cannot see. This is what makes players (or
+  // bots) shuffling the same lines finish the game instead of looping.
   let status: GameStatus = "active";
   let winner = "";
   if (after.isCheckmate) {
@@ -108,7 +125,7 @@ export function applyMoveToGame(
     winner = playerId;
   } else if (after.isStalemate) {
     status = "stalemate";
-  } else if (after.isDraw) {
+  } else if (after.isDraw || isThreefoldRepetition(nextMoves)) {
     status = "draw";
   }
 
@@ -120,17 +137,7 @@ export function applyMoveToGame(
       status,
       winner,
       drawOffer: undefined,
-      moves: [
-        ...game.moves,
-        {
-          number: game.moves.length + 1,
-          side: mySide,
-          from,
-          to,
-          promotion: promotion ?? "",
-          san: outcome.move.san,
-        },
-      ],
+      moves: nextMoves,
       commentary: [...game.commentary, entry],
     },
   };

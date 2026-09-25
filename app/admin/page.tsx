@@ -1904,6 +1904,236 @@ function PrizeSettlement({
               })}
             </ul>
           )}
+
+          {/* ---- Withdraw what remains (the mirror of the top-up) ----
+              Uncommitted pool funds only: the server caps the amount at the
+              pool minus planned prizes, owed refunds and prior withdrawals,
+              so players' money can never leave. Money lands in the admin's
+              own linked wallet - resolved server-side, never typed in. */}
+          <PoolWithdraw
+            row={row}
+            playerId={playerId}
+            passcodeToken={passcodeToken}
+            working={working !== null}
+            busy={busy}
+            onDone={onDone}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The pool-withdrawal block inside the settlement console: quote what is
+ * uncommitted, take an amount, send it through the treasury payout node to
+ * the admin's own linked wallet, then confirm the real transaction on-chain
+ * before calling it settled. The exact mirror of PoolTopUp - money OUT of
+ * an ENDED event, capped by the server so prizes and refunds stay funded.
+ */
+function PoolWithdraw({
+  row,
+  playerId,
+  passcodeToken,
+  working: parentWorking,
+  busy,
+  onDone,
+}: {
+  row: AdminTournamentRow;
+  playerId: string;
+  passcodeToken: string;
+  working: boolean;
+  busy: boolean;
+  onDone: () => void;
+}) {
+  const [quote, setQuote] = useState<{
+    poolLuna: string;
+    committedLuna: string;
+    availableLuna: string;
+    recipientAddress: string | null;
+    network: string;
+    signerConfigured: boolean;
+  } | null>(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [amount, setAmount] = useState("");
+  const [sending, setSending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [sentHash, setSentHash] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  /** POST a withdrawal action as the admin; passcode session rides the header. */
+  const withdrawAction = async (
+    action: "withdraw-quote" | "withdraw" | "withdraw-confirm",
+    amountNim?: string,
+  ): Promise<Record<string, unknown>> => {
+    const token = getIdentityToken();
+    const res = await fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "X-Admin-Session": passcodeToken,
+      },
+      body: JSON.stringify({ playerId, action, amountNim }),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
+    if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
+    return data;
+  };
+
+  /** Refresh the cap readout: pool, locked, and what may actually leave. */
+  const loadQuote = useCallback(async () => {
+    setQuoteBusy(true);
+    setQuoteError(null);
+    try {
+      const data = await withdrawAction("withdraw-quote");
+      const q = data.quote as typeof quote;
+      setQuote(q ?? null);
+    } catch (err) {
+      setQuote(null);
+      setQuoteError(err instanceof Error ? err.message : "Could not read the pool");
+    } finally {
+      setQuoteBusy(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row.id, playerId, passcodeToken]);
+
+  // Fetch the quote once on mount (the console only renders when open).
+  useEffect(() => {
+    void loadQuote();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const amountValid = (() => {
+    try {
+      return parseNim(amount) > 0n;
+    } catch {
+      return false;
+    }
+  })();
+
+  const withdraw = async () => {
+    setSending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await withdrawAction("withdraw", amount);
+      const w = data.withdrawal as
+        | {
+            amountLuna: string;
+            status: string;
+            withdrawTxHash: string | null;
+            recipientAddress: string;
+          }
+        | undefined;
+      setSentHash(w?.withdrawTxHash ?? null);
+      setAmount("");
+      setNotice(
+        w?.status === "sent"
+          ? `Withdrawal broadcast (${formatNim(BigInt(w.amountLuna))} NIM to your linked wallet). Press Confirm below once it has ~10 confirmations.`
+          : "Withdrawal request recorded.",
+      );
+      onDone();
+      void loadQuote();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Withdrawal failed");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const confirm = async () => {
+    setConfirming(true);
+    setError(null);
+    try {
+      const data = await withdrawAction("withdraw-confirm");
+      const w = data.withdrawal as { status: string; amountLuna: string } | undefined;
+      if (w?.status === "verified") {
+        setSentHash(null);
+        setNotice(`Withdrawal confirmed - ${formatNim(BigInt(w.amountLuna))} NIM is yours.`);
+        onDone();
+        void loadQuote();
+      }
+    } catch (err) {
+      // Confirmations still maturing or a node hiccup: the hash stays up so
+      // Confirm remains a re-check of the SAME transaction, never a new one.
+      setError(err instanceof Error ? err.message : "Status check failed");
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const working = parentWorking || quoteBusy || sending || confirming;
+  const available = quote ? `${formatNim(BigInt(quote.availableLuna))} NIM` : "...";
+
+  return (
+    <div className="rounded-md border border-border/60 bg-secondary/20 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="min-w-0 flex-1 text-2xs leading-snug text-muted-foreground">
+          Withdraw the uncommitted remainder to your linked wallet ({available} available).
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={working || busy}
+          onClick={() => {
+            setSentHash(null);
+            setNotice(null);
+            setError(null);
+            void loadQuote();
+          }}
+        >
+          {quoteBusy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+          Refresh
+        </Button>
+      </div>
+      {quoteError && <p className="mt-1 text-2xs text-warning">{quoteError}</p>}
+      {quote && !quote.signerConfigured && (
+        <p className="mt-1 text-2xs leading-snug text-warning">
+          This deployment has no treasury payout node configured, so withdrawals cannot be signed.
+        </p>
+      )}
+      {quote?.recipientAddress && (
+        <p className="mt-1 font-mono text-2xs text-muted-foreground">
+          &rarr; {quote.recipientAddress.slice(0, 10)}...{quote.recipientAddress.slice(-6)}
+        </p>
+      )}
+      {error && <ErrorNote message={error} className="mt-2" />}
+      {notice && (
+        <p className="mt-2 rounded-md bg-secondary/40 px-3 py-2 text-2xs text-muted-foreground">{notice}</p>
+      )}
+      {sentHash && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1 break-all font-mono text-2xs text-muted-foreground">
+            tx {sentHash.slice(0, 18)}...{sentHash.slice(-6)} - waiting for confirmations.
+          </p>
+          <Button size="sm" variant="ghost" disabled={working || busy} onClick={() => void confirm()}>
+            {confirming ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Confirm withdrawal
+          </Button>
+        </div>
+      )}
+      {!sentHash && (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+            placeholder="NIM, e.g. 25"
+            inputMode="decimal"
+            className="w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1.5 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+            aria-label="Withdrawal amount in NIM"
+          />
+          <Button
+            size="sm"
+            className="shrink-0"
+            disabled={!amountValid || working || busy}
+            onClick={() => void withdraw()}
+          >
+            {sending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Withdraw
+          </Button>
         </div>
       )}
     </div>

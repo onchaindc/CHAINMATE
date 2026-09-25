@@ -523,6 +523,16 @@ export default function TournamentDetailPage() {
             Free entry
           </span>
         )}
+        {/* The PRIZE POOL belongs next to the entry fee — the card's money
+            facts read as one line: what it costs and what it plays for.
+            Shown whenever the ledger has verified money in this event (paid
+            entries or an operator top-up), live or ended. */}
+        {detail.verifiedPoolLuna ? (
+          <span className="inline-flex items-center gap-1 font-semibold text-primary">
+            <Trophy className="h-3.5 w-3.5" aria-hidden />
+            Prize pool {displayNim(detail.verifiedPoolLuna)} NIM
+          </span>
+        ) : null}
         {isHost && <span className="font-sans text-2xs text-primary">You host</span>}
       </div>
 

@@ -92,10 +92,10 @@ export function materialScore(fen: string): Material {
   let white = 0;
   let black = 0;
   for (const row of board) {
-    for (const cell of row) {
-      if (!cell) continue;
-      const value = PIECE_VALUES[cell.type];
-      if (cell.color === "w") white += value;
+    for (const sq of row) {
+      if (!sq) continue;
+      const value = PIECE_VALUES[sq.type] ?? 0;
+      if (sq.color === "w") white += value;
       else black += value;
     }
   }
@@ -105,6 +105,35 @@ export function materialScore(fen: string): Material {
 /** "White"/"Black" from a chess.js turn char. */
 export function turnLabel(turn: "w" | "b"): "white" | "black" {
   return turn === "w" ? "white" : "black";
+}
+
+/**
+ * Threefold repetition across a WHOLE game. chess.js can only see the
+ * positions loaded into its own history, and every move in this app starts
+ * from a bare FEN — so the check replays the full recorded move list in one
+ * Chess instance and asks it. Same position, same side to move, same
+ * castling rights and en-passant square, three times: the standard rule,
+ * and the reason shuffling lines (human vs human or player vs bot) now ends
+ * the game as a draw instead of looping forever.
+ *
+ * Called by the move applier AFTER the new move is appended, so `moves`
+ * always includes the latest ply.
+ */
+export function isThreefoldRepetition(moves: MoveRecord[]): boolean {
+  const chess = new Chess();
+  for (const m of moves) {
+    try {
+      chess.move({
+        from: m.from as Square,
+        to: m.to as Square,
+        promotion: (m.promotion || undefined) as "q" | "r" | "b" | "n" | undefined,
+      });
+    } catch {
+      // A corrupted record must never draw a live game on its own.
+      return false;
+    }
+  }
+  return chess.isThreefoldRepetition();
 }
 
 /**

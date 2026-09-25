@@ -75,7 +75,10 @@ interface PayoutActionBody {
     | "refund-claim"
     | "refund-confirm"
     | "topup-prepare"
-    | "topup-claim";
+    | "topup-claim"
+    | "withdraw-quote"
+    | "withdraw"
+    | "withdraw-confirm";
   playerId?: string;
   /** For send/dispatch/retry/verify: which winner's payout to act on. */
   targetPlayerId?: string;
@@ -84,8 +87,7 @@ interface PayoutActionBody {
   /** For wallet-destination: a canonical Nimiq address typed in the admin console. */
   destinationAddress?: string;
   /** For plan: the admin console's distribution choice (top 1 / top 3 / top 5). */
-  preset?: string;
-  /** For topup-prepare: the human NIM amount the operator wants to add. */
+  preset?: string;    /** For topup-prepare: the human NIM amount the operator wants to add. */
   amountNim?: string;
 }
 
@@ -204,6 +206,42 @@ export async function POST(req: NextRequest, { params }: Params) {
         { error: "This tournament has no prize pool" },
         { status: 400 },
       );
+    }
+
+    // POOL WITHDRAWALS — the reverse of a top-up: the treasury payout node
+    // sends UNCOMMITTED pool funds to the admin's own linked wallet. Only
+    // ended moneyed events; the cap (prizes + refunds + withdrawals) is
+    // enforced server-side so players' money can never leave.
+    if (body.action === "withdraw-quote" || body.action === "withdraw" || body.action === "withdraw-confirm") {
+      const w = await import("@/lib/server/tournament-withdraw");
+      try {
+        if (body.action === "withdraw-quote") {
+          const quote = await w.quotePoolWithdrawal(id, acting.playerId);
+          return NextResponse.json({ quote });
+        }
+        if (body.action === "withdraw") {
+          if (typeof body.amountNim !== "string" || !body.amountNim.trim()) {
+            return NextResponse.json({ error: "amountNim is required" }, { status: 400 });
+          }
+          const result = await w.withdrawPool(id, acting.playerId, body.amountNim);
+          return NextResponse.json({ withdrawal: result });
+        }
+        const record = await w.confirmPoolWithdrawal(id, acting.playerId);
+        return NextResponse.json({
+          withdrawal: {
+            amountLuna: record.amountLuna,
+            status: record.status,
+            withdrawTxHash: record.withdrawTxHash,
+            recipientAddress: record.recipientAddress,
+          },
+        });
+      } catch (err) {
+        if (err instanceof w.WithdrawError) {
+          return NextResponse.json({ error: err.message, kind: err.kind }, { status: err.status });
+        }
+        const message = err instanceof Error ? err.message : "Withdrawal failed";
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
     }
 
     switch (body.action) {
