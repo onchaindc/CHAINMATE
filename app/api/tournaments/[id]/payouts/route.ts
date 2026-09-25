@@ -210,7 +210,8 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     // POOL WITHDRAWALS — the reverse of a top-up: the treasury payout node
     // sends UNCOMMITTED pool funds to the admin's own linked wallet. Only
-    // ended moneyed events; the cap (prizes + refunds + withdrawals) is
+    // LIVE moneyed events (an ended event refuses withdrawals — its pool is
+    // fully spoken for); the cap (prizes + refunds + withdrawals) is
     // enforced server-side so players' money can never leave.
     if (body.action === "withdraw-quote" || body.action === "withdraw" || body.action === "withdraw-confirm") {
       const w = await import("@/lib/server/tournament-withdraw");
