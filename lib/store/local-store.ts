@@ -1,7 +1,8 @@
 "use client";
 
 import { abortGame, applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
-import { chooseAiMove, sanHistoryOf } from "@/lib/ai-engine";
+import { sanHistoryOf } from "@/lib/ai-engine";
+import { requestAiMove } from "@/lib/ai-runner";
 import { computeClocks } from "@/lib/clocks";
 import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
 import { buildRuleSummary } from "@/lib/summary";
@@ -258,8 +259,14 @@ export class LocalGameStore implements GameStore {
     try {
       // The SAN history lets the top levels use their opening book — a bare
       // FEN carries no move list, and the book must never be consulted on a
-      // guessed ply count.
-      const aiMove = chooseAiMove(fen, game.aiDifficulty ?? "casual", sanHistoryOf(game.moves));
+      // guessed ply count. The search runs off the main thread when the
+      // browser allows it (a 2.5s synchronous think would freeze the board);
+      // environments without workers fall back to the sync engine.
+      const aiMove = await requestAiMove(
+        fen,
+        game.aiDifficulty ?? "casual",
+        sanHistoryOf(game.moves),
+      );
       if (!aiMove) return game;
       const res = applyMoveToGame(game, AI_PLAYER_ID, aiMove.from, aiMove.to, aiMove.promotion);
       if (!res.ok) return game;
