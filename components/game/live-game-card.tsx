@@ -6,7 +6,7 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
-import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { AI_BRAND_SHORT, aiLevelFor, type LiveGameEntry } from "@/lib/types";
 
@@ -25,11 +25,11 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
      server recorded — verbatim — with "—" when none arrived. */
   const botName = entry.aiDifficulty ? aiLevelFor(entry.aiDifficulty).name : AI_BRAND_SHORT;
   const whiteName =
-    white.isAi ? botName : guestDisplayName(white.name) || UNNAMED_NAME;
+    white.isAi ? botName : guestDisplayName(white.name) || GUEST_NAME;
   const blackName = black.isAi
     ? botName
     : black.id
-      ? guestDisplayName(black.name) || UNNAMED_NAME
+      ? guestDisplayName(black.name) || GUEST_NAME
       : "Waiting…";
 
   return (

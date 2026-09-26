@@ -29,7 +29,7 @@ import { Panel } from "@/components/ui/panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { UNNAMED_NAME, guestDisplayName, getIdentityToken } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName, getIdentityToken } from "@/lib/identity";
 import { tournamentApi, type TournamentDetailPayload, type TournamentAction } from "@/lib/tournament-api";
 import { clearPendingEntryTx, loadPendingEntryTx } from "@/lib/nimiq/pending-entry-tx";
 import type { TournamentFormat, TournamentMatch, TournamentStatus } from "@/lib/tournament-types";
@@ -1457,7 +1457,7 @@ function nameOf(detail: TournamentDetailPayload, playerId: string): string {
   // host falls back to "Host" only while the summary has not resolved.
   if (playerId === detail.summary.creatorId)
     return guestDisplayName(detail.summary.creatorName) || "Host";
-  return guestDisplayName(detail.entryNames?.[playerId]) || UNNAMED_NAME;
+  return guestDisplayName(detail.entryNames?.[playerId]) || GUEST_NAME;
 }
 
 /**

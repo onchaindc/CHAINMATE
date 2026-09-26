@@ -51,7 +51,7 @@ import {
 import { START_FEN } from "@/lib/types";
 // guestDisplayName is a pure string→string mapping, safe to compute on the
 // server so Games/Watch rows carry the mapped name from the first paint.
-import { guestDisplayName } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 import { randomHex } from "@/lib/utils";
 import { ingestTournamentGameResult } from "@/lib/server/tournaments";
 
@@ -248,13 +248,15 @@ async function livePlayerInfo(playerId: string, aiDifficulty?: string): Promise<
     return { id: playerId, name: "Waiting…" };
   }
   const stats = await getPlayerStats(playerId);
-  /* The recorded username for real players; machine-minted guest artifacts
-     (Guest_7B — a uniqueness artifact, never a chosen name) map to the plain
-     word "Guest". Every Games/Watch/profile list serves through here, so the
-     mapping is consistent across every surface. */
+  /* Every served name is a PERSON: the recorded username for real players,
+     the plain word "Guest" for machine-minted artifacts (Guest_7B — a
+     uniqueness artifact, never a chosen name) AND for guests with no stored
+     name at all. A played game has two participants; a list never shows an
+     empty slot where a human sat. Every Games/Watch/profile list serves
+     through here, so the mapping is consistent across every surface. */
   return {
     id: playerId,
-    name: guestDisplayName(stats.username) || undefined,
+    name: guestDisplayName(stats.username) || GUEST_NAME,
     rating: stats.rating,
     country: stats.country,
     avatarUrl: stats.avatarUrl ?? null,

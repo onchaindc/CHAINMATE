@@ -10,7 +10,7 @@ import { CountryFlag } from "@/components/ui/country-flag";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
-import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { HostedGameStore, type SearchPlayerResult } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
@@ -137,7 +137,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
     options?: { withMenu?: boolean },
   ) => {
     const linkable = !p.isGuest && p.username;
-    const name = guestDisplayName(p.username) || UNNAMED_NAME;
+    const name = guestDisplayName(p.username) || GUEST_NAME;
     const isBlocked = blockedIds.has(p.playerId);
     return (
       <div
@@ -353,7 +353,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
 
       <ConfirmDialog
         open={removing !== null}
-        title={`Remove ${removing ? guestDisplayName(removing.username) || UNNAMED_NAME : UNNAMED_NAME}?`}
+        title={`Remove ${removing ? guestDisplayName(removing.username) || GUEST_NAME : GUEST_NAME}?`}
         confirmLabel="Remove friend"
         destructive
         busy={removing !== null && busyId === removing.playerId}
@@ -370,8 +370,8 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
         open={blocking !== null}
         title={
           blockedIds.has(blocking?.playerId ?? "")
-            ? `Unblock ${blocking ? guestDisplayName(blocking.username) || UNNAMED_NAME : UNNAMED_NAME}?`
-            : `Block ${blocking ? guestDisplayName(blocking.username) || UNNAMED_NAME : UNNAMED_NAME}?`
+            ? `Unblock ${blocking ? guestDisplayName(blocking.username) || GUEST_NAME : GUEST_NAME}?`
+            : `Block ${blocking ? guestDisplayName(blocking.username) || GUEST_NAME : GUEST_NAME}?`
         }
         confirmLabel={blockedIds.has(blocking?.playerId ?? "") ? "Unblock" : "Block"}
         destructive={!blockedIds.has(blocking?.playerId ?? "")}

@@ -18,7 +18,6 @@ import assert from "node:assert/strict";
 import * as identityModule from "@/lib/identity";
 import {
   GUEST_NAME,
-  UNNAMED_NAME,
   displayNameFor,
   guestDisplayName,
   playerHandle,
@@ -62,8 +61,12 @@ test("no recorded name yields empty — never a derived label", () => {
 test("no function in the identity module derives a name from an id", () => {
   // Whatever remains of the old label API must not fabricate anything.
   assert.equal(playerHandle(), "");
-  // The only string it exports for a blank slot is punctuation, not a name.
-  assert.match(UNNAMED_NAME, /^[—-]$/);
+  // A guest's label is the single word, with no decoration of any kind.
+  assert.equal(GUEST_NAME, "Guest");
+  // No dash placeholder exists in the module: a person slot is always named.
+  for (const key of Object.keys(identityModule)) {
+    assert.notEqual(key, "UNNAMED_NAME");
+  }
 });
 
 test("no vocabulary of invented handles exists anywhere", () => {

@@ -14,7 +14,7 @@
 import { getHostedGame, writeHostedGameWithChat } from "@/lib/server/hosted";
 import { isGameOver } from "@/lib/types";
 import { usernameForPlayer } from "@/lib/server/admin";
-import { guestDisplayName } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 
 const CHAT_LIMIT = 200;
 const MAX_LEN = 500;
@@ -81,10 +81,10 @@ export async function sendGameChat(
     return { ok: false, error: "Only the two players can chat in this game" };
   }
 
-  // Chat names a PERSON: the recorded username verbatim for real players,
-  // the plain word "Guest" for machine-minted artifacts, empty when nothing
-  // resolves (the client renders its blank-name placeholder).
-  const fromName = guestDisplayName(await usernameForPlayer(senderId));
+  // Chat names a PERSON: the recorded username for real players, the plain
+  // word "Guest" for machine-minted artifacts and for guests with no stored
+  // name. A message is always sent by someone with a name.
+  const fromName = guestDisplayName(await usernameForPlayer(senderId)) || GUEST_NAME;
   const message: ChatMessage = {
     id: newId(),
     fromPlayerId: senderId,

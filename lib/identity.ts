@@ -48,9 +48,6 @@ export function guestDisplayName(username?: string | null): string {
   return GUEST_ARTIFACT.test(username) ? GUEST_NAME : username;
 }
 
-/** Placeholder for a name slot when nothing was recorded — never a name. */
-export const UNNAMED_NAME = "—";
-
 /**
  * No derived labels exist anymore. Kept only as a tombstone so any leftover
  * caller compiles and renders nothing — never a name.

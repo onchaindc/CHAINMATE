@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { UNNAMED_NAME, guestDisplayName, getGuestIdentity } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName, getGuestIdentity } from "@/lib/identity";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { cn } from "@/lib/utils";
@@ -89,7 +89,7 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
     // (device guest id, local rows without a name map), the row says "You" —
     // honest at every identity state.
     if (meIds.has(id)) return meName || "You";
-    return guestDisplayName(players?.[id]?.name) || UNNAMED_NAME;
+    return guestDisplayName(players?.[id]?.name) || GUEST_NAME;
   };
 
   /**

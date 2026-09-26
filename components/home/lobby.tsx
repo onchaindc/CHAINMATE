@@ -24,7 +24,7 @@ import { RecentForm } from "@/components/profile/recent-form";
 import { SectionLabel } from "@/components/ui/page-header";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -496,7 +496,7 @@ export function Lobby() {
               ) : (
                 <ul className="divide-y divide-border/50">
                   {data.friends.slice(0, 5).map((f) => {
-                    const name = guestDisplayName(f.username) || UNNAMED_NAME;
+                    const name = guestDisplayName(f.username) || GUEST_NAME;
                     return (
                       <li key={f.playerId} className="flex items-center gap-2.5 px-3 py-2">
                         {/* The real picture when one exists — the friends list
@@ -626,7 +626,7 @@ function liveName(p: {
   if (!p.id) return "Waiting…";
   // Real username when the registry has one, the player's stable handle
   // otherwise — a live row never reads as the bare word "Guest".
-  return guestDisplayName(p.name) || UNNAMED_NAME;
+  return guestDisplayName(p.name) || GUEST_NAME;
 }
 
 function Stat({

@@ -9,7 +9,7 @@ import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
 import { memo } from "react";
 import { AI_PLAYER_ID, aiLevelFor, type AiDifficulty, type PlayerSide } from "@/lib/types";
-import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
+import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -59,7 +59,7 @@ export const PlayerCard = memo(function PlayerCard({
   // the brand is only the fallback when no level is stamped on the game. A
   // human shows exactly the name recorded for them — or "—" when none was.
   const displayName =
-    guestDisplayName(name) || (isAi ? aiLevelFor(aiDifficulty).name : UNNAMED_NAME);
+    guestDisplayName(name) || (isAi ? aiLevelFor(aiDifficulty).name : GUEST_NAME);
   const active = isTurn && !waiting;
 
   return (
