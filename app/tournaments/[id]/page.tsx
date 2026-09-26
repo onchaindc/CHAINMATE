@@ -29,7 +29,7 @@ import { Panel } from "@/components/ui/panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { displayNameFor, getIdentityToken } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName, getIdentityToken } from "@/lib/identity";
 import { tournamentApi, type TournamentDetailPayload, type TournamentAction } from "@/lib/tournament-api";
 import { clearPendingEntryTx, loadPendingEntryTx } from "@/lib/nimiq/pending-entry-tx";
 import type { TournamentFormat, TournamentMatch, TournamentStatus } from "@/lib/tournament-types";
@@ -1452,13 +1452,12 @@ function PayoutStateBadge({ status }: { status: string }) {
 /* ------------------------------------------------------------------ */
 
 function nameOf(detail: TournamentDetailPayload, playerId: string): string {
-  // The server resolves the host's username into the summary; every other
-  // entrant resolves through displayNameFor — real username when the server
-  // sent one, stable handle otherwise. A raw Guest_XXXX from the server's
-  // entry map (a uniqueness artifact, never a chosen name) maps to the handle
-  // too, so NOBODY in the bracket reads as the bare word "Guest".
-  if (playerId === detail.summary.creatorId) return detail.summary.creatorName ?? "Host";
-  return displayNameFor(playerId, detail.entryNames?.[playerId]);
+  // The recorded username, with machine-minted guest artifacts (Guest_7B)
+  // displayed as the plain word "Guest" — alone, never with numbers. The
+  // host falls back to "Host" only while the summary has not resolved.
+  if (playerId === detail.summary.creatorId)
+    return guestDisplayName(detail.summary.creatorName) || "Host";
+  return guestDisplayName(detail.entryNames?.[playerId]) || UNNAMED_NAME;
 }
 
 /**

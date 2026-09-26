@@ -18,6 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { guestDisplayName } from "@/lib/identity";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BoardSettings } from "@/components/game/board-settings";
@@ -35,7 +36,6 @@ import { useClocks } from "@/hooks/use-clocks";
 import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
 import { START_FEN } from "@/lib/types";
-import { displayNameFor } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
@@ -469,11 +469,11 @@ export default function GamePage() {
   const playerName = (playerId: string) => {
     // The computer opponent is a named player, chess.com-style.
     if (playerId === AI_PLAYER_ID) return aiLevelFor(game?.aiDifficulty).name;
-    if (playerId === myId) return identity.username || undefined;
-    // Real username when the profile resolved; a stored Guest_XXXX artifact or
-    // an unnamed guest maps to their stable handle — never a raw id or the
-    // bare word "Guest" on the board.
-    return displayNameFor(playerId, profiles[playerId]?.username);
+    if (playerId === myId) return guestDisplayName(identity.username) || undefined;
+    // The recorded username, with machine-minted guest artifacts shown as
+    // the plain word "Guest". Undefined when nothing was recorded; the board
+    // card renders its own blank placeholder.
+    return guestDisplayName(profiles[playerId]?.username) || undefined;
   };
   const playerRating = (playerId: string) => {
     // Computer opponents carry the rating of their difficulty level.

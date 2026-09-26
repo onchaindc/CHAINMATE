@@ -21,7 +21,7 @@ import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { mergeGamesById } from "@/lib/utils";
-import { displayNameFor, getIdentityToken } from "@/lib/identity";
+import { getIdentityToken, guestDisplayName } from "@/lib/identity";
 import { Input } from "@/components/ui/input";
 import { isPlayedGame, type GameState, type PlayerStats } from "@/lib/types";
 
@@ -106,7 +106,7 @@ function ProfileContent() {
   // look like a name that just refuses to change.
   // The signed-in account's name, or the device's stable handle — the profile
   // header never reads as the bare word "Guest".
-  const name = displayNameFor(playerId, identity.username) || "Player";
+  const name = guestDisplayName(identity.username) || "Player";
   const rating = stats?.rating ?? identity.rating;
   const provisional = stats ? stats.games < 5 : false;
   const winRate =

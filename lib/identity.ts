@@ -20,78 +20,57 @@ const GUEST_KEY = "chainmate:identity:v1";
 const AUTH_KEY = "chainmate:auth:v1";
 
 /**
- * What to show for a player who has no account name.
+ * What to show for a player with no real name: the single word "Guest".
+ * Alone. No numbers, no suffix, nothing derived from an id — earlier
+ * versions minted person-like handles ("ZestyPanda66") and then numbered
+ * ones ("Guest 4821"), and both read as users the app had fabricated. A
+ * guest is a guest; the word says exactly what they are.
  *
- * The FIRST attempt at this invented person-like handles ("SwiftFalcon42",
- * "ZestyPanda66") from the device id. Players read those as real users that
- * the app had fabricated — an understandable and fair complaint: a made-up
- * name LOOKS like a person. The honest label is one that says exactly what
- * it is: "Guest 4821". Clearly anonymous, still unique enough that two
- * guests in one list don't blur together, and replaced by the account's
- * real username everywhere the moment the player signs up.
- *
- * The stored `username` still carries a unique `Guest_XXXX`, because
- * profiles_username_lower_idx (0001_init.sql:36) is a global unique index that
- * guest rows share — every guest storing the literal "Guest" would collide on
- * the second insert. So this maps the stored value (or the raw player id)
- * through the label at display time rather than at the source.
- *
- * `displayNameFor` exists once because ten call sites used to rebuild this
- * label by hand and had already drifted apart.
+ * The stored `username` still carries a machine-minted `Guest_XXXX` because
+ * profiles_username_lower_idx (0001_init.sql:36) is a global unique index
+ * that guest rows share — but that value is an internal uniqueness
+ * artifact, never a name anyone chose, and it displays as the plain word.
+ * Real usernames pass through verbatim, untouched.
  */
-/** Machine-minted guest usernames, plus the bare word itself: `Guest_7B`
-    (device mint), `Guest_0X12` (profile mirror), and any account that
-    literally named itself "Guest" — all display as the numbered label, since
-    a crowd of indistinguishable "Guest"s is exactly what this module exists
-    to prevent. */
-const GUEST_ARTIFACT = /^Guest(?:_[0-9A-Fa-fxX]{1,12})?$/;
+
+/** The one word every guest displays as — alone, never with numbers. */
+export const GUEST_NAME = "Guest";
+
+/**
+ * Every machine-minted guest artifact the app has ever stored: the device
+ * mint `Guest_7B`, the profile mirror `Guest_0X12`, and the bare word
+ * itself. Real usernames ("Guesthunter", "AbdulXBT") never match.
+ */
+const GUEST_ARTIFACT = /^Guest(?:_[0-9A-Za-z]{1,12})?$/;
 
 export function guestDisplayName(username?: string | null): string {
-  if (!username) return "Guest";
-  return GUEST_ARTIFACT.test(username) ? "Guest" : username;
+  if (!username) return "";
+  return GUEST_ARTIFACT.test(username) ? GUEST_NAME : username;
 }
 
-/* The numbered guest label. Four digits from the player id keep two guests
-   in the same tournament distinguishable without inventing a persona —
-   nobody mistakes "Guest 4821" for a made-up member. */
-
-/** FNV-1a: tiny, fast, and stable in both the browser and the server. */
-function handleSeed(input: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
+/** Placeholder for a name slot when nothing was recorded — never a name. */
+export const UNNAMED_NAME = "—";
 
 /**
- * The stable per-player guest label: "Guest 4821"-style, from the player id.
- * Deterministic — the same id always yields the same label on every surface,
- * with no stored state and no server round-trip.
+ * No derived labels exist anymore. Kept only as a tombstone so any leftover
+ * caller compiles and renders nothing — never a name.
+ * @deprecated
  */
-export function playerHandle(playerId: string | null | undefined): string {
-  if (!playerId) return "Guest";
-  const digits = (handleSeed(playerId) % 10_000).toString().padStart(4, "0");
-  return `Guest ${digits}`;
+export function playerHandle(): string {
+  return "";
 }
 
 /**
- * The display name for a PLAYER ID in a row or list: the real username when
- * one resolved, the numbered guest label when the player is an unnamed
- * guest, and that label even for a stored `Guest_XXXX` value (which is a
- * uniqueness artifact, never a name anyone chose).
- *
- * Every history row, live card, leaderboard line and tournament bracket
- * routes through THIS — no call site rebuilds the label anymore.
+ * The display name for a PLAYER ID in a row or list: the recorded username
+ * verbatim when it is a real name, the plain word "Guest" when it is a
+ * machine-minted artifact, and an empty string when nothing was recorded —
+ * the caller decides what a blank slot looks like (usually "—").
  */
 export function displayNameFor(
   playerId: string | null | undefined,
   username?: string | null,
 ): string {
-  // A real username (anything that is not the guest-mint artifact) wins.
-  if (username && !GUEST_ARTIFACT.test(username)) return username;
-  return playerHandle(playerId);
+  return guestDisplayName(username);
 }
 
 export interface GuestIdentity {

@@ -1,13 +1,13 @@
 /**
- * Regression test for "everything shows Guest instead of player names" —
- * and for its opposite failure mode: inventing person-like handles.
+ * Regression tests for guest naming.
  *
- * History: the old display path collapsed EVERY signed-out player into the
- * identical word "Guest". The first fix derived name-like handles from the
- * device id ("ZestyPanda66"), which players read as fabricated users — a
- * fair complaint. The settled behavior: guests display as an honest,
- * numbered label ("Guest 4821"), deterministic per player id, clearly not a
- * persona. Real usernames always win.
+ * History: the first display path collapsed every signed-out player into the
+ * identical word "Guest". The first fix minted person-like handles from the
+ * device id ("ZestyPanda66"), which players read as fabricated users; the
+ * second minted numbered labels ("Guest 4821"); the third let the machine
+ * string "Guest_7B" through verbatim — each rejected. Settled behavior: a
+ * guest displays as the single word "Guest". Alone. No numbers, no suffix,
+ * nothing derived. Real usernames always pass through verbatim.
  *
  * Run: npm test
  */
@@ -15,44 +15,61 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { displayNameFor, playerHandle } from "@/lib/identity";
+import * as identityModule from "@/lib/identity";
+import {
+  GUEST_NAME,
+  UNNAMED_NAME,
+  displayNameFor,
+  guestDisplayName,
+  playerHandle,
+} from "@/lib/identity";
 
-test("a real username always wins over the guest label", () => {
-  assert.equal(displayNameFor("0xabc", "MagnusC"), "MagnusC");
+test("a guest displays as the single word Guest — alone", () => {
+  assert.equal(GUEST_NAME, "Guest");
+  // The bare word (old records literally stored "Guest").
+  assert.equal(guestDisplayName("Guest"), "Guest");
+  // Every machine-minted artifact format ever stored on a guest record.
+  assert.equal(guestDisplayName("Guest_7B"), "Guest");
+  assert.equal(guestDisplayName("Guest_0X12"), "Guest");
+  assert.equal(guestDisplayName("Guest_3F2A"), "Guest");
 });
 
-test("two different guests get different stable labels", () => {
-  const a = playerHandle("0xaaaaaaaaaaaaaaaaaaaaaaaa");
-  const b = playerHandle("0xbbbbbbbbbbbbbbbbbbbbbbbb");
-  assert.notEqual(a, b, "two guests must not share one display label");
-  assert.equal(a, playerHandle("0xaaaaaaaaaaaaaaaaaaaaaaaa"), "label is stable per id");
-});
-
-test("guest labels are honest: numbered, clearly not a persona", () => {
-  for (const id of ["0x1234", "acct_deadbeef", "guest_x"]) {
-    const handle = playerHandle(id);
-    // The label says what it is — a guest — with a distinguishing number.
-    assert.match(handle, /^Guest \d{4}$/);
-    // But it is never the bare, indistinguishable word.
-    assert.notEqual(handle, "Guest");
-    // And it never LOOKS like an invented username.
-    assert.doesNotMatch(handle, /^[A-Z][a-z]+[A-Z][a-z]+/);
+test("no guest display ever contains digits or an underscore", () => {
+  for (const stored of ["Guest", "Guest_7B", "Guest_0X12", "Guest_3F2A"]) {
+    const shown = guestDisplayName(stored);
+    assert.doesNotMatch(shown, /\d/, `"${shown}" must not contain digits`);
+    assert.doesNotMatch(shown, /_/, `"${shown}" must not contain an underscore`);
+    assert.doesNotMatch(shown, /\s/, `"${shown}" must not contain whitespace`);
   }
 });
 
-test("machine-minted guest artifacts map to the label, real names pass", () => {
-  // Both mint formats: device-local (`Guest_7B`) and the profile mirror's
-  // `Guest_0X12` (the X defeats a hex-only pattern).
-  assert.equal(displayNameFor("0xabc", "Guest_7B"), playerHandle("0xabc"));
-  assert.equal(displayNameFor("0xabc", "Guest_0X12"), playerHandle("0xabc"));
-  assert.equal(displayNameFor("0xabc", "Guest_3F2A"), playerHandle("0xabc"));
-  // The bare word (old records literally stored "Guest") also maps.
-  assert.equal(displayNameFor("0xabc", "Guest"), playerHandle("0xabc"));
-  // A player who actually named themselves something Guest-ish keeps it.
-  assert.equal(displayNameFor("0xabc", "Guesthunter"), "Guesthunter");
+test("real usernames pass through verbatim", () => {
+  assert.equal(displayNameFor("0xabc", "MagnusC"), "MagnusC");
+  assert.equal(guestDisplayName("Guesthunter"), "Guesthunter");
+  assert.equal(guestDisplayName("AbdulXBT"), "AbdulXBT");
+  // A name that merely contains the word keeps itself.
+  assert.equal(guestDisplayName("Guest_Only_In_Name"), "Guest_Only_In_Name");
 });
 
-test("no id and no name falls back rather than throwing", () => {
-  assert.equal(playerHandle(null), "Guest");
-  assert.equal(displayNameFor(undefined, undefined), "Guest");
+test("no recorded name yields empty — never a derived label", () => {
+  assert.equal(displayNameFor("0xaaaaaaaaaaaaaaaaaaaaaaaa"), "");
+  assert.equal(displayNameFor("0xbbbbbbbbbbbbbbbbbbbbbbbb", null), "");
+  assert.equal(displayNameFor(undefined, undefined), "");
+  assert.equal(displayNameFor(null, ""), "");
+  assert.equal(guestDisplayName(undefined), "");
+});
+
+test("no function in the identity module derives a name from an id", () => {
+  // Whatever remains of the old label API must not fabricate anything.
+  assert.equal(playerHandle(), "");
+  // The only string it exports for a blank slot is punctuation, not a name.
+  assert.match(UNNAMED_NAME, /^[—-]$/);
+});
+
+test("no vocabulary of invented handles exists anywhere", () => {
+  // Guarded by construction: the identity module exports no adjective or
+  // animal lists. If someone reintroduces them under a new name, this fails.
+  for (const key of Object.keys(identityModule)) {
+    assert.doesNotMatch(key, /adjective|animal|persona|zesty|falcon/i);
+  }
 });

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, LogOut, ShieldCheck, Trophy } from "lucide-react";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { useIdentity } from "@/lib/identity-context";
-import { displayNameFor, getIdentityToken } from "@/lib/identity";
+import { getIdentityToken, guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 /**
@@ -71,7 +71,7 @@ export function PlayerMenu() {
 
   // Signed-in name, or the device's stable handle — the navbar never reads
   // as the bare word "Guest".
-  const name = displayNameFor(identity.playerId, identity.username) || "Player";
+  const name = guestDisplayName(identity.username) || "Player";
   const isGuest = identity.isGuest;
 
   const close = () => setOpen(false);

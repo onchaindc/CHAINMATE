@@ -8,7 +8,7 @@ import { Panel } from "@/components/ui/panel";
 import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { displayNameFor } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
 import { getIdentityToken, getPlayerId } from "@/lib/identity";
 import { useCachedRead } from "@/lib/read-cache";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
@@ -197,15 +197,18 @@ export default function MessagesPage() {
       // Friends-only: the server sends the allowlist; the UI mirrors it.
       if (!allowedPeers.has(peerId)) continue;
       const unread = m.kind === "dm" && m.readAt === null && m.fromPlayerId !== identity.playerId;
-      // displayNameFor maps any machine-minted Guest_XXXX (or an unresolved
-      // id) to the peer's stable handle — a chat header is a name, not a
-      // label or an id.
+      // The peer's name is exactly what the server recorded — verbatim, never
+      // a label the app derived. The "You" guard keeps legacy envelopes from
+      // labeling the peer with the reader; an unnamed peer shows the
+      // blank-name placeholder.
+      // Every candidate name goes through guestDisplayName: real usernames
+      // verbatim, machine-minted guest artifacts as the plain word "Guest".
       const peerName =
         m.counterpartName && m.counterpartName !== "You"
-          ? displayNameFor(peerId, m.counterpartName)
+          ? guestDisplayName(m.counterpartName)
           : m.fromName && m.fromName !== "You"
-            ? displayNameFor(peerId, m.fromName)
-            : displayNameFor(peerId);
+            ? guestDisplayName(m.fromName)
+            : UNNAMED_NAME;
       const peerAvatar = m.counterpartAvatar ?? null;
       const existing = map.get(peerId);
       if (existing) {
@@ -334,10 +337,10 @@ export default function MessagesPage() {
       player_id: deepLinkPeer,
       username:
         hit.counterpartName && hit.counterpartName !== "You"
-          ? displayNameFor(deepLinkPeer, hit.counterpartName)
+          ? guestDisplayName(hit.counterpartName)
           : hit.fromPlayerId === deepLinkPeer
-            ? displayNameFor(deepLinkPeer, hit.fromName)
-            : displayNameFor(deepLinkPeer),
+            ? guestDisplayName(hit.fromName)
+            : "",
       is_guest: false,
       rating: 0,
       country: null,
@@ -412,9 +415,9 @@ export default function MessagesPage() {
                         onClick={() => openPeer(r)}
                         className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-secondary/50"
                       >
-                        <PlayerAvatar name={displayNameFor(r.player_id, r.username)} avatarUrl={r.avatar_url} size="md" />
+                        <PlayerAvatar name={guestDisplayName(r.username) || UNNAMED_NAME} avatarUrl={r.avatar_url} size="md" />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{displayNameFor(r.player_id, r.username)}</span>
+                          <span className="block truncate text-sm font-medium">{guestDisplayName(r.username) || UNNAMED_NAME}</span>
                           <span className="block text-2xs text-muted-foreground">
                             {r.rating} rated · {r.games} games
                           </span>
@@ -525,7 +528,7 @@ export default function MessagesPage() {
                 {peer.player_id === "chainmate" ? (
                   <ChainMateAvatar size="md" />
                 ) : (
-                  <PlayerAvatar name={displayNameFor(peer.player_id, peer.username)} avatarUrl={peerAvatar} size="md" />
+                  <PlayerAvatar name={guestDisplayName(peer.username) || UNNAMED_NAME} avatarUrl={peerAvatar} size="md" />
                 )}
                 <div className="min-w-0">
                   {/* The name is their profile link, matching the friends
@@ -537,11 +540,11 @@ export default function MessagesPage() {
                       href={`/players/${encodeURIComponent(peer.username)}`}
                       className="block truncate text-sm font-semibold underline-offset-2 hover:underline"
                     >
-                      {displayNameFor(peer.player_id, peer.username)}
+                      {guestDisplayName(peer.username) || UNNAMED_NAME}
                     </Link>
                   ) : (
                     <p className="truncate text-sm font-semibold">
-                      {displayNameFor(peer.player_id, peer.username)}
+                      {guestDisplayName(peer.username) || UNNAMED_NAME}
                     </p>
                   )}
                   {peer.rating > 0 && (
@@ -570,7 +573,7 @@ export default function MessagesPage() {
                             <ChainMateAvatar size="xs" className="mb-0.5" />
                           ) : (
                             <PlayerAvatar
-                              name={displayNameFor(m.counterpartId ?? peer.player_id, m.counterpartName ?? peer.username)}
+                              name={m.counterpartName ?? (guestDisplayName(peer.username) || UNNAMED_NAME)}
                               avatarUrl={m.counterpartAvatar ?? peerAvatar}
                               size="xs"
                               className="mb-0.5"

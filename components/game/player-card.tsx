@@ -9,7 +9,7 @@ import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
 import { memo } from "react";
 import { AI_PLAYER_ID, aiLevelFor, type AiDifficulty, type PlayerSide } from "@/lib/types";
-import { playerHandle } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -57,8 +57,9 @@ export const PlayerCard = memo(function PlayerCard({
   const isAi = playerId === AI_PLAYER_ID;
   // The board names the SPECIFIC Grandmaster playing (Pawn, Apex, Stockfish…);
   // the brand is only the fallback when no level is stamped on the game. A
-  // human without a resolved name shows their stable handle — never "Guest".
-  const displayName = name ?? (isAi ? aiLevelFor(aiDifficulty).name : playerHandle(playerId));
+  // human shows exactly the name recorded for them — or "—" when none was.
+  const displayName =
+    guestDisplayName(name) || (isAi ? aiLevelFor(aiDifficulty).name : UNNAMED_NAME);
   const active = isTurn && !waiting;
 
   return (
@@ -106,7 +107,7 @@ export const PlayerCard = memo(function PlayerCard({
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
             <CountryFlag code={country} />
-            <span className="truncate capitalize">{displayName}</span>
+            <span className="truncate">{displayName}</span>
             {isYou && (
               <Badge variant="secondary" className="px-1.5 py-0 text-2xs">
                 you
@@ -128,7 +129,7 @@ export const PlayerCard = memo(function PlayerCard({
                 is the more useful of the two mid-game. */}
             {captures ?? null}
             <span className="truncate">
-              {isAi ? aiLevelFor(aiDifficulty).name : waiting ? "Waiting…" : name ? "" : playerHandle(playerId)}
+              {isAi ? aiLevelFor(aiDifficulty).name : waiting ? "Waiting…" : ""}
             </span>
             {inCheck && active && (
               <span className="shrink-0 font-semibold uppercase tracking-wide text-negative">

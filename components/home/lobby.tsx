@@ -24,7 +24,7 @@ import { RecentForm } from "@/components/profile/recent-form";
 import { SectionLabel } from "@/components/ui/page-header";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { displayNameFor } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
 import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -222,7 +222,7 @@ export function Lobby() {
             Welcome back
           </p>
           <h1 className="font-display mt-3 truncate text-3xl font-bold tracking-tight">
-            {displayNameFor(identity.playerId, identity.username) || "Player"}
+            {guestDisplayName(identity.username) || "Player"}
           </h1>
         </div>
         <dl className="flex items-center gap-5 sm:gap-7">
@@ -448,7 +448,7 @@ export function Lobby() {
                       key={g.id}
                       game={g}
                       me={g.backend === "local" ? localMe : playerId}
-                      meName={g.backend === "local" ? displayNameFor(identity.playerId, identity.username) : undefined}
+                      meName={g.backend === "local" ? (guestDisplayName(identity.username) || undefined) : undefined}
                       delta={deltas.get(g.id) ?? null}
                       players={mergedPlayers}
                     />
@@ -496,7 +496,7 @@ export function Lobby() {
               ) : (
                 <ul className="divide-y divide-border/50">
                   {data.friends.slice(0, 5).map((f) => {
-                    const name = displayNameFor(f.playerId, f.username);
+                    const name = guestDisplayName(f.username) || UNNAMED_NAME;
                     return (
                       <li key={f.playerId} className="flex items-center gap-2.5 px-3 py-2">
                         {/* The real picture when one exists — the friends list
@@ -626,7 +626,7 @@ function liveName(p: {
   if (!p.id) return "Waiting…";
   // Real username when the registry has one, the player's stable handle
   // otherwise — a live row never reads as the bare word "Guest".
-  return displayNameFor(p.id, p.name);
+  return guestDisplayName(p.name) || UNNAMED_NAME;
 }
 
 function Stat({

@@ -19,6 +19,7 @@
 import { getGameStorage } from "@/lib/server/storage";
 import { isAdminPlayer, usernameForPlayer } from "@/lib/server/admin";
 import { listFriendIds, profileForPlayerId } from "@/lib/supabase/db";
+import { guestDisplayName } from "@/lib/identity";
 
 const MESSAGES_KEY = "chainmate:messages:inboxes";
 const BROADCAST_FEED_KEY = "chainmate:messages:broadcasts";
@@ -83,7 +84,9 @@ async function push(playerId: string, envelope: MessageEnvelope): Promise<void> 
 /** Resolve a display name; the official account renders as ChainMate. */
 async function displayNameFor(playerId: string): Promise<string> {
   if (playerId === CHAINMATE_ID) return "ChainMate";
-  return (await usernameForPlayer(playerId)) ?? "Player";
+  // Recorded username verbatim for real players; machine-minted guest
+  // artifacts (Guest_7B) display as the plain word "Guest".
+  return guestDisplayName(await usernameForPlayer(playerId));
 }
 
 /* ------------------------------------------------------------------ */

@@ -49,9 +49,9 @@ import {
   type PlayerStats,
 } from "@/lib/types";
 import { START_FEN } from "@/lib/types";
-// The numbered guest label is a pure id→string mapping, safe to compute on
-// the server so Games/Watch rows carry honest names from the first paint.
-import { displayNameFor } from "@/lib/identity";
+// guestDisplayName is a pure string→string mapping, safe to compute on the
+// server so Games/Watch rows carry the mapped name from the first paint.
+import { guestDisplayName } from "@/lib/identity";
 import { randomHex } from "@/lib/utils";
 import { ingestTournamentGameResult } from "@/lib/server/tournaments";
 
@@ -248,13 +248,13 @@ async function livePlayerInfo(playerId: string, aiDifficulty?: string): Promise<
     return { id: playerId, name: "Waiting…" };
   }
   const stats = await getPlayerStats(playerId);
-  /* displayNameFor (not the raw username) — a guest's stored Guest_XXXX is a
-     uniqueness artifact, and the client fallback only covers rows the CLIENT
-     knows are its own. Server-side mapping keeps every Games/Watch row honest
-     with one shared function. */
+  /* The recorded username for real players; machine-minted guest artifacts
+     (Guest_7B — a uniqueness artifact, never a chosen name) map to the plain
+     word "Guest". Every Games/Watch/profile list serves through here, so the
+     mapping is consistent across every surface. */
   return {
     id: playerId,
-    name: displayNameFor(playerId, stats.username),
+    name: guestDisplayName(stats.username) || undefined,
     rating: stats.rating,
     country: stats.country,
     avatarUrl: stats.avatarUrl ?? null,

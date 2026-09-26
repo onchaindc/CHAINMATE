@@ -6,7 +6,7 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
-import { displayNameFor } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { AI_BRAND_SHORT, aiLevelFor, type LiveGameEntry } from "@/lib/types";
 
@@ -21,15 +21,15 @@ export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
   const black = entry.opponent;
   /* The bot's side is named by its LEVEL (Pawn, Apex, Stockfish…), falling
      back to the brand when the entry carries no difficulty — and always a
-     string, since PlayerAvatar requires one. Humans resolve through
-     displayNameFor: real username when one arrived, stable handle otherwise —
-     never the bare word "Guest". */
+     string, since PlayerAvatar requires one. Humans show exactly the name the
+     server recorded — verbatim — with "—" when none arrived. */
   const botName = entry.aiDifficulty ? aiLevelFor(entry.aiDifficulty).name : AI_BRAND_SHORT;
-  const whiteName = white.isAi ? botName : displayNameFor(white.id, white.name);
+  const whiteName =
+    white.isAi ? botName : guestDisplayName(white.name) || UNNAMED_NAME;
   const blackName = black.isAi
     ? botName
     : black.id
-      ? displayNameFor(black.id, black.name)
+      ? guestDisplayName(black.name) || UNNAMED_NAME
       : "Waiting…";
 
   return (

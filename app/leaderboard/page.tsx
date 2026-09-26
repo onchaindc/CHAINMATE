@@ -9,7 +9,7 @@ import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useCachedRead } from "@/lib/read-cache";
 import { useIdentity } from "@/lib/identity-context";
-import { displayNameFor } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
@@ -123,7 +123,7 @@ export default function LeaderboardPage() {
                             line, so a guest's pill could land under their name. */}
                         <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground/90">
                           <PlayerAvatar
-                            name={p.username ?? displayNameFor(p.playerId)}
+                            name={guestDisplayName(p.username) || UNNAMED_NAME}
                             avatarUrl={p.avatarUrl}
                             size="xs"
                             className="shrink-0"
@@ -138,7 +138,7 @@ export default function LeaderboardPage() {
                             </Link>
                           ) : (
                             <span className="truncate">
-                              {displayNameFor(p.playerId, p.username)}
+                              {guestDisplayName(p.username) || UNNAMED_NAME}
                             </span>
                           )}
                           {p.isGuest && (

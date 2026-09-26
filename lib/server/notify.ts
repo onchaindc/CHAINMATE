@@ -12,7 +12,7 @@
 
 import { getGameStorage } from "@/lib/server/storage";
 import { usernameForPlayer } from "@/lib/server/admin";
-import { playerHandle } from "@/lib/identity";
+import { guestDisplayName } from "@/lib/identity";
 import { AI_BRAND_SHORT, AI_PLAYER_ID } from "@/lib/types";
 
 const EVENTS_KEY = "chainmate:notify:events";
@@ -70,18 +70,18 @@ function newId(): string {
 }
 
 /**
- * Best display name for the actor (falls back without leaking raw ids).
- * The app has exactly three names for unresolvable players: "ChainMate"
- * (the official account — it has no profile row by design), "CM Grandmaster"
- * (the bots' shared brand), and the numbered guest label (everywhere else).
- * Nothing invented.
+ * Display name for the actor: exactly the username recorded for them —
+ * verbatim, never a label the app derived. The two special actors keep their
+ * real, chosen names: "ChainMate" (the official account — it has no profile
+ * row by design) and the bots' shared brand. Unnamed players carry an empty
+ * actorName and the bell renders its blank-name placeholder.
  */
 async function actorDisplayName(playerId: string): Promise<string> {
   if (playerId === "chainmate") return "ChainMate";
   if (playerId === AI_PLAYER_ID) return AI_BRAND_SHORT;
-  // Real username when one resolves; otherwise the player's stable handle —
-  // a notification names a PERSON, never the bare word "Guest".
-  return (await usernameForPlayer(playerId)) ?? playerHandle(playerId);
+  // Recorded username verbatim for real players; machine-minted guest
+  // artifacts display as the plain word "Guest"; empty when unresolvable.
+  return guestDisplayName(await usernameForPlayer(playerId));
 }
 
 /**
@@ -150,12 +150,15 @@ export async function notifyFriendRequest(
   const name = await actorDisplayName(requesterId);
   // Tap target: the REQUESTER's profile — the row is about them, and
   // accepting happens from the profile/friends surfaces it links to.
+  // The sentence needs a subject even when the actor has no recorded name:
+  // the neutral pronoun fills the slot without inventing an identity.
+  const label = name || "Someone";
   await pushEvent({
     toPlayerId: addresseeId,
     type: "friend-request",
     actorPlayerId: requesterId,
     actorName: name,
-    body: `${name} sent you a friend request.`,
+    body: `${label} sent you a friend request.`,
     href: await actorProfileHref(requesterId),
     createdAt: Date.now(),
   });
@@ -169,12 +172,13 @@ export async function notifyFriendAccepted(
   const name = await actorDisplayName(accepterId);
   // Tap target: the ACCEPTER's profile (who accepted), matching the avatar
   // the row already shows — not the reader's own /profile.
+  const label = name || "Someone";
   await pushEvent({
     toPlayerId: requesterId,
     type: "friend-accepted",
     actorPlayerId: accepterId,
     actorName: name,
-    body: `${name} accepted your friend request. You can chat now.`,
+    body: `${label} accepted your friend request. You can chat now.`,
     href: await actorProfileHref(accepterId),
     createdAt: Date.now(),
   });
@@ -242,12 +246,13 @@ export async function notifyChallenge(
   gameId: string,
 ): Promise<void> {
   const name = await actorDisplayName(fromPlayerId);
+  const label = name || "Someone";
   await pushEvent({
     toPlayerId,
     type: "challenge",
     actorPlayerId: fromPlayerId,
     actorName: name,
-    body: `${name} challenged you to a game.`,
+    body: `${label} challenged you to a game.`,
     href: `/game/${gameId}`,
     createdAt: Date.now(),
   });

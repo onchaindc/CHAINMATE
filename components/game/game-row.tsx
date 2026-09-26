@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { displayNameFor, getGuestIdentity } from "@/lib/identity";
+import { UNNAMED_NAME, guestDisplayName, getGuestIdentity } from "@/lib/identity";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { cn } from "@/lib/utils";
@@ -73,9 +73,9 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
   const isOpponentMe = meIds.has(opponent);
   const mine = isCreatorMe || isOpponentMe;
   /**
-   * The row's display name for a player id: the resolved username when the
-   * server sent one, otherwise the player's stable handle — never the bare
-   * word "Guest".
+   * The row's display name for a player id: exactly what the server recorded
+   * for them — verbatim — with "You" for this device's own side and a plain
+   * "—" when nothing was recorded. Nothing is ever invented here.
    */
   const nameFor = (id: string) => {
     if (id === AI_PLAYER_ID) {
@@ -89,7 +89,7 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
     // (device guest id, local rows without a name map), the row says "You" —
     // honest at every identity state.
     if (meIds.has(id)) return meName || "You";
-    return displayNameFor(id, players?.[id]?.name);
+    return guestDisplayName(players?.[id]?.name) || UNNAMED_NAME;
   };
 
   /**
