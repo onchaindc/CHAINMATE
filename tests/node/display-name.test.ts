@@ -1,12 +1,13 @@
 /**
- * Regression test for "everything shows Guest instead of player names".
+ * Regression test for "everything shows Guest instead of player names" —
+ * and for its opposite failure mode: inventing person-like handles.
  *
- * The old display path collapsed EVERY signed-out player into the identical
- * word "Guest" — an opponent in your history, the leaderboard, a live watch
- * row and a tournament bracket all read the same, which looked like a data
- * bug. Guests have no account name, but each has a stable device id, so the
- * fix is a deterministic per-player handle ("SwiftFalcon42") that is stable
- * across every surface and never collides between two guests in one list.
+ * History: the old display path collapsed EVERY signed-out player into the
+ * identical word "Guest". The first fix derived name-like handles from the
+ * device id ("ZestyPanda66"), which players read as fabricated users — a
+ * fair complaint. The settled behavior: guests display as an honest,
+ * numbered label ("Guest 4821"), deterministic per player id, clearly not a
+ * persona. Real usernames always win.
  *
  * Run: npm test
  */
@@ -16,31 +17,37 @@ import assert from "node:assert/strict";
 
 import { displayNameFor, playerHandle } from "@/lib/identity";
 
-test("a real username always wins over the handle", () => {
+test("a real username always wins over the guest label", () => {
   assert.equal(displayNameFor("0xabc", "MagnusC"), "MagnusC");
 });
 
-test("two different guests get different stable handles", () => {
+test("two different guests get different stable labels", () => {
   const a = playerHandle("0xaaaaaaaaaaaaaaaaaaaaaaaa");
   const b = playerHandle("0xbbbbbbbbbbbbbbbbbbbbbbbb");
-  assert.notEqual(a, b, "two guests must not share one display name");
-  assert.equal(a, playerHandle("0xaaaaaaaaaaaaaaaaaaaaaaaa"), "handle is stable per id");
+  assert.notEqual(a, b, "two guests must not share one display label");
+  assert.equal(a, playerHandle("0xaaaaaaaaaaaaaaaaaaaaaaaa"), "label is stable per id");
 });
 
-test("handles read like player names, not the word Guest", () => {
+test("guest labels are honest: numbered, clearly not a persona", () => {
   for (const id of ["0x1234", "acct_deadbeef", "guest_x"]) {
     const handle = playerHandle(id);
+    // The label says what it is — a guest — with a distinguishing number.
+    assert.match(handle, /^Guest \d{4}$/);
+    // But it is never the bare, indistinguishable word.
     assert.notEqual(handle, "Guest");
-    assert.match(handle, /^[A-Z][a-z]+[A-Z][a-z]+\d{2}$/);
+    // And it never LOOKS like an invented username.
+    assert.doesNotMatch(handle, /^[A-Z][a-z]+[A-Z][a-z]+/);
   }
 });
 
-test("machine-minted Guest_XXXX artifacts map to the handle, real names pass", () => {
+test("machine-minted guest artifacts map to the label, real names pass", () => {
   // Both mint formats: device-local (`Guest_7B`) and the profile mirror's
   // `Guest_0X12` (the X defeats a hex-only pattern).
   assert.equal(displayNameFor("0xabc", "Guest_7B"), playerHandle("0xabc"));
   assert.equal(displayNameFor("0xabc", "Guest_0X12"), playerHandle("0xabc"));
   assert.equal(displayNameFor("0xabc", "Guest_3F2A"), playerHandle("0xabc"));
+  // The bare word (old records literally stored "Guest") also maps.
+  assert.equal(displayNameFor("0xabc", "Guest"), playerHandle("0xabc"));
   // A player who actually named themselves something Guest-ish keeps it.
   assert.equal(displayNameFor("0xabc", "Guesthunter"), "Guesthunter");
 });

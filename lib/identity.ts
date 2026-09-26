@@ -22,50 +22,38 @@ const AUTH_KEY = "chainmate:auth:v1";
 /**
  * What to show for a player who has no account name.
  *
- * A bare word like "Guest" collapsed EVERY signed-out player into one
- * identical label — an opponent in your history, the leaderboard, a live
- * watch row and a tournament bracket all read "Guest", indistinguishable
- * from one another, and the app looked like it had a data bug. But every
- * player has a stable device id, so the honest fix is a DETERMINISTIC
- * CHESS-STYLE HANDLE derived from that id: the same visitor is
- * "SwiftFalcon42" on every surface, forever, and two guests never share a
- * name. It reads like a chess username because that is what a display name
- * is for — and when that person later creates an account, the account name
- * replaces the handle everywhere at once.
+ * The FIRST attempt at this invented person-like handles ("SwiftFalcon42",
+ * "ZestyPanda66") from the device id. Players read those as real users that
+ * the app had fabricated — an understandable and fair complaint: a made-up
+ * name LOOKS like a person. The honest label is one that says exactly what
+ * it is: "Guest 4821". Clearly anonymous, still unique enough that two
+ * guests in one list don't blur together, and replaced by the account's
+ * real username everywhere the moment the player signs up.
  *
  * The stored `username` still carries a unique `Guest_XXXX`, because
  * profiles_username_lower_idx (0001_init.sql:36) is a global unique index that
  * guest rows share — every guest storing the literal "Guest" would collide on
  * the second insert. So this maps the stored value (or the raw player id)
- * through the handle at display time rather than at the source.
+ * through the label at display time rather than at the source.
  *
  * `displayNameFor` exists once because ten call sites used to rebuild this
  * label by hand and had already drifted apart.
  */
-/** Machine-minted guest usernames: `Guest_7B` (device mint) and
-    `Guest_0X12` (profile mirror). Never a name anyone chose. */
-const GUEST_ARTIFACT = /^Guest_[0-9A-Fa-fxX]{1,12}$/;
+/** Machine-minted guest usernames, plus the bare word itself: `Guest_7B`
+    (device mint), `Guest_0X12` (profile mirror), and any account that
+    literally named itself "Guest" — all display as the numbered label, since
+    a crowd of indistinguishable "Guest"s is exactly what this module exists
+    to prevent. */
+const GUEST_ARTIFACT = /^Guest(?:_[0-9A-Fa-fxX]{1,12})?$/;
 
 export function guestDisplayName(username?: string | null): string {
   if (!username) return "Guest";
   return GUEST_ARTIFACT.test(username) ? "Guest" : username;
 }
 
-/* The handle vocabulary. Adjective + animal reads as a player name, not a
-   status word — 30 × 30 pairings × 100 digit suffixes keep two guests in the
-   same tournament meeting the same handle a curiosity, not a bug. */
-const HANDLE_ADJECTIVES = [
-  "Swift", "Silent", "Bold", "Calm", "Clever", "Daring", "Eager", "Fierce",
-  "Gentle", "Happy", "Jolly", "Keen", "Lucky", "Mighty", "Noble", "Patient",
-  "Quick", "Royal", "Shy", "Smart", "Steady", "Sunny", "Tidy", "Valiant",
-  "Wise", "Witty", "Zesty", "Brisk", "Cosmic", "Frosty",
-] as const;
-const HANDLE_ANIMALS = [
-  "Falcon", "Knight", "Rook", "Bishop", "Pawn", "Queen", "Tiger", "Panda",
-  "Otter", "Hawk", "Wolf", "Bear", "Lynx", "Crow", "Dove", "Heron",
-  "Badger", "Ibex", "Marten", "Raven", "Stoat", "Vole", "Wren", "Puma",
-  "Orca", "Seal", "Fox", "Elk", "Hare", "Moth",
-] as const;
+/* The numbered guest label. Four digits from the player id keep two guests
+   in the same tournament distinguishable without inventing a persona —
+   nobody mistakes "Guest 4821" for a made-up member. */
 
 /** FNV-1a: tiny, fast, and stable in both the browser and the server. */
 function handleSeed(input: string): number {
@@ -78,24 +66,21 @@ function handleSeed(input: string): number {
 }
 
 /**
- * The stable, unique-per-player display handle: "SwiftFalcon42"-style, from
- * the player id. Deterministic — the same id always yields the same name on
- * every surface, with no stored state and no server round-trip.
+ * The stable per-player guest label: "Guest 4821"-style, from the player id.
+ * Deterministic — the same id always yields the same label on every surface,
+ * with no stored state and no server round-trip.
  */
 export function playerHandle(playerId: string | null | undefined): string {
   if (!playerId) return "Guest";
-  const seed = handleSeed(playerId);
-  const adjective = HANDLE_ADJECTIVES[seed % HANDLE_ADJECTIVES.length];
-  const animal = HANDLE_ANIMALS[Math.floor(seed / HANDLE_ADJECTIVES.length) % HANDLE_ANIMALS.length];
-  const digits = (seed % 100).toString().padStart(2, "0");
-  return `${adjective}${animal}${digits}`;
+  const digits = (handleSeed(playerId) % 10_000).toString().padStart(4, "0");
+  return `Guest ${digits}`;
 }
 
 /**
  * The display name for a PLAYER ID in a row or list: the real username when
- * one resolved, the stable handle when the player is an unnamed guest, and
- * the handle even for a stored `Guest_XXXX` value (which is a uniqueness
- * artifact, never a name anyone chose).
+ * one resolved, the numbered guest label when the player is an unnamed
+ * guest, and that label even for a stored `Guest_XXXX` value (which is a
+ * uniqueness artifact, never a name anyone chose).
  *
  * Every history row, live card, leaderboard line and tournament bracket
  * routes through THIS — no call site rebuilds the label anymore.

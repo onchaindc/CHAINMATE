@@ -14,6 +14,7 @@
 import { getHostedGame, writeHostedGameWithChat } from "@/lib/server/hosted";
 import { isGameOver } from "@/lib/types";
 import { usernameForPlayer } from "@/lib/server/admin";
+import { playerHandle } from "@/lib/identity";
 
 const CHAT_LIMIT = 200;
 const MAX_LEN = 500;
@@ -80,7 +81,10 @@ export async function sendGameChat(
     return { ok: false, error: "Only the two players can chat in this game" };
   }
 
-  const fromName = (await usernameForPlayer(senderId)) ?? "Guest";
+  // Chat names a PERSON: real username when the sender has one, the numbered
+  // guest label otherwise — never the bare word, which collapsed every
+  // signed-out player into one identical line in the message list.
+  const fromName = (await usernameForPlayer(senderId)) ?? playerHandle(senderId);
   const message: ChatMessage = {
     id: newId(),
     fromPlayerId: senderId,

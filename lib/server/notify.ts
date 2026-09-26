@@ -73,7 +73,8 @@ function newId(): string {
  * Best display name for the actor (falls back without leaking raw ids).
  * The app has exactly three names for unresolvable players: "ChainMate"
  * (the official account — it has no profile row by design), "CM Grandmaster"
- * (the bots' shared brand), and "Guest" (everywhere else). Nothing invented.
+ * (the bots' shared brand), and the numbered guest label (everywhere else).
+ * Nothing invented.
  */
 async function actorDisplayName(playerId: string): Promise<string> {
   if (playerId === "chainmate") return "ChainMate";

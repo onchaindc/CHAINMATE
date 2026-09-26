@@ -67,8 +67,14 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
     if (runAnalysis) {
       const analysed = await summarizeHostedGame(id);
+      analysed.serverNow = Date.now();
       return NextResponse.json({ game: analysed });
     }
+    // serverNow: the server's own clock at serve time, carried ON the game so
+    // every consumer sees it. The client store adjusts it for transport and
+    // derives an offset, so live clocks tick in SERVER time — two devices
+    // that disagree by seconds would otherwise watch two different matches.
+    game.serverNow = Date.now();
     return NextResponse.json({ game });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load game";

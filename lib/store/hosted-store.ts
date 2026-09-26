@@ -1,6 +1,7 @@
 "use client";
 
 import { getAuthIdentity, getGuestIdentity, getIdentityToken } from "@/lib/identity";
+import { learnServerClockOffset } from "@/lib/server-clock";
 import { isStaleGameState } from "@/lib/types";
 import type {
   AiDifficulty,
@@ -174,8 +175,18 @@ export class HostedGameStore implements GameStore {
   }
 
   async getGame(id: string): Promise<GameState | null> {
+    // Bracket the request on the DEVICE clock: with the server's own snapshot
+    // (stamped into the response) this teaches the shared server-clock module
+    // the server−device offset, so live clocks tick in server time.
+    const sent = Date.now();
     const data = await api(`/api/hosted/games/${encodeURIComponent(id)}`);
-    return data.game ?? null;
+    const received = Date.now();
+    if (!data.game) return null;
+    const { serverNow: _anchor, ...game } = data.game;
+    if (_anchor !== undefined) learnServerClockOffset(_anchor, sent, received);
+    // The anchor itself is stripped: it changes every fetch, and leaving it
+    // on would defeat the poll dedup below (every poll would look like news).
+    return game;
   }
 
   async submitMove(

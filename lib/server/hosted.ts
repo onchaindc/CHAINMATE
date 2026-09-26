@@ -49,6 +49,9 @@ import {
   type PlayerStats,
 } from "@/lib/types";
 import { START_FEN } from "@/lib/types";
+// The numbered guest label is a pure id→string mapping, safe to compute on
+// the server so Games/Watch rows carry honest names from the first paint.
+import { displayNameFor } from "@/lib/identity";
 import { randomHex } from "@/lib/utils";
 import { ingestTournamentGameResult } from "@/lib/server/tournaments";
 
@@ -245,9 +248,13 @@ async function livePlayerInfo(playerId: string, aiDifficulty?: string): Promise<
     return { id: playerId, name: "Waiting…" };
   }
   const stats = await getPlayerStats(playerId);
+  /* displayNameFor (not the raw username) — a guest's stored Guest_XXXX is a
+     uniqueness artifact, and the client fallback only covers rows the CLIENT
+     knows are its own. Server-side mapping keeps every Games/Watch row honest
+     with one shared function. */
   return {
     id: playerId,
-    name: stats.username,
+    name: displayNameFor(playerId, stats.username),
     rating: stats.rating,
     country: stats.country,
     avatarUrl: stats.avatarUrl ?? null,

@@ -206,6 +206,15 @@ export interface GameState {
   aiDifficulty?: AiDifficulty;
   /** Selected time control, e.g. "10 + 0". PvP games only. */
   timeControl?: string;
+  /**
+   * Server-clock snapshot (server ms when this copy was served, adjusted for
+   * transport by the client store). Chess clocks are computed from
+   * server-stamped move times, so ticking them against THIS — not the device
+   * clock — keeps both players' readouts honest when their devices disagree
+   * by seconds. Absent means "use the device clock": local games, cached
+   * copies, anything that never crossed the wire.
+   */
+  serverNow?: number;
   /** Whether the game shows up in the public Watch list. Defaults to private. */
   visibility?: "public" | "private";
   /**
