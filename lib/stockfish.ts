@@ -31,8 +31,12 @@ class UciEngine {
   private worker: Worker;
   private lines: ((line: string) => void)[] = [];
   private closed = false;
+  /* An explicit field, not a constructor parameter property: node's
+     strip-only TS mode (the test runner) rejects parameter properties. */
+  private readonly scriptPath: string;
 
-  constructor(private scriptPath: string) {
+  constructor(scriptPath: string) {
+    this.scriptPath = scriptPath;
     this.worker = new Worker(scriptPath);
   }
 
@@ -49,19 +53,29 @@ class UciEngine {
     for (const fn of this.lines) fn(line);
   }
 
-  /** Send a command; resolves with every engine line until `until` matches. */
-  send(command: string, until: (line: string) => boolean): Promise<string[]> {
+  /**
+   * Send a command; resolves with every engine line until `until` matches.
+   * Every wait is bounded: a command that never draws a reply (see setOption)
+   * or an engine that never boots must reject, never hang the game forever.
+   */
+  send(command: string, until: (line: string) => boolean, timeoutMs = 10_000): Promise<string[]> {
     return new Promise((resolve, reject) => {
       if (this.closed) return reject(new Error("Engine was closed"));
       const seen: string[] = [];
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`Stockfish timed out after ${timeoutMs}ms waiting for a reply to: ${command}`));
+      }, timeoutMs);
       const off = this.onLine((line) => {
         seen.push(line);
         if (until(line)) {
+          clearTimeout(timer);
           off();
           resolve(seen);
         }
       });
       this.worker.onerror = (e) => {
+        clearTimeout(timer);
         off();
         reject(new Error(`Stockfish failed to load: ${e.message ?? "unknown error"}`));
       };
@@ -76,12 +90,21 @@ class UciEngine {
     // random among the near-best of them — without this, UCI search is fully
     // deterministic and the engine replayed the SAME game whenever its
     // opponent opened the same way (the "Stockfish is scripted" complaint).
-    await this.send("setoption name MultiPV value 3", () => true);
+    //
+    // "setoption" NEVER replies in UCI — awaiting a line here suspended
+    // start() forever, so the engine never reached ready and Stockfish sat
+    // silent for the whole game. Fire-and-forget, then gate on isready: the
+    // next command boundary is where UCI guarantees an answer.
+    this.worker.postMessage("setoption name MultiPV value 3");
     await this.send("isready", (l) => l === "readyok");
   }
 
-  async setOption(name: string, value: string | number): Promise<void> {
-    await this.send(`setoption name ${name} value ${value}`, () => true);
+  /**
+   * Set a UCI option. Per the protocol, "setoption" produces no reply, so
+   * this cannot await one (see start()). Returns once the command is queued.
+   */
+  setOption(name: string, value: string | number): void {
+    this.worker.postMessage(`setoption name ${name} value ${value}`);
   }
 
   /**
@@ -99,10 +122,14 @@ class UciEngine {
     opts: { movetime?: number; depth?: number } = {},
   ): Promise<EngineMove | null> {
     // "position fen …" + "go" — the engine is stateless between sends here
-    // because both commands go into the same stream before we await.
+    // because both commands go into the same stream before we await. The go
+    // wait is the one place a long timeout is CORRECT: a deep think on a slow
+    // device can legitimately take a while, so this send keeps send()'s
+    // default only as a floor and raises it above any requested movetime.
     this.worker.postMessage(`position fen ${fen}`);
-    const goArgs = opts.depth ? `depth ${opts.depth}` : `movetime ${opts.movetime ?? 1000}`;
-    const lines = await this.send(`go ${goArgs}`, (l) => l.startsWith("bestmove"));
+    const movetime = opts.movetime ?? 1000;
+    const goArgs = opts.depth ? `depth ${opts.depth}` : `movetime ${movetime}`;
+    const lines = await this.send(`go ${goArgs}`, (l) => l.startsWith("bestmove"), Math.max(10_000, movetime + 8_000));
     const best = lines.find((l) => l.startsWith("bestmove"));
     const uci = best?.split(/\s+/)[1];
     if (!uci || uci === "(none)") return null;
@@ -168,6 +195,9 @@ let cached: UciEngine | null = null;
 let booting: Promise<UciEngine> | null = null;
 let failed = false;
 
+/** Boot budget: an engine that has not said uciok+readyok inside this is dead. */
+const BOOT_TIMEOUT_MS = 15_000;
+
 /** Load (or reuse) the native engine. Rejects when unavailable. */
 export function getStockfish(): Promise<UciEngine> {
   if (typeof window === "undefined" || typeof Worker === "undefined") {
@@ -177,7 +207,14 @@ export function getStockfish(): Promise<UciEngine> {
   if (failed) return Promise.reject(new Error("Stockfish is unavailable on this device"));
   booting ??= (async () => {
     const engine = new UciEngine(`${STOCKFISH_DIR}/stockfish.wasm.js`);
-    await engine.start();
+    // The boot race is bounded so a wedged engine can never hang a game:
+    // start() itself now times out per-command, and this guard catches any
+    // path that stalls without a pending send (wasm compilation, worker bug).
+    const boot = engine.start();
+    const watchdog = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Stockfish boot timed out")), BOOT_TIMEOUT_MS),
+    );
+    await Promise.race([boot, watchdog]);
     cached = engine;
     return engine;
   })().catch((err) => {
@@ -193,13 +230,25 @@ export function stockfishFailed(): boolean {
   return failed;
 }
 
-/** Ask the native engine for a move; returns null when it finds none. */
+/**
+ * Ask the native engine for a move.
+ *
+ * Returns null — never throws — when the engine is missing, broken, or finds
+ * nothing legal: requestAiMove treats null as "fall through to the built-in
+ * engine", which is the only sane behavior for a game in progress. A reject
+ * here previously escaped uncaught and left the bot silent for the rest of
+ * the match.
+ */
 export async function stockfishMove(
   fen: string,
   opts: { movetime?: number; depth?: number } = {},
 ): Promise<EngineMove | null> {
-  const engine = await getStockfish();
-  return engine.bestMove(fen, opts);
+  try {
+    const engine = await getStockfish();
+    return await engine.bestMove(fen, opts);
+  } catch {
+    return null; // unavailable or broken → the caller's fallback takes over
+  }
 }
 
 /** Release the engine (tab hidden for a long while, tests). */
