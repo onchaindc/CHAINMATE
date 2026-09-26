@@ -29,7 +29,7 @@ import { Panel } from "@/components/ui/panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { getIdentityToken, guestDisplayName } from "@/lib/identity";
+import { displayNameFor, getIdentityToken } from "@/lib/identity";
 import { tournamentApi, type TournamentDetailPayload, type TournamentAction } from "@/lib/tournament-api";
 import { clearPendingEntryTx, loadPendingEntryTx } from "@/lib/nimiq/pending-entry-tx";
 import type { TournamentFormat, TournamentMatch, TournamentStatus } from "@/lib/tournament-types";
@@ -1452,11 +1452,13 @@ function PayoutStateBadge({ status }: { status: string }) {
 /* ------------------------------------------------------------------ */
 
 function nameOf(detail: TournamentDetailPayload, playerId: string): string {
-  // The server resolves the host's username into the summary; entrants are
-  // device-local identities, so display the guest label for anyone the
-  // server hasn't named (matches how Games/Watch show unnamed players).
+  // The server resolves the host's username into the summary; every other
+  // entrant resolves through displayNameFor — real username when the server
+  // sent one, stable handle otherwise. A raw Guest_XXXX from the server's
+  // entry map (a uniqueness artifact, never a chosen name) maps to the handle
+  // too, so NOBODY in the bracket reads as the bare word "Guest".
   if (playerId === detail.summary.creatorId) return detail.summary.creatorName ?? "Host";
-  return detail.entryNames?.[playerId] ?? guestDisplayName(undefined);
+  return displayNameFor(playerId, detail.entryNames?.[playerId]);
 }
 
 /**

@@ -36,16 +36,34 @@ const PROMOTION_PIECES = ["q", "r", "b", "n"] as const;
  * instead of being frozen to one palette. react-chessboard takes inline styles
  * rather than classes, so these have to be `hsl(var(…))` strings and not
  * Tailwind `bg-board-*` utilities.
+ *
+ * Squares carry a whisper of a gradient — lit toward the top-left, shaded
+ * toward the bottom-right — so the board reads as a surface rather than a
+ * spreadsheet, whatever palette the player picked. The move overlays are
+ * drawn on a transparent layer ABOVE the squares, so gradients and tints
+ * compose instead of overwriting each other.
  */
 const BOARD = {
   lightSquare: "hsl(var(--board-light))",
   darkSquare: "hsl(var(--board-dark))",
+  lightSquareDepth:
+    "linear-gradient(145deg, hsl(var(--board-light)) 0%, hsl(var(--board-light) / 0.90) 100%)",
+  darkSquareDepth:
+    "linear-gradient(145deg, hsl(var(--board-dark)) 0%, hsl(var(--board-dark) / 0.86) 100%)",
   lastMove: "hsl(var(--board-accent) / 0.30)",
   selected: "hsl(var(--board-accent) / 0.45)",
-  check: "hsl(var(--board-check) / 0.50)",
+  selectedRing: "inset 0 0 0 2px hsl(var(--board-accent) / 0.65)",
+  /* Check is a halo that blooms from the king, not a flat wash — the danger
+     reads instantly without hiding the piece standing in it. */
+  check:
+    "radial-gradient(ellipse at center, hsl(var(--board-check) / 0.72) 0%, hsl(var(--board-check) / 0.32) 55%, transparent 72%)",
   premove: "hsl(var(--board-accent) / 0.35)",
+  /* A quiet move is a small dot; a capture is a ring around the victim —
+     which one you are looking at should be readable at a glance. */
   legal:
-    "radial-gradient(circle, hsl(var(--board-accent) / 0.65) 0 20%, hsl(var(--board-accent) / 0.15) 38%, transparent 42%)",
+    "radial-gradient(circle, hsl(var(--board-accent) / 0.55) 0 13%, hsl(var(--board-accent) / 0.18) 28%, transparent 33%)",
+  legalCapture:
+    "radial-gradient(circle, transparent 0 55%, hsl(var(--board-accent) / 0.60) 58% 66%, hsl(var(--board-accent) / 0.20) 72%, transparent 77%)",
 } as const;
 
 /**
@@ -295,26 +313,33 @@ const ChessBoardMemo = memo(function ChessBoardInner({
 
   const squareStyles = useMemo(() => {
     const styles: Record<string, React.CSSProperties> = {};
+    /* One parse serves both the check halo and the capture rings — the same
+       position this memo is already keyed on. */
+    let chess: Chess | null = null;
+    try {
+      chess = new Chess(fen);
+    } catch {
+      chess = null;
+    }
     if (lastMove) {
-      styles[lastMove.from] = { backgroundColor: BOARD.lastMove };
-      styles[lastMove.to] = { backgroundColor: BOARD.lastMove };
+      styles[lastMove.from] = { background: BOARD.lastMove };
+      styles[lastMove.to] = { background: BOARD.lastMove };
     }
     if (premove) {
-      styles[premove.from] = { backgroundColor: BOARD.premove };
-      styles[premove.to] = { backgroundColor: BOARD.premove };
+      styles[premove.from] = { background: BOARD.premove };
+      styles[premove.to] = { background: BOARD.premove };
     }
     if (selected) {
-      styles[selected] = { backgroundColor: BOARD.selected };
+      styles[selected] = { background: BOARD.selected, boxShadow: BOARD.selectedRing };
     }
-    if (inCheck) {
+    if (inCheck && chess) {
       try {
-        const chess = new Chess(fen);
         const turn = chess.turn();
         for (let i = 0; i < 64; i++) {
           const square = `${"abcdefgh"[i % 8]}${Math.floor(i / 8) + 1}`;
           const piece = chess.get(square as Square);
           if (piece && piece.type === "k" && piece.color === turn) {
-            styles[square] = { backgroundColor: BOARD.check };
+            styles[square] = { background: BOARD.check };
           }
         }
       } catch {
@@ -323,51 +348,64 @@ const ChessBoardMemo = memo(function ChessBoardInner({
     }
     for (const target of legalTargets) {
       if (target !== selected) {
-        styles[target] = { background: BOARD.legal };
+        const victim = chess ? chess.get(target as Square) : undefined;
+        styles[target] = { background: victim ? BOARD.legalCapture : BOARD.legal };
       }
     }
     return styles;
-  }, [fen, selected, legalTargets, inCheck, lastMove]);
+  }, [fen, selected, legalTargets, inCheck, lastMove, premove]);
 
   return (
-    <div className="relative w-full select-none">
-      <Chessboard
-        options={{
-          position: fen || START_FEN,
-          boardOrientation: orientation,
-          /* Fast and perceptible: ~90ms reads as instant at one-click pace
-             but still shows the slide. Anything longer starts to read as
-             lag when the players are moving quickly. */
-          animationDurationInMs: 90,
-          showAnimations: true,
-          showNotation: true,
-          allowDragging: (interactive || (allowPremove && !busy)) && !pending,
-          squareStyles,
-          canDragPiece: ({ square }) => {
-            if (pending || (busy && !allowPremove)) return false;
-            if (!square) return false;
-            try {
-              const chess = new Chess(fen);
-              const piece = chess.get(square as Square);
-              if (!piece) return false;
-              if (interactive) return piece.color === chess.turn();
-              // Premove dragging: own pieces only.
-              return !!(allowPremove && myColor && piece.color === myColor);
-            } catch {
-              return false;
-            }
-          },
-          onSquareClick: handleSquareClick,
-          onPieceDrop: handlePieceDrop,
-          darkSquareStyle: { backgroundColor: BOARD.darkSquare },
-          lightSquareStyle: { backgroundColor: BOARD.lightSquare },
-          pieces: PIECE_RENDERERS[pieceSet],
-          alphaNotationStyle: ALPHA_NOTATION,
-          numericNotationStyle: NUMERIC_NOTATION,
-          darkSquareNotationStyle: DARK_SQUARE_NOTATION,
-          lightSquareNotationStyle: LIGHT_SQUARE_NOTATION,
-        }}
-      />
+    /* The board frames itself: a slim dark rail and hairline edge give the
+       square a finished, physical rim on every screen that shows it — the
+       game page no longer has to bolt a ring on from outside. The padding
+       comes out of the square's width, so the sizing budget still holds. */
+    <div className="relative w-full select-none rounded-lg border border-black/25 bg-[hsl(var(--board-dark)/0.55)] p-[3px] shadow-elevation-2">
+      <div className="overflow-hidden rounded-md">
+        <Chessboard
+          options={{
+            position: fen || START_FEN,
+            boardOrientation: orientation,
+            /* Fast and perceptible: ~90ms reads as instant at one-click pace
+               but still shows the slide. Anything longer starts to read as
+               lag when the players are moving quickly. */
+            animationDurationInMs: 90,
+            showAnimations: true,
+            showNotation: true,
+            allowDragging: (interactive || (allowPremove && !busy)) && !pending,
+            squareStyles,
+            canDragPiece: ({ square }) => {
+              if (pending || (busy && !allowPremove)) return false;
+              if (!square) return false;
+              try {
+                const chess = new Chess(fen);
+                const piece = chess.get(square as Square);
+                if (!piece) return false;
+                if (interactive) return piece.color === chess.turn();
+                // Premove dragging: own pieces only.
+                return !!(allowPremove && myColor && piece.color === myColor);
+              } catch {
+                return false;
+              }
+            },
+            onSquareClick: handleSquareClick,
+            onPieceDrop: handlePieceDrop,
+            darkSquareStyle: {
+              backgroundColor: BOARD.darkSquare,
+              backgroundImage: BOARD.darkSquareDepth,
+            },
+            lightSquareStyle: {
+              backgroundColor: BOARD.lightSquare,
+              backgroundImage: BOARD.lightSquareDepth,
+            },
+            pieces: PIECE_RENDERERS[pieceSet],
+            alphaNotationStyle: ALPHA_NOTATION,
+            numericNotationStyle: NUMERIC_NOTATION,
+            darkSquareNotationStyle: DARK_SQUARE_NOTATION,
+            lightSquareNotationStyle: LIGHT_SQUARE_NOTATION,
+          }}
+        />
+      </div>
 
       {pending && (
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-md bg-scrim backdrop-blur-[2px]">

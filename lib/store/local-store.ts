@@ -3,6 +3,7 @@
 import { abortGame, applyMoveToGame, joinPlayerToGame, offerDrawToGame, resignPlayerFromGame, respondToDrawOffer } from "@/lib/game-logic";
 import { sanHistoryOf } from "@/lib/ai-engine";
 import { requestAiMove } from "@/lib/ai-runner";
+import { botThinkTimeMs } from "@/lib/types";
 import { computeClocks } from "@/lib/clocks";
 import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
 import { buildRuleSummary } from "@/lib/summary";
@@ -266,6 +267,7 @@ export class LocalGameStore implements GameStore {
         fen,
         game.aiDifficulty ?? "casual",
         sanHistoryOf(game.moves),
+        botThinkTimeMs(game.aiDifficulty ?? "casual", game.timeControl),
       );
       if (!aiMove) return game;
       const res = applyMoveToGame(game, AI_PLAYER_ID, aiMove.from, aiMove.to, aiMove.promotion);

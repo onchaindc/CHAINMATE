@@ -506,14 +506,22 @@ const OPENING_BOOK: string[][] = [
 /** Look up the book reply for the current position, if the game is on one. */
 function bookMove(sanMoves: string[]): string | null {
   if (sanMoves.length > 10) return null;
+  const replies: string[] = [];
   outer: for (const line of OPENING_BOOK) {
     if (line.length <= sanMoves.length) continue;
     for (let i = 0; i < sanMoves.length; i++) {
       if (line[i] !== sanMoves[i]) continue outer;
     }
-    return line[sanMoves.length] ?? null;
+    const reply = line[sanMoves.length];
+    if (reply) replies.push(reply);
   }
-  return null;
+  if (replies.length === 0) return null;
+  // Draw from EVERY line that reaches this position. The old code returned
+  // the first match, which was the same line every game — 1.e4 was always
+  // answered 1…e5 (the Ruy Lopez row comes first), so a Grandmaster replayed
+  // identical games move for move against the same opening. One random draw
+  // per position makes the repertoire a repertoire instead of a script.
+  return replies[Math.floor(Math.random() * replies.length)]!;
 }
 
 /**
@@ -593,6 +601,9 @@ export function chooseAiMove(
   fen: string,
   difficulty: AiDifficulty = "casual",
   sanHistory: string[] = [],
+  /** Think budget override (ms) — callers scale it to the game's clock so a
+      bullet game never watches the bot burn 2.5s a move. Absent → profile. */
+  thinkMs?: number,
 ): AiMove | null {
   const chess = new Chess(fen);
   const moves = orderedMoves(chess);
@@ -633,7 +644,7 @@ export function chooseAiMove(
    * table. The best move from the last COMPLETED depth plays; a deadline
    * abort mid-iteration simply keeps the previous depth's choice.
    */
-  const search = new Search(profile.timeMs);
+  const search = new Search(Math.max(60, Math.min(profile.timeMs, thinkMs ?? profile.timeMs)));
   let best: AiMove = { from: moves[0]!.from, to: moves[0]!.to, promotion: moves[0]!.promotion };
   let lastScored: Array<{ move: Move; score: number }> = [];
   let completed = false;

@@ -55,6 +55,9 @@ async function loadWatch(): Promise<WatchData> {
       timeControl: g.timeControl,
       visibility: g.visibility,
       endedAt: g.endedAt,
+      // Local bot games keep their Grandmaster too — dropping it here
+      // collapsed every local solo row to the generic house brand.
+      aiDifficulty: g.aiDifficulty,
     }));
   return {
     live: remote.live,

@@ -24,14 +24,14 @@ import { RecentForm } from "@/components/profile/recent-form";
 import { SectionLabel } from "@/components/ui/page-header";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useIdentity } from "@/lib/identity-context";
-import { guestDisplayName } from "@/lib/identity";
+import { displayNameFor } from "@/lib/identity";
 import { useCachedRead } from "@/lib/read-cache";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
 import { mergeGamesById } from "@/lib/utils";
-import { AI_BRAND_SHORT, AI_PLAYER_ID, isGameOver, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
+import { AI_PLAYER_ID, aiLevelFor, isGameOver, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,6 +49,15 @@ import { cn } from "@/lib/utils";
 
 /** Quick-play pool. Everything here parses everywhere via lib/clocks. */
 const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0"] as const;
+
+/** The pace name each quick-play control plays at — the cadence is the
+    choice, the mono numbers are just how it's written. */
+const PACE_LABELS: Record<(typeof TIME_CONTROLS)[number], string> = {
+  "1 + 0": "Bullet",
+  "3 + 2": "Blitz",
+  "5 + 0": "Blitz",
+  "10 + 0": "Rapid",
+};
 
 /** Live feed and unfinished games move on their own, so this refreshes. */
 const POLL_MS = 10_000;
@@ -213,7 +222,7 @@ export function Lobby() {
             Welcome back
           </p>
           <h1 className="font-display mt-3 truncate text-3xl font-bold tracking-tight">
-            {guestDisplayName(identity.username) || "Player"}
+            {displayNameFor(identity.playerId, identity.username) || "Player"}
           </h1>
         </div>
         <dl className="flex items-center gap-5 sm:gap-7">
@@ -278,29 +287,56 @@ export function Lobby() {
                   counts towards the leaderboard.
                 </p>
 
+                {/* Time control as labelled pace cards instead of bare mono
+                    strings — the cadence is the choice a new player actually
+                    makes, and "5 + 0" alone reads like a config value. */}
                 <div
-                  className="mt-4 grid max-w-md grid-cols-4 gap-1 rounded-lg border border-border/70 bg-secondary/50 p-1"
+                  className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"
                   role="radiogroup"
                   aria-label="Time control"
                 >
-                  {TIME_CONTROLS.map((tc) => (
-                    <button
-                      key={tc}
-                      type="button"
-                      role="radio"
-                      aria-checked={timeControl === tc}
-                      disabled={match.seeking || match.starting}
-                      onClick={() => setTimeControl(tc)}
-                      className={cn(
-                        "rounded-md px-3 py-2 font-mono text-xs tabular-nums transition-all disabled:opacity-60",
-                        timeControl === tc
-                          ? "bg-card font-semibold text-foreground shadow-sm ring-1 ring-primary/30"
-                          : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
-                      )}
-                    >
-                      {tc}
-                    </button>
-                  ))}
+                  {TIME_CONTROLS.map((tc) => {
+                    const selected = timeControl === tc;
+                    return (
+                      <button
+                        key={tc}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        disabled={match.seeking || match.starting}
+                        onClick={() => setTimeControl(tc)}
+                        className={cn(
+                          "group relative flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-all disabled:opacity-60",
+                          selected
+                            ? "border-primary/50 bg-primary/[0.06] shadow-sm"
+                            : "border-border/70 bg-secondary/30 hover:border-border hover:bg-secondary/50",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "font-mono text-sm font-semibold tabular-nums",
+                            selected ? "text-primary" : "text-foreground/90",
+                          )}
+                        >
+                          {tc}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-2xs uppercase tracking-wider",
+                            selected ? "text-foreground/80" : "text-muted-foreground",
+                          )}
+                        >
+                          {PACE_LABELS[tc]}
+                        </span>
+                        {selected && (
+                          <span
+                            className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary"
+                            aria-hidden
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {match.seeking ? (
@@ -319,29 +355,40 @@ export function Lobby() {
                     </Button>
                   </div>
                 ) : (
-                  <Button
-                    size="lg"
-                    className="mt-4 w-full sm:w-auto sm:min-w-64 sm:px-10"
-                    disabled={match.starting}
-                    onClick={() => void match.start(timeControl)}
-                  >
-                    {match.starting ? (
-                      <Loader2 className="animate-spin" aria-hidden />
-                    ) : (
-                      <Swords aria-hidden />
-                    )}
-                    {match.starting ? "Finding opponent…" : "Find a match"}
-                  </Button>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Button
+                      size="lg"
+                      className="w-full sm:w-auto sm:min-w-64 sm:flex-1 sm:px-8"
+                      disabled={match.starting}
+                      onClick={() => void match.start(timeControl)}
+                    >
+                      {match.starting ? (
+                        <Loader2 className="animate-spin" aria-hidden />
+                      ) : (
+                        <Swords aria-hidden />
+                      )}
+                      {match.starting ? "Finding opponent…" : `Find a match · ${timeControl}`}
+                    </Button>
+                    <Button
+                      size="lg"
+                      variant="outline"
+                      className="w-full sm:w-auto"
+                      onClick={() => router.push("/solo")}
+                    >
+                      <Bot aria-hidden />
+                      Play a bot
+                    </Button>
+                  </div>
                 )}
 
                 {challengeError && <ErrorNote message={challengeError} className="mt-3" />}
                 {match.error && <ErrorNote message={match.error} className="mt-3" />}
 
-                <div className="mt-3 grid max-w-lg gap-2 sm:grid-cols-2">
+                <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border/60 pt-4 sm:grid-cols-4">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />
-                  <LobbyLink href="/solo" icon={Bot} label="Play the Grandmaster" />
+                  <LobbyLink href="/solo" icon={Bot} label="The Grandmasters" />
                   <LobbyLink href="/join" icon={Link2} label="Join by link" />
-                  <LobbyLink href="/tournaments" icon={Trophy} label="Join tournament" />
+                  <LobbyLink href="/tournaments" icon={Trophy} label="Tournaments" />
                 </div>
               </div>
             )}
@@ -401,7 +448,7 @@ export function Lobby() {
                       key={g.id}
                       game={g}
                       me={g.backend === "local" ? localMe : playerId}
-                      meName={g.backend === "local" ? identity.username : undefined}
+                      meName={g.backend === "local" ? displayNameFor(identity.playerId, identity.username) : undefined}
                       delta={deltas.get(g.id) ?? null}
                       players={mergedPlayers}
                     />
@@ -449,7 +496,7 @@ export function Lobby() {
               ) : (
                 <ul className="divide-y divide-border/50">
                   {data.friends.slice(0, 5).map((f) => {
-                    const name = guestDisplayName(f.username);
+                    const name = displayNameFor(f.playerId, f.username);
                     return (
                       <li key={f.playerId} className="flex items-center gap-2.5 px-3 py-2">
                         {/* The real picture when one exists — the friends list
@@ -533,9 +580,15 @@ export function Lobby() {
                       >
                         <div className="min-w-0">
                           <p className="truncate text-sm">
-                            {liveName(entry.creator)}{" "}
+                            {liveName({
+                              ...entry.creator,
+                              aiDifficulty: entry.aiDifficulty,
+                            })}{" "}
                             <span className="text-muted-foreground">vs</span>{" "}
-                            {liveName(entry.opponent)}
+                            {liveName({
+                              ...entry.opponent,
+                              aiDifficulty: entry.aiDifficulty,
+                            })}
                           </p>
                           <p className="font-mono text-2xs tabular-nums text-muted-foreground">
                             {entry.timeControl ?? "Match"} · {entry.moveCount} ply
@@ -558,10 +611,22 @@ export function Lobby() {
   );
 }
 
-function liveName(p: { id: string; name?: string; isAi?: boolean }): string {
-  if (p.isAi || p.id === AI_PLAYER_ID) return AI_BRAND_SHORT;
+function liveName(p: {
+  id: string;
+  name?: string;
+  isAi?: boolean;
+  /** The bot's level, when the caller has the entry's difficulty at hand. */
+  aiDifficulty?: string;
+}): string {
+  if (p.isAi || p.id === AI_PLAYER_ID) {
+    // Name the SPECIFIC Grandmaster on the board — the brand alone made every
+    // live row read identically. aiLevelFor maps any stored value safely.
+    return aiLevelFor(p.aiDifficulty).name;
+  }
   if (!p.id) return "Waiting…";
-  return guestDisplayName(p.name);
+  // Real username when the registry has one, the player's stable handle
+  // otherwise — a live row never reads as the bare word "Guest".
+  return displayNameFor(p.id, p.name);
 }
 
 function Stat({

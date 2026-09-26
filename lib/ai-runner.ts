@@ -63,13 +63,17 @@ export async function requestAiMove(
   fen: string,
   difficulty: AiDifficulty,
   sanHistory: string[],
+  /** Think budget in ms — callers scale it to the game's clock (see
+      botThinkTimeMs). A fixed budget made the bot burn half its clock in
+      bullet games and dawdle pointlessly in untimed ones. */
+  thinkMs?: number,
 ): Promise<{ from: string; to: string; promotion?: string } | null> {
   // The native engine answers for its own level. It is only available in a
   // real browser; anywhere else the request falls through to the built-in
   // search at its profile, so Stockfish never silently stops playing.
   if (isStockfishLevel(difficulty) && typeof window !== "undefined") {
     const { stockfishMove } = await import("@/lib/stockfish");
-    const move = await stockfishMove(fen, { movetime: 1200 });
+    const move = await stockfishMove(fen, { movetime: thinkMs ?? 1200 });
     if (move) return move;
     // Engine missing or found nothing legal — degrade to the top built-in
     // level rather than hanging the game on a null reply.
@@ -85,7 +89,7 @@ export async function requestAiMove(
   const id = nextRequestId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    const request: AiWorkerRequest = { id, fen, difficulty, sanHistory };
+    const request: AiWorkerRequest = { id, fen, difficulty, sanHistory, thinkMs };
     w.postMessage(request);
   });
 }

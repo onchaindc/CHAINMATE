@@ -10,6 +10,7 @@ import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
 import { useCachedRead } from "@/lib/read-cache";
 import { useIdentity } from "@/lib/identity-context";
+import { displayNameFor } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -124,7 +125,11 @@ function GamesContent() {
                   me={game.backend === "local" ? localMe : identity.playerId}
                   delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
                   players={game.backend === "local" ? undefined : players}
-                  meName={game.backend === "local" ? identity.username : undefined}
+                  /* The name rides along for HOSTED rows too: games recorded
+                     under this device's guest id (pre-account play) have no
+                     profile for the server to resolve, so without it the own
+                     side read "You"-or-worse instead of the account name. */
+                  meName={displayNameFor(identity.playerId, identity.username)}
                 />
               ))}
             </div>
@@ -172,7 +177,9 @@ function GamesContent() {
                 me={game.backend === "local" ? localMe : identity.playerId}
                 delta={game.backend === "local" ? null : deltas.get(game.id) ?? null}
                 players={game.backend === "local" ? undefined : players}
-                meName={game.backend === "local" ? identity.username : undefined}
+                /* Same as above: the account name labels the player's own side
+                   even when the row's game predates the account. */
+                meName={displayNameFor(identity.playerId, identity.username)}
               />
             ))}
           </div>

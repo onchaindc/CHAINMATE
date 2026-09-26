@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess } from "chess.js";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { pieceRenderer } from "@/components/game/piece-sets";
 import { PIECE_VALUES } from "@/lib/chess";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,14 @@ const ORDER = ["p", "n", "b", "r", "q"] as const;
  * been captured. Every FEN-based client shows this, and the material lead —
  * which is what the number is for — stays correct either way.
  */
-export function CaptureTray({ fen, side, pieceSet, className }: CaptureTrayProps) {
+/*
+ * Memoized: this tray mounts TWICE on the game page (once per player card)
+ * and each body parses the full position. During a time scramble the page
+ * re-renders ten times a second (the tenths clock tick) — without the memo
+ * that was twenty chess.js parses per tick, right when the player can least
+ * afford main-thread stutter.
+ */
+export const CaptureTray = memo(function CaptureTray({ fen, side, pieceSet, className }: CaptureTrayProps) {
   const { captured, lead } = useMemo(() => {
     try {
       const chess = new Chess(fen);
@@ -106,4 +113,4 @@ export function CaptureTray({ fen, side, pieceSet, className }: CaptureTrayProps
       </span>
     </div>
   );
-}
+});

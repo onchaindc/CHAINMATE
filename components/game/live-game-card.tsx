@@ -6,7 +6,7 @@ import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
-import { guestDisplayName } from "@/lib/identity";
+import { displayNameFor } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { AI_BRAND_SHORT, aiLevelFor, type LiveGameEntry } from "@/lib/types";
 
@@ -19,23 +19,18 @@ import { AI_BRAND_SHORT, aiLevelFor, type LiveGameEntry } from "@/lib/types";
 export function LiveGameCard({ entry }: { entry: LiveGameEntry }) {
   const white = entry.creator;
   const black = entry.opponent;
-  /**
-   * `guestDisplayName` rather than `name || "Guest"` — the live registry carries
-   * the stored username, which is `Guest_XXXX` for a guest, and `||` would pass
-   * that non-empty string through with the short id still on it.
-   */
-  // The bot's side is named by its LEVEL (Pawn, Apex, Stockfish…), falling
-  // back to the brand when the entry carries no difficulty — and always a
-  // string, since PlayerAvatar requires one.
+  /* The bot's side is named by its LEVEL (Pawn, Apex, Stockfish…), falling
+     back to the brand when the entry carries no difficulty — and always a
+     string, since PlayerAvatar requires one. Humans resolve through
+     displayNameFor: real username when one arrived, stable handle otherwise —
+     never the bare word "Guest". */
   const botName = entry.aiDifficulty ? aiLevelFor(entry.aiDifficulty).name : AI_BRAND_SHORT;
-  const whiteName = white.isAi ? botName : guestDisplayName(white.name);
+  const whiteName = white.isAi ? botName : displayNameFor(white.id, white.name);
   const blackName = black.isAi
     ? botName
-    : black.name
-      ? guestDisplayName(black.name)
-      : black.id
-        ? "Guest"
-        : "Waiting…";
+    : black.id
+      ? displayNameFor(black.id, black.name)
+      : "Waiting…";
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 sm:gap-4">

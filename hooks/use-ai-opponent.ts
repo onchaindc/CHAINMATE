@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { AI_PLAYER_ID, type GameState } from "@/lib/types";
+import { parseTimeControl } from "@/lib/clocks";
 
 interface UseAiOpponentOptions {
   game: GameState | null;
@@ -47,12 +48,20 @@ export function useAiOpponent({ game, submitAiMove, disabled }: UseAiOpponentOpt
     if (lastScheduledFen.current === game.fen) return;
     lastScheduledFen.current = game.fen;
 
+    /* A short beat so the human's move visibly lands before the reply — but
+       a flat 650ms was a fifth of a bullet move and made every bot feel like
+       it was stalling. The wait scales to the game's pace: 150ms in fast
+       games, the old 650ms in untimed/slow ones. The beat is the BOT's clock
+       time (it sits between the two move stamps), so fast games get fast bots
+       and slow games keep their human rhythm. */
+    const baseMs = parseTimeControl(game.timeControl)?.baseMs ?? 0;
+    const beatMs = baseMs > 0 && baseMs <= 5 * 60_000 ? 150 : 650;
     timerRef.current = setTimeout(() => {
       void submitAiMove().catch(() => {
         // Store errors mean the position changed under us — re-arm so a
         // later effect run can schedule again if it's still the AI's turn.
         lastScheduledFen.current = "";
       });
-    }, 650);
+    }, beatMs);
   }, [game, submitAiMove, disabled]);
 }

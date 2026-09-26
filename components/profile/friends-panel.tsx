@@ -10,7 +10,7 @@ import { CountryFlag } from "@/components/ui/country-flag";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Panel } from "@/components/ui/panel";
 import { EmptyState, ErrorNote, LoadingRows } from "@/components/ui/states";
-import { guestDisplayName } from "@/lib/identity";
+import { displayNameFor } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { HostedGameStore, type SearchPlayerResult } from "@/lib/store/hosted-store";
 import type { PlayerStats } from "@/lib/types";
@@ -137,7 +137,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
     options?: { withMenu?: boolean },
   ) => {
     const linkable = !p.isGuest && p.username;
-    const name = guestDisplayName(p.username);
+    const name = displayNameFor(p.playerId, p.username);
     const isBlocked = blockedIds.has(p.playerId);
     return (
       <div
@@ -353,7 +353,7 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
 
       <ConfirmDialog
         open={removing !== null}
-        title={`Remove ${guestDisplayName(removing?.username ?? "")}?`}
+        title={`Remove ${displayNameFor(removing?.playerId, removing?.username)}?`}
         confirmLabel="Remove friend"
         destructive
         busy={removing !== null && busyId === removing.playerId}
@@ -370,8 +370,8 @@ export function FriendsPanel({ store }: FriendsPanelProps) {
         open={blocking !== null}
         title={
           blockedIds.has(blocking?.playerId ?? "")
-            ? `Unblock ${guestDisplayName(blocking?.username ?? "")}?`
-            : `Block ${guestDisplayName(blocking?.username ?? "")}?`
+            ? `Unblock ${displayNameFor(blocking?.playerId, blocking?.username)}?`
+            : `Block ${displayNameFor(blocking?.playerId, blocking?.username)}?`
         }
         confirmLabel={blockedIds.has(blocking?.playerId ?? "") ? "Unblock" : "Block"}
         destructive={!blockedIds.has(blocking?.playerId ?? "")}

@@ -17,6 +17,8 @@ export interface AiWorkerRequest {
   difficulty: AiDifficulty;
   /** SAN history for the opening book (empty → book skipped). */
   sanHistory: string[];
+  /** Think budget in ms (see botThinkTimeMs); absent → the level profile. */
+  thinkMs?: number;
 }
 
 export interface AiWorkerResponse {
@@ -27,12 +29,12 @@ export interface AiWorkerResponse {
 }
 
 self.onmessage = (event: MessageEvent<AiWorkerRequest>) => {
-  const { id, fen, difficulty, sanHistory } = event.data;
+  const { id, fen, difficulty, sanHistory, thinkMs } = event.data;
   try {
     // Native Stockfish never reaches this worker (it owns a UCI worker of
     // its own — see lib/ai-runner.ts). If a misrouted request ever arrives,
     // search at the top built-in profile instead of returning garbage.
-    const move = chooseAiMove(fen, difficulty === "stockfish" ? "apex" : difficulty, sanHistory);
+    const move = chooseAiMove(fen, difficulty === "stockfish" ? "apex" : difficulty, sanHistory, thinkMs);
     const response: AiWorkerResponse = { id, move };
     (self as unknown as Worker).postMessage(response);
   } catch (err) {

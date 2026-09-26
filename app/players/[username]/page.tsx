@@ -25,7 +25,7 @@ import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
-import { guestDisplayName } from "@/lib/identity";
+import { displayNameFor } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { isPlayedGame, type GameState, type PlayerStats } from "@/lib/types";
@@ -204,7 +204,7 @@ export default function PublicPlayerPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
       <ProfileHeader
-        name={player.username}
+        name={displayNameFor(player.playerId, player.username)}
         eyebrow="Player"
         country={player.country}
         rating={player.rating}
@@ -345,7 +345,7 @@ export default function PublicPlayerPage() {
                 key={f.playerId}
                 className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/50 py-1 pl-1.5 pr-3 text-xs"
               >
-                <PlayerAvatar name={f.username ?? "?"} avatarUrl={f.avatarUrl} size="xs" />
+                <PlayerAvatar name={f.username ?? displayNameFor(f.playerId)} avatarUrl={f.avatarUrl} size="xs" />
                 <CountryFlag code={f.country} />
                 {!f.isGuest && f.username ? (
                   /* `next/link`, not a bare anchor: this is an internal route,
@@ -358,7 +358,7 @@ export default function PublicPlayerPage() {
                   </Link>
                 ) : (
                   <span className="text-muted-foreground">
-                    {guestDisplayName(f.username)}
+                    {displayNameFor(f.playerId, f.username)}
                   </span>
                 )}
                 <span className="font-mono tabular-nums text-primary">{f.rating}</span>

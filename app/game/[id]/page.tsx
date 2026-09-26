@@ -34,6 +34,8 @@ import { useBoardPrefs } from "@/hooks/use-board-prefs";
 import { useClocks } from "@/hooks/use-clocks";
 import { useGame } from "@/hooks/use-game";
 import { useIdentity } from "@/lib/identity-context";
+import { START_FEN } from "@/lib/types";
+import { displayNameFor } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
@@ -353,6 +355,26 @@ export default function GamePage() {
     !game?.clockStartedAt &&
     game?.arrivedAt !== undefined;
 
+  /* The capture trays are hoisted and keyed by the position: inline JSX
+     elements are fresh objects every render and defeat PlayerCard's memo,
+     so the low-time 100ms tick re-rendered both cards (and re-parsed the
+     position in both trays) ten times a second. With stable elements a
+     clock tick re-renders ONLY the card whose clock digit changed. They
+     live ABOVE the loading/not-found early returns — hooks must run in the
+     same order on every render, and a memo placed after a conditional
+     return breaks that the moment the page shows a loader. */
+  /* START_FEN fills the loading/not-found gap so the memo stays total; the
+     trays are only ever rendered once a game exists. */
+  const shownFen = boardFen ?? game?.fen ?? START_FEN;
+  const whiteTray = useMemo(
+    () => <CaptureTray fen={shownFen} side="white" pieceSet={pieceSet} />,
+    [shownFen, pieceSet],
+  );
+  const blackTray = useMemo(
+    () => <CaptureTray fen={shownFen} side="black" pieceSet={pieceSet} />,
+    [shownFen, pieceSet],
+  );
+
   if (loading) {
     return (
       <div className="shell flex flex-col px-4 py-4 sm:px-6 lg:h-[calc(100dvh-var(--nav-h))] lg:py-4">
@@ -448,7 +470,10 @@ export default function GamePage() {
     // The computer opponent is a named player, chess.com-style.
     if (playerId === AI_PLAYER_ID) return aiLevelFor(game?.aiDifficulty).name;
     if (playerId === myId) return identity.username || undefined;
-    return profiles[playerId]?.username;
+    // Real username when the profile resolved; a stored Guest_XXXX artifact or
+    // an unnamed guest maps to their stable handle — never a raw id or the
+    // bare word "Guest" on the board.
+    return displayNameFor(playerId, profiles[playerId]?.username);
   };
   const playerRating = (playerId: string) => {
     // Computer opponents carry the rating of their difficulty level.
@@ -489,15 +514,7 @@ export default function GamePage() {
         inCheck={inCheck && turnSide === side}
         waiting={waiting && !game.opponent}
         aiDifficulty={playerId === AI_PLAYER_ID ? game?.aiDifficulty : undefined}
-        /* Read off the position on screen, so the trays rewind with the board
-           during a replay instead of always showing the final material. */
-        captures={
-          <CaptureTray
-            fen={boardFen ?? game.fen}
-            side={side}
-            pieceSet={pieceSet}
-          />
-        }
+        captures={isWhite ? whiteTray : blackTray}
       />
     );
   };
@@ -881,7 +898,10 @@ export default function GamePage() {
           </div>
           <div
             data-board-root
-            className="w-full overflow-hidden rounded-md ring-1 ring-border/40"
+            /* The board component frames itself now (rail + hairline), so this
+               wrapper stays a bare sizer — stacking two rims read as a double
+               border. */
+            className="w-full"
             style={{ maxWidth: "var(--board-w, 36rem)" }}
           >
             <ChessBoard

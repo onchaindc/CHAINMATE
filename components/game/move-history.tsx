@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef , memo } from "react";
 import { cn } from "@/lib/utils";
 import type { MoveRecord } from "@/lib/types";
 
@@ -23,7 +23,7 @@ interface MoveHistoryProps {
  * column. It scrolls vertically only when a very long game outgrows its
  * two-row cap, and never scrolls the page itself.
  */
-export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps) {
+export const MoveHistory = memo(function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   /** Keep the newest move visible: walk to it whenever a move lands. */
   const tailRef = useRef<HTMLSpanElement | null>(null);
@@ -98,4 +98,4 @@ export function MoveHistory({ moves, currentPly, onSelectPly }: MoveHistoryProps
       )}
     </div>
   );
-}
+});

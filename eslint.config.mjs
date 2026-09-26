@@ -18,6 +18,9 @@ const config = [
       "build/**",
       "node_modules/**",
       "next-env.d.ts",
+      // Vendored minified engines — not project code, and linting a multi-MB
+      // minified wasm shim only produces noise errors (require(), this-alias).
+      "public/stockfish/**",
     ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),

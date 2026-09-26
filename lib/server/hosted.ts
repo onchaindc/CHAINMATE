@@ -91,6 +91,9 @@ function entryFromGame(game: GameState): GameIndexEntry {
     visibility: game.visibility,
     invited: game.invited,
     endedAt: game.endedAt,
+    // The bot's level rides along so every feed row can name WHICH
+    // Grandmaster played — not just the house brand.
+    aiDifficulty: game.aiDifficulty,
   };
 }
 
@@ -862,7 +865,16 @@ export async function submitAiMove(id: string): Promise<GameState> {
   if (game.status !== "active") throw new Error("The game is not active");
 
   const { chooseAiMove, sanHistoryOf } = await import("@/lib/ai-engine");
-  const move = chooseAiMove(game.fen, game.aiDifficulty ?? "casual", sanHistoryOf(game.moves));
+  const { botThinkTimeMs } = await import("@/lib/types");
+  // The think budget scales to the game's own clock: a fixed 2.5s think was
+  // half the bot's base time in bullet and made its clock visibly collapse
+  // move after move. The bot now spends a fair share per move instead.
+  const move = chooseAiMove(
+    game.fen,
+    game.aiDifficulty ?? "casual",
+    sanHistoryOf(game.moves),
+    botThinkTimeMs(game.aiDifficulty ?? "casual", game.timeControl),
+  );
   if (!move) return game; // bot has no legal reply (mate/stalemate already set)
 
   const res = applyMoveToGame(game, AI_PLAYER_ID, move.from, move.to, move.promotion);
@@ -960,6 +972,94 @@ function isNewerGameState(local: GameState, remote: GameState): boolean {
   if (remote.status !== local.status) return true;
   if (remote.opponent && !local.opponent) return true;
   return (remote.updatedAt ?? 0) > (local.updatedAt ?? 0);
+}
+
+/**
+ * Heal a stale index entry from the game's real record, one entry per call.
+ *
+ * The feed (Watch recent / open games) serves the games index as-is, and that
+ * index predates `aiDifficulty` living on entries: bot games recorded before
+ * that field existed rendered as the generic house brand with the default
+ * portrait — forever, because finished games are never rewritten. Healing is
+ * gated to finished games (they never move again) and entries that are
+ * actually incomplete, so the steady state costs nothing.
+ */
+async function healIndexEntry(entry: GameIndexEntry): Promise<GameIndexEntry> {
+  if (!isGameOver(entry.status)) return entry;
+  if (entry.opponent === AI_PLAYER_ID && entry.aiDifficulty) return entry;
+  if (entry.opponent !== AI_PLAYER_ID && entry.aiDifficulty === undefined) return entry;
+  try {
+    if (supabaseConfigured()) {
+      const snapshot = await gameSnapshotById(entry.id);
+      if (snapshot) {
+        const healed = entryFromGame(snapshot);
+        // Only fields a finished game can no longer change.
+        return {
+          ...entry,
+          winner: healed.winner,
+          endedAt: healed.endedAt,
+          aiDifficulty: healed.aiDifficulty,
+          visibility: healed.visibility,
+        };
+      }
+    }
+    // No database: the fast store's own copy is the record.
+    const raw = await getGameStorage().get(keyFor(entry.id));
+    if (raw) {
+      const game = JSON.parse(raw) as GameState;
+      return {
+        ...entry,
+        winner: game.winner,
+        endedAt: game.endedAt,
+        aiDifficulty: game.aiDifficulty,
+        visibility: game.visibility,
+      };
+    }
+  } catch {
+    // Best-effort — a stale row is cosmetic, never worth breaking a feed.
+  }
+  return entry;
+}
+
+/**
+ * Heal a batch of index entries for a feed response, bounding the work.
+ *
+ * The heal is one durable read per incomplete entry, so an entire feed of
+ * stale rows must not all fire at once — the first few requests fix a handful
+ * of entries each, and once healed the entries are written back, so the cost
+ * decays to zero. `upsertIndex` keeps ordering and cap intact.
+ */
+async function healIndexEntries(entries: GameIndexEntry[], maxHeals: number): Promise<GameIndexEntry[]> {
+  let budget = maxHeals;
+  let changed = false;
+  const out = new Array<GameIndexEntry>(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
+    if (budget > 0) {
+      const healed = await healIndexEntry(entry);
+      if (healed !== entry) {
+        out[i] = healed;
+        changed = true;
+        budget -= 1;
+        continue;
+      }
+    }
+    out[i] = entry;
+  }
+  if (changed) {
+    // Persist the healed entries so later requests never pay for them again.
+    // Replace-by-id preserves any entries that were appended meanwhile.
+    await upsertIndexEntries(out);
+  }
+  return out;
+}
+
+/** Write healed entries back into the stored index (replace by id). */
+async function upsertIndexEntries(healed: GameIndexEntry[]): Promise<void> {
+  const entries = await readIndex();
+  const byId = new Map(healed.map((e) => [e.id, e]));
+  const merged = entries.map((e) => byId.get(e.id) ?? e);
+  await getGameStorage().set(INDEX_KEY, JSON.stringify(merged.slice(0, INDEX_MAX)));
 }
 
 export async function getHostedGame(id: string): Promise<GameState | null> {
@@ -1542,19 +1642,23 @@ export async function listHostedGames(opts: {
       (e) => e.visibility === "public" && e.status === "waiting",
     );
     const done = entries
-      .filter((e) => isGameOver(e.status) && e.visibility !== "private")
-      .slice(0, 12);
+      .filter((e) => isGameOver(e.status) && e.visibility !== "private");
+    // Heal stale entries (missing difficulty / winner from older builds) with
+    // a small per-request budget, writing each fixed entry back so the cost
+    // decays to zero. Heal before slicing so the served rows are correct.
+    const healed = await healIndexEntries(done, 4);
     const openTop = open.slice(0, 8);
+    const recent = healed.slice(0, 12);
     return {
       live: live.slice(0, LIVE_MAX),
       open: openTop,
-      recent: done,
+      recent,
       // Names for the open/recent lists — the live feed carries its own
       // enriched player info, but those two are bare index entries, so
       // without this map every row falls back to a generic guest label.
       players: await playerNamesFor([
         ...openTop.flatMap((e) => [e.creator, e.opponent]),
-        ...done.flatMap((e) => [e.creator, e.opponent]),
+        ...recent.flatMap((e) => [e.creator, e.opponent]),
       ]),
     };
   }

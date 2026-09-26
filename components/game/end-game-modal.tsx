@@ -6,11 +6,10 @@ import { Loader2, Play, RotateCcw, Sparkles, Trophy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAchievement } from "@/lib/achievements";
 import { describeResult } from "@/lib/game-result";
-import { guestDisplayName } from "@/lib/identity";
+import { displayNameFor } from "@/lib/identity";
 import { displaySummary, keyMoments } from "@/lib/summary";
 import { cn } from "@/lib/utils";
 import {
-  AI_BRAND_SHORT,
   AI_PLAYER_ID,
   aiLevelFor,
   type GameState,
@@ -116,7 +115,7 @@ export function EndGameModal({
       ? aiLevelFor(game.aiDifficulty).name
       : isViewer
         ? "You"
-        : guestDisplayName(stats[id]?.username);
+        : displayNameFor(id, stats[id]?.username);
     return (
       <div className={side === "white" ? "min-w-0 text-left" : "min-w-0 text-right"}>
         <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -148,7 +147,7 @@ export function EndGameModal({
             <span className="text-foreground/80">
               {isAi ? aiLevelFor(game.aiDifficulty).rating : 1200}
             </span>
-            <span className="normal-case">{isAi ? AI_BRAND_SHORT : "provisional"}</span>
+            <span className="normal-case">{isAi ? aiLevelFor(game.aiDifficulty).name : "provisional"}</span>
           </p>
         )}
       </div>

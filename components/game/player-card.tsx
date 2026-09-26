@@ -7,7 +7,9 @@ import { BotAvatar } from "@/components/game/bot-avatar";
 import { SideAvatar } from "@/components/game/side-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
 import { cn } from "@/lib/utils";
-import { AI_BRAND_SHORT, AI_PLAYER_ID, type AiDifficulty, type PlayerSide } from "@/lib/types";
+import { memo } from "react";
+import { AI_PLAYER_ID, aiLevelFor, type AiDifficulty, type PlayerSide } from "@/lib/types";
+import { playerHandle } from "@/lib/identity";
 
 interface PlayerCardProps {
   side: PlayerSide;
@@ -35,7 +37,7 @@ interface PlayerCardProps {
   aiDifficulty?: AiDifficulty;
 }
 
-export function PlayerCard({
+export const PlayerCard = memo(function PlayerCard({
   side,
   playerId,
   isYou,
@@ -53,7 +55,10 @@ export function PlayerCard({
   aiDifficulty,
 }: PlayerCardProps) {
   const isAi = playerId === AI_PLAYER_ID;
-  const displayName = name ?? (isAi ? AI_BRAND_SHORT : "Guest");
+  // The board names the SPECIFIC Grandmaster playing (Pawn, Apex, Stockfish…);
+  // the brand is only the fallback when no level is stamped on the game. A
+  // human without a resolved name shows their stable handle — never "Guest".
+  const displayName = name ?? (isAi ? aiLevelFor(aiDifficulty).name : playerHandle(playerId));
   const active = isTurn && !waiting;
 
   return (
@@ -123,7 +128,7 @@ export function PlayerCard({
                 is the more useful of the two mid-game. */}
             {captures ?? null}
             <span className="truncate">
-              {isAi ? AI_BRAND_SHORT : waiting ? "Waiting…" : name ? "" : "Guest"}
+              {isAi ? aiLevelFor(aiDifficulty).name : waiting ? "Waiting…" : name ? "" : playerHandle(playerId)}
             </span>
             {inCheck && active && (
               <span className="shrink-0 font-semibold uppercase tracking-wide text-negative">
@@ -156,4 +161,4 @@ export function PlayerCard({
       )}
     </div>
   );
-}
+});

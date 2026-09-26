@@ -12,6 +12,8 @@
 
 import { getGameStorage } from "@/lib/server/storage";
 import { usernameForPlayer } from "@/lib/server/admin";
+import { playerHandle } from "@/lib/identity";
+import { AI_BRAND_SHORT, AI_PLAYER_ID } from "@/lib/types";
 
 const EVENTS_KEY = "chainmate:notify:events";
 /** Per-inbox cap: the newest 40 events survive; older fall off. */
@@ -75,7 +77,10 @@ function newId(): string {
  */
 async function actorDisplayName(playerId: string): Promise<string> {
   if (playerId === "chainmate") return "ChainMate";
-  return (await usernameForPlayer(playerId)) ?? "Guest";
+  if (playerId === AI_PLAYER_ID) return AI_BRAND_SHORT;
+  // Real username when one resolves; otherwise the player's stable handle —
+  // a notification names a PERSON, never the bare word "Guest".
+  return (await usernameForPlayer(playerId)) ?? playerHandle(playerId);
 }
 
 /**

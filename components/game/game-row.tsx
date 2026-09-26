@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { guestDisplayName } from "@/lib/identity";
+import { displayNameFor, getGuestIdentity } from "@/lib/identity";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { cn } from "@/lib/utils";
@@ -59,29 +59,37 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
   const over = isGameOver(game.status);
   const creator = game.creator;
   const opponent = game.opponent || "";
-  const isCreatorMe = Boolean(me && creator === me);
-  const isOpponentMe = Boolean(me && opponent === me);
+  /*
+   * Who counts as "me" on this device: the active player id AND the device's
+   * guest id. Games played while signed out (or the solo games recorded before
+   * the account existed) carry the guest id, so matching only the account id
+   * rendered the player's OWN record back to them as a stranger — the row had
+   * no way to know the guest was them.
+   */
+  const deviceGuestId =
+    typeof window !== "undefined" ? getGuestIdentity().playerId : "";
+  const meIds = new Set([me, deviceGuestId].filter(Boolean));
+  const isCreatorMe = meIds.has(creator);
+  const isOpponentMe = meIds.has(opponent);
   const mine = isCreatorMe || isOpponentMe;
   /**
-   * Real username when the server sent one, otherwise a plain "Guest".
-   *
-   * Routed through `guestDisplayName` rather than `players?.[id]?.name || "Guest"`:
-   * `upsertProfiles` (db.ts) synthesises `Guest_XXXX` into the username
-   * column, so the server can hand back a non-empty name that `||` passes
-   * straight through — putting the short id back on screen.
+   * The row's display name for a player id: the resolved username when the
+   * server sent one, otherwise the player's stable handle — never the bare
+   * word "Guest".
    */
   const nameFor = (id: string) => {
     if (id === AI_PLAYER_ID) {
       // WHICH bot you played — Pawn, Apex, Stockfish — not the house brand.
-      // The brand alone made every history row read identically. (Bare
-      // index entries carry no level; those keep the brand.)
-      return "aiDifficulty" in game ? aiLevelFor(game.aiDifficulty).name : AI_BRAND_SHORT;
+      // The brand alone made every history row read identically. A row with
+      // no level recorded (old index entries, pre-roster local games) keeps
+      // the brand rather than guessing a strength.
+      return game.aiDifficulty ? aiLevelFor(game.aiDifficulty).name : AI_BRAND_SHORT;
     }
-    // Your own side NEVER reads as "Guest": when no username has resolved
+    // Your own side never reads as a stranger: when no username has resolved
     // (device guest id, local rows without a name map), the row says "You" —
-    // honest at every identity state, and it can never mislabel the player.
-    if (id === me) return meName || "You";
-    return guestDisplayName(players?.[id]?.name);
+    // honest at every identity state.
+    if (meIds.has(id)) return meName || "You";
+    return displayNameFor(id, players?.[id]?.name);
   };
 
   /**
@@ -95,9 +103,8 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
 
   const primaryName = nameFor(primaryId);
   const isVsComputer = primaryId === AI_PLAYER_ID;
-  /** The bot's strength — absent on bare index entries, where the portrait
-      falls back to the generic face rather than guessing. */
-  const botLevel = "aiDifficulty" in game ? game.aiDifficulty : undefined;
+  /** The bot's strength — absent rows fall back to the generic portrait. */
+  const botLevel = game.aiDifficulty;
   const secondaryName = secondaryId ? nameFor(secondaryId) : "";
   /** Which side the row's primary player sat on. */
   const primaryIsWhite = primaryId === creator;
@@ -106,7 +113,11 @@ export function GameRow({ game, me, delta, players, meName }: GameRowProps) {
   let chip: { label: string; tone: "win" | "loss" | "draw" | "live" | "waiting"; icon?: React.ReactNode };
   if (over) {
     if (game.winner) {
-      const iWon = mine && game.winner === primaryId;
+      // The winner is compared to THIS viewer, never to the row's leading
+      // name — the row leads with the OPPONENT (the person you played), so
+      // `winner === primaryId` crowned the opponent with your wins: a player
+      // who beat Apex opened their history to find Apex had "won".
+      const iWon = mine && meIds.has(game.winner);
       if (game.status === "resigned") {
         chip = {
           label: iWon ? "Win · resign" : mine ? "Lost · resign" : "Resign",

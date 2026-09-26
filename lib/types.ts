@@ -23,6 +23,51 @@ export const AI_BRAND_NAME = "ChainMate Grandmaster";
 export const AI_BRAND_SHORT = "CM Grandmaster";
 
 /** One named computer opponent — a real name and rating, chess.com-style. */
+/**
+ * Choose the bot's think budget (ms) for a game with this time control.
+ *
+ * A fixed 2.5s think was written for untimed casual play; in a 1+0 bullet
+ * game it burned half the bot's clock every move (which made the human's
+ * comfortable lead look like a bot cheat — the human saw their own clock
+ * fine and the bot's collapsing) and in correspondence play it was nothing.
+ * The budget now scales to the event: ~1/40 of the base time per move,
+ * clamped to the level's own ceiling so Pawn stays snappy and Stockfish
+ * still gets real depth when the game is long. The fixed profiles remain
+ * the clamp when no time control is set (untimed casual play).
+ */
+export function botThinkTimeMs(difficulty: AiDifficulty, timeControl?: string): number {
+  const ceiling = searchProfileCeilingMs(difficulty);
+  const tc = timeControl?.trim() ?? "";
+  if (!tc) return ceiling;
+  // Parse "N + N" minutes; daily controls take the ceiling (there is time).
+  const days = /^\d+(?:\.\d+)?\s*d/i.exec(tc);
+  if (days) return ceiling;
+  const parts = tc.split("+").map((p) => parseFloat(p.trim()));
+  const baseMinutes = Number.isFinite(parts[0] ?? NaN) ? Math.max(0, parts[0] ?? 0) : 0;
+  if (baseMinutes <= 0) return ceiling;
+  const increment = Number.isFinite(parts[1] ?? NaN) ? Math.max(0, parts[1] ?? 0) : 0;
+  // A move's fair share: base/40 plus most of the increment (the bot can
+  // safely spend what each move refunds). 5+0 → 7.5s… too much for feel, so
+  // the level ceiling keeps it human: Apex 2.5s, Pawn 0.12s.
+  const budget = (baseMinutes * 60_000) / 40 + increment * 800;
+  return Math.max(120, Math.min(ceiling, budget));
+}
+
+/** The level's untimed ceiling, mirrored from SEARCH_PROFILES in ai-engine. */
+function searchProfileCeilingMs(difficulty: AiDifficulty): number {
+  switch (difficulty) {
+    case "beginner": return 120;
+    case "casual": return 200;
+    case "club": return 350;
+    case "advanced": return 600;
+    case "expert": return 1000;
+    case "sovereign": return 1600;
+    case "apex":
+    case "stockfish": return 2500;
+    default: return 200;
+  }
+}
+
 export interface AiLevel {
   id: AiDifficulty;
   /** Display name of this opponent. */
@@ -42,7 +87,9 @@ export interface AiLevel {
    * move, so every game against a level ran identically. Anything within this
    * margin of the best score counts as equally playable and one is chosen at
    * random, which is what makes games differ. Kept small deliberately — it only
-   * ever decides between moves that are already near-equal.
+   * ever decides between moves that are already near-equal. Even the house
+   * engine carries a whisper of it: a top level with `variety: 0` replays the
+   * same game move-for-move whenever its opponent opens the same way.
    */
   variety: number;
 }
@@ -54,7 +101,7 @@ export const AI_LEVELS: AiLevel[] = [
   { id: "advanced", name: "Onyx", rating: 1600, blurb: "Sharp tactical play with few mistakes.", depth: 3, blunderChance: 0.02, variety: 15 },
   { id: "expert", name: "Zenith", rating: 2000, blurb: "Relentless, bring your A-game.", depth: 4, blunderChance: 0, variety: 10 },
   { id: "sovereign", name: "Sovereign", rating: 2200, blurb: "Master-level play. Opens from real theory and never blinks.", depth: 5, blunderChance: 0, variety: 6 },
-  { id: "apex", name: "Apex", rating: 2400, blurb: "The house engine. Deep, patient, and brutally unforgiving.", depth: 6, blunderChance: 0, variety: 0 },
+  { id: "apex", name: "Apex", rating: 2400, blurb: "The house engine. Deep, patient, and brutally unforgiving.", depth: 6, blunderChance: 0, variety: 8 },
   {
     id: "stockfish",
     name: "Stockfish",
@@ -296,6 +343,12 @@ export interface GameIndexEntry {
   /** Target of a pending direct challenge (see GameState.invited). */
   invited?: string;
   endedAt?: number;
+  /**
+   * The bot's level on an AI game, carried so history/watch rows name the
+   * SPECIFIC Grandmaster (Stockfish, Apex, Zenith…) and wear its portrait.
+   * Without it every bot row collapsed to the generic house brand.
+   */
+  aiDifficulty?: AiDifficulty;
 }
 
 export interface CreateGameOptions {

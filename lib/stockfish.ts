@@ -72,6 +72,11 @@ class UciEngine {
 
   async start(): Promise<void> {
     await this.send("uci", (l) => l === "uciok");
+    // MultiPV 3: the search reports its top three lines. bestMove() picks at
+    // random among the near-best of them — without this, UCI search is fully
+    // deterministic and the engine replayed the SAME game whenever its
+    // opponent opened the same way (the "Stockfish is scripted" complaint).
+    await this.send("setoption name MultiPV value 3", () => true);
     await this.send("isready", (l) => l === "readyok");
   }
 
@@ -82,6 +87,12 @@ class UciEngine {
   /**
    * Best move for the position. `movetime` caps the think; `depth` caps the
    * search when provided (native multi-threaded/real-depth play).
+   *
+   * With MultiPV on, the `info … multipv N … score CP/MATE … pv X` lines rank
+   * the top three candidates. The engine's own bestmove is always available,
+   * but the choice among lines scoring within CP_MARGIN of the best is drawn
+   * at random — a repertoire instead of a script. Mate scores collapse the
+   * candidate set on their own, so a forced win is never traded away.
    */
   async bestMove(
     fen: string,
@@ -95,6 +106,27 @@ class UciEngine {
     const best = lines.find((l) => l.startsWith("bestmove"));
     const uci = best?.split(/\s+/)[1];
     if (!uci || uci === "(none)") return null;
+
+    // Candidates from the MultiPV info lines, best score first.
+    const CP_MARGIN = 25; // centipawns — one pawn is 100; 25 is "same practical strength"
+    type Cand = { uci: string; cp: number };
+    const cands: Cand[] = [];
+    for (const line of lines) {
+      const mpv = /\bmultipv (\d+)/.exec(line);
+      const score = /\bscore (cp|mate) (-?\d+)/.exec(line);
+      const pv = /\bpv ([a-h][1-8][a-h][1-8][qrbn]?)/.exec(line);
+      if (!mpv || !score || !pv) continue;
+      const cp = score[1] === "mate" ? (Number(score[2]) > 0 ? 100_000 : -100_000) : Number(score[2]);
+      cands.push({ uci: pv[1]!, cp });
+    }
+    cands.sort((a, b) => b.cp - a.cp);
+    const top = cands[0];
+    if (top) {
+      const pool = cands.filter((c) => top.cp - c.cp <= CP_MARGIN);
+      const pick = pool[Math.floor(Math.random() * pool.length)] ?? top;
+      const move = parseUciMove(fen, pick.uci);
+      if (move) return move; // parse failure → fall through to the engine's own move
+    }
     return parseUciMove(fen, uci);
   }
 

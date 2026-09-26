@@ -126,6 +126,12 @@
 
   html {
     @apply scroll-smooth;
+    /* The sideways "page jump": a page that fits the viewport has no
+       scrollbar, content that grows past it adds one, and the ~15px
+       scrollbar re-centres everything — every loading state and poll
+       refresh wiggled the layout. Reserving the gutter always keeps the
+       content column fixed whether or not the page scrolls. */
+    scrollbar-gutter: stable;
   }
 
   body {
