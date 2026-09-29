@@ -78,7 +78,9 @@ interface PayoutActionBody {
     | "topup-claim"
     | "withdraw-quote"
     | "withdraw"
-    | "withdraw-confirm";
+    | "withdraw-confirm"
+    | "withdraw-wallet-prepare"
+    | "withdraw-wallet-claim";
   playerId?: string;
   /** For send/dispatch/retry/verify: which winner's payout to act on. */
   targetPlayerId?: string;
@@ -238,6 +240,47 @@ export async function POST(req: NextRequest, { params }: Params) {
         });
       } catch (err) {
         if (err instanceof w.WithdrawError) {
+          return NextResponse.json({ error: err.message, kind: err.kind }, { status: err.status });
+        }
+        const message = err instanceof Error ? err.message : "Withdrawal failed";
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
+    }
+
+    // WALLET-PATH WITHDRAWALS — when no signing node exists, the admin pays
+    // the withdrawal to themselves from the SAME wallet that tops pools up.
+    // prepare = the validated wire facts (recipient is resolved server-side
+    // to the linked wallet; the amount passes THE CAP); claim = ChainMate
+    // verifies the admin's real on-chain transaction (sender = linked
+    // wallet, exact value, network, execution) and records it in the same
+    // withdrawal ledger. Same gates as the node path — admin-only, live
+    // events only, purse cut first — nothing about the cap is relaxed.
+    if (body.action === "withdraw-wallet-prepare" || body.action === "withdraw-wallet-claim") {
+      const ww = await import("@/lib/server/tournament-withdraw-wallet");
+      const { WithdrawError: WalletWithdrawError } = await import("@/lib/server/tournament-withdraw");
+      try {
+        if (body.action === "withdraw-wallet-prepare") {
+          if (typeof body.amountNim !== "string" || !body.amountNim.trim()) {
+            return NextResponse.json({ error: "amountNim is required" }, { status: 400 });
+          }
+          const intent = await ww.preparePoolWithdrawal(id, acting.playerId, body.amountNim);
+          return NextResponse.json({ intent });
+        }
+        if (!body.txHash) {
+          return NextResponse.json({ error: "txHash is required" }, { status: 400 });
+        }
+        const result = await ww.claimPoolWithdrawalWithWalletTransaction(id, acting.playerId, body.txHash);
+        return NextResponse.json({
+          withdrawal: {
+            amountLuna: result.withdrawal.amountLuna,
+            status: result.withdrawal.status,
+            withdrawTxHash: result.withdrawal.withdrawTxHash,
+            recipientAddress: result.withdrawal.recipientAddress,
+            confirmations: result.confirmations,
+          },
+        });
+      } catch (err) {
+        if (err instanceof WalletWithdrawError) {
           return NextResponse.json({ error: err.message, kind: err.kind }, { status: err.status });
         }
         const message = err instanceof Error ? err.message : "Withdrawal failed";

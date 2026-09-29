@@ -1964,13 +1964,15 @@ function PoolWithdraw({
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [sentHash, setSentHash] = useState<string | null>(null);
+  const [sentViaWallet, setSentViaWallet] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   /** POST a withdrawal action as the admin; passcode session rides the header. */
   const withdrawAction = async (
-    action: "withdraw-quote" | "withdraw" | "withdraw-confirm",
+    action: "withdraw-quote" | "withdraw" | "withdraw-confirm" | "withdraw-wallet-prepare" | "withdraw-wallet-claim",
     amountNim?: string,
+    txHash?: string,
   ): Promise<Record<string, unknown>> => {
     const token = getIdentityToken();
     const res = await fetch(`/api/tournaments/${encodeURIComponent(row.id)}/payouts`, {
@@ -1980,7 +1982,7 @@ function PoolWithdraw({
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         "X-Admin-Session": passcodeToken,
       },
-      body: JSON.stringify({ playerId, action, amountNim }),
+      body: JSON.stringify({ playerId, action, amountNim, txHash }),
     });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
     if (!res.ok || data.error) throw new Error(String(data.error ?? `Request failed (${res.status})`));
@@ -2048,6 +2050,64 @@ function PoolWithdraw({
     }
   };
 
+  /**
+   * The wallet path — no signing node needed. The SAME wallet that pays
+   * top-ups IN sends the withdrawal OUT to itself via Nimiq Pay, and
+   * ChainMate verifies the real on-chain transaction. Wire facts come from
+   * the server (recipient resolved to the linked wallet, amount cap-checked);
+   * the client never types an amount into the wire.
+   */
+  const withdrawViaWallet = async () => {
+    setSending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const prep = (await withdrawAction("withdraw-wallet-prepare", amount)) as {
+        intent: { recipientAddress: string; amountLuna: string };
+      };
+      const { connectNimiq, sendNimiqBasicTransaction } = await import("@/lib/nimiq/miniapp");
+      const { canonicalAddress } = await import("@/lib/nimiq/address");
+      const connected = await connectNimiq();
+      if (!connected.ok) throw new Error(connected.error.message);
+      const sent = await sendNimiqBasicTransaction(connected.value, {
+        recipient: canonicalAddress(prep.intent.recipientAddress),
+        value: BigInt(prep.intent.amountLuna),
+      });
+      if (!sent.ok) throw new Error(sent.error.message);
+      setAmount("");
+      setSentViaWallet(true);
+      setSentHash(sent.value);
+      try {
+        await withdrawAction("withdraw-wallet-claim", undefined, sent.value);
+        setNotice(`Withdrawal sent from your wallet (tx ${sent.value.slice(0, 10)}…). Press Confirm below once it has ~10 confirmations.`);
+      } catch {
+        // The money has MOVED; the same hash re-claims once confirmations land.
+        setNotice(`Withdrawal sent from your wallet (tx ${sent.value.slice(0, 10)}…) — still confirming. Press Claim below in a moment; do NOT send again.`);
+      }
+      onDone();
+      void loadQuote();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Withdrawal failed");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /** Re-claim a wallet-path withdrawal that is still maturing on-chain. */
+  const reClaimWallet = async () => {
+    if (!sentHash) return;
+    setConfirming(true);
+    setError(null);
+    try {
+      await withdrawAction("withdraw-wallet-claim", undefined, sentHash);
+      setNotice("Withdrawal recorded — press Confirm below once it has ~10 confirmations.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Claim failed");
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   const confirm = async () => {
     setConfirming(true);
     setError(null);
@@ -2071,6 +2131,8 @@ function PoolWithdraw({
 
   const working = parentWorking || quoteBusy || sending || confirming;
   const available = quote ? `${formatNim(BigInt(quote.availableLuna))} NIM` : "...";
+  /** The wallet path owns the UI whenever the node cannot sign. */
+  const useWalletPath = quote != null && !quote.signerConfigured;
 
   return (
     <div className="rounded-md border border-border/60 bg-secondary/20 px-3 py-2">
@@ -2084,6 +2146,7 @@ function PoolWithdraw({
           disabled={working || busy}
           onClick={() => {
             setSentHash(null);
+            setSentViaWallet(false);
             setNotice(null);
             setError(null);
             void loadQuote();
@@ -2095,14 +2158,13 @@ function PoolWithdraw({
       </div>
       {quoteError && <p className="mt-1 text-2xs text-warning">{quoteError}</p>}
       {quote && !quote.signerConfigured && (
-        /* The form below is HIDDEN, not warned beside: a read-only payout
-           endpoint can never broadcast, and an input that always fails is a
-           trap. The fix is operator-side - point NIMIQ_PAYOUT_RPC_URL at a
-           node holding the treasury key in its keystore. */
+        /* No signing node — the wallet path takes over below. The wallet that
+           tops pools up is the same one that withdraws: the admin pays
+           themselves and ChainMate verifies the real transaction. */
         <p className="mt-2 rounded-md border border-warning/30 bg-warning/[0.08] px-3 py-2 text-2xs leading-snug text-warning">
-          This deployment&apos;s payout endpoint can&apos;t sign transactions, so withdrawals
-          are unavailable. Point NIMIQ_PAYOUT_RPC_URL at a node holding the treasury key
-          to enable them.
+          No payout node is configured on this deployment. Withdrawals below send from
+          your own linked wallet — the same one that tops up — and are verified
+          on-chain. (A signing node would let the treasury pay instead.)
         </p>
       )}
       {quote?.recipientAddress && (
@@ -2119,6 +2181,12 @@ function PoolWithdraw({
           <p className="min-w-0 flex-1 break-all font-mono text-2xs text-muted-foreground">
             tx {sentHash.slice(0, 18)}...{sentHash.slice(-6)} - waiting for confirmations.
           </p>
+          {sentViaWallet && (
+            <Button size="sm" variant="ghost" disabled={working || busy} onClick={() => void reClaimWallet()}>
+              {confirming ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              Claim
+            </Button>
+          )}
           <Button size="sm" variant="ghost" disabled={working || busy} onClick={() => void confirm()}>
             {confirming ? <Loader2 className="animate-spin" aria-hidden /> : null}
             Confirm withdrawal
@@ -2143,6 +2211,27 @@ function PoolWithdraw({
           >
             {sending ? <Loader2 className="animate-spin" aria-hidden /> : null}
             Withdraw
+          </Button>
+        </div>
+      )}
+      {!sentHash && useWalletPath && (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+            placeholder="NIM, e.g. 25"
+            inputMode="decimal"
+            className="w-0 flex-1 rounded border border-border/70 bg-background px-2 py-1.5 font-mono text-2xs outline-none transition-colors focus:border-primary/50"
+            aria-label="Withdrawal amount in NIM"
+          />
+          <Button
+            size="sm"
+            className="shrink-0"
+            disabled={!amountValid || working || busy}
+            onClick={() => void withdrawViaWallet()}
+          >
+            {sending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Withdraw via wallet
           </Button>
         </div>
       )}

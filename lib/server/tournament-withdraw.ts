@@ -82,6 +82,9 @@ export class WithdrawError extends Error {
 
 export type WithdrawStatus = "dispatching" | "sent" | "verified" | "failed";
 
+/** How the withdrawal moved: the treasury payout node, or the admin's own wallet. */
+export type WithdrawVia = "node" | "wallet";
+
 /**
  * One withdrawal. Field names mirror PayoutRecord's dispatch metadata so
  * the WAL/verify semantics read identically across both ledgers.
@@ -101,6 +104,14 @@ export interface WithdrawRecord {
   senderAddress: string | null;
   /** WRITE-AHEAD: recorded BEFORE broadcast; reused on every recovery. */
   validityStartHeight: number | null;
+  /**
+   * Which path moved the money. "node" = the treasury payout node signed
+   * and broadcast (the default); "wallet" = the ADMIN paid themselves from
+   * their own linked wallet (Nimiq Pay) and ChainMate verified the real
+   * on-chain transaction (tournament-withdraw-wallet.ts). Node rows carry a
+   * write-ahead vsh; wallet rows are written already 'sent' with null vsh.
+   */
+  via: WithdrawVia;
   dispatchAttempts: number;
   lastBroadcastAt: number | null;
   failureReason: string | null;
@@ -544,6 +555,7 @@ export async function withdrawPool(
       withdrawTxHash: null,
       senderAddress: signer.getSenderAddress?.() ?? (deps.getTreasuryAddress ?? getCanonicalTreasuryAddress)() ?? null,
       validityStartHeight: vsh,
+      via: "node",
       dispatchAttempts: 1,
       lastBroadcastAt: null,
       failureReason: null,
@@ -640,13 +652,18 @@ export async function confirmPoolWithdrawal(
       throw new WithdrawError("malformed-response", "The withdrawal transaction is not visible on the node yet", 502);
     }
 
-    // Sender: the treasury of record — env config when present, otherwise
-    // the write-ahead row's recorded sender (never client data).
-    const expectedSender = canonicalAddress(
-      (deps.getTreasuryAddress ?? getCanonicalTreasuryAddress)() ?? row.senderAddress ?? "",
-    );
+    // Sender: the wallet path records the admin's own linked wallet (no
+    // payout node exists there), so a 'via: wallet' row is verified against
+    // its recorded sender. Node rows verify against the treasury of record —
+    // env config when present, otherwise the row's recorded sender.
+    const expectedSender =
+      row.via === "wallet" && row.senderAddress
+        ? canonicalAddress(row.senderAddress)
+        : canonicalAddress(
+            (deps.getTreasuryAddress ?? getCanonicalTreasuryAddress)() ?? row.senderAddress ?? "",
+          );
     if (!expectedSender || canonicalAddress(String(tx.from ?? "")) !== expectedSender) {
-      throw new WithdrawError("wrong-sender", "Withdrawal transaction sender does not match the configured treasury", 502);
+      throw new WithdrawError("wrong-sender", "Withdrawal transaction sender does not match the withdrawal record", 502);
     }
     if (canonicalAddress(String(tx.to ?? "")) !== canonicalAddress(row.recipientAddress)) {
       throw new WithdrawError("wrong-recipient", "Withdrawal transaction recipient does not match the withdrawal record", 502);

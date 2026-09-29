@@ -271,6 +271,7 @@ test("a dead endpoint fails the stranded intent instead of looping forever", asy
     withdrawTxHash: null,
     senderAddress: TREASURY,
     validityStartHeight: 999,
+    via: "node",
     dispatchAttempts: 1,
     lastBroadcastAt: null,
     failureReason: null,
