@@ -147,6 +147,10 @@ function ProfileContent() {
             <Settings className="h-4 w-4" aria-hidden />
           </Button>
         }
+        /* One small gear: render it beside the rating chip rather than on a
+           full-width row of its own, which left the header's top-right corner
+           looking unused. */
+        actionsInline
         description={
           identity.isGuest
             ? "Guest: casual play, nothing is saved. Sign up for a permanent record."
@@ -162,7 +166,7 @@ function ProfileContent() {
 
       {error && <ErrorNote message={error} className="mt-6" />}
 
-      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
+      <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start lg:gap-10">
       {/* ============ LEFT COLUMN — the main contents ============ */}
       <div className="min-w-0 space-y-6">
       {/* Username/country editing moved to Settings — the profile stays a
@@ -178,33 +182,38 @@ function ProfileContent() {
       <NimiqWalletCard playerId={playerId} />
 
       {/* Stats */}
-      <StatTiles
-        layout="five"
-        className="mt-8 animate-fade-in-up [animation-delay:80ms]"
-        tiles={[
-          { label: "Games", value: stats ? String(stats.games) : "—" },
-          { label: "Wins", value: stats ? String(stats.wins) : "—" },
-          { label: "Losses", value: stats ? String(stats.losses) : "—" },
-          { label: "Draws", value: stats ? String(stats.draws) : "—" },
-          { label: "Win rate", value: winRate !== null ? `${winRate}%` : "—" },
-        ]}
-      />
+      <div className="animate-fade-in-up [animation-delay:80ms]">
+        <SectionLabel>Record</SectionLabel>
+        <StatTiles
+          layout="five"
+          className="mt-3"
+          tiles={[
+            { label: "Games", value: stats ? String(stats.games) : "—" },
+            { label: "Wins", value: stats ? String(stats.wins) : "—" },
+            { label: "Losses", value: stats ? String(stats.losses) : "—" },
+            { label: "Draws", value: stats ? String(stats.draws) : "—" },
+            { label: "Win rate", value: winRate !== null ? `${winRate}%` : "—" },
+          ]}
+        />
+      </div>
 
-      <StatTiles
-        layout="three"
-        size="sm"
-        className="mt-4 animate-fade-in-up [animation-delay:100ms]"
-        tiles={[
-          { label: "Peak rating", value: stats ? String(stats.peakRating) : "—" },
-          stats ? formatStreak(streak) : { label: "Streak", value: "—" },
-          { label: "Best streak", value: stats ? `${stats.bestStreak}W` : "—" },
-        ]}
-      />
-      <p className="mt-2 text-2xs text-muted-foreground">
-        {provisional
-          ? "Provisional rating: updates after rated online matches between two human players."
-          : "Rating and streaks update after rated online matches between two human players."}
-      </p>
+      {/* Peak/streak strip + the provisional footnote belong together. */}
+      <div className="animate-fade-in-up [animation-delay:100ms]">
+        <StatTiles
+          layout="three"
+          size="sm"
+          tiles={[
+            { label: "Peak rating", value: stats ? String(stats.peakRating) : "—" },
+            stats ? formatStreak(streak) : { label: "Streak", value: "—" },
+            { label: "Best streak", value: stats ? `${stats.bestStreak}W` : "—" },
+          ]}
+        />
+        <p className="mt-1.5 text-2xs text-muted-foreground">
+          {provisional
+            ? "Provisional rating: updates after rated online matches between two human players."
+            : "Rating and streaks update after rated online matches between two human players."}
+        </p>
+      </div>
 
       {/* Form — the record above, in the order it happened. */}
       <RecentForm
@@ -214,7 +223,7 @@ function ProfileContent() {
         streak={streak}
         loading={stats === null}
         showTrend
-        className="mt-4 [animation-delay:120ms]"
+        className="[animation-delay:120ms]"
       />
       </div>
 
@@ -269,10 +278,12 @@ function ProfileContent() {
       </div>
       </div>
 
-      {/* Friends + player search live on their own page now; this row is a
-          pointer so the profile stays a summary rather than a control room. */}
-      <div className="mt-10">
-        <FriendsLinkRow />
+      {/* Friends + player search live on their own page now; this card is a
+          quiet pointer so the profile stays a summary rather than a control
+          room, and it fills the bottom of the page instead of one floating
+          button under an otherwise-empty footer band. */}
+      <div className="mt-10 animate-fade-in-up [animation-delay:220ms]">
+        <FriendsLinkCard />
       </div>
 
       {/* Danger zone — temporarily hidden: account deletion is disabled while
@@ -286,16 +297,32 @@ function ProfileContent() {
   );
 }
 
-/** Pointer to the standalone Friends page: opens the full list, requests
-    and player search without duplicating them on the profile. */
-function FriendsLinkRow() {
+/** Pointer to the standalone Friends page: a quiet card that closes the
+    page — one labelled row instead of a bare floating button. */
+function FriendsLinkCard() {
   return (
     <Link
       href="/friends"
-      className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-transparent px-4 text-sm font-medium shadow-sm transition-all hover:bg-accent active:scale-[0.97]"
+      className="group flex items-center gap-3 rounded-lg border border-border/70 bg-card/50 px-4 py-3.5 transition-all hover:border-primary/30 hover:bg-secondary/40 active:scale-[0.99]"
     >
-      <UserRound className="h-4 w-4" aria-hidden />
-      Your friends
+      <span
+        aria-hidden
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/70 bg-secondary/50 transition-colors group-hover:border-primary/40 group-hover:text-primary"
+      >
+        <UserRound className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">Your friends</span>
+        <span className="block text-xs text-muted-foreground">
+          Manage your list, answer requests and find players
+        </span>
+      </span>
+      <span
+        aria-hidden
+        className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+      >
+        →
+      </span>
     </Link>
   );
 }

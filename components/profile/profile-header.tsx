@@ -27,6 +27,7 @@ export function ProfileHeader({
   isGuest,
   badges,
   actions,
+  actionsInline = false,
   avatarUrl,
   joinedAt,
   editableAvatar = false,
@@ -49,6 +50,13 @@ export function ProfileHeader({
   badges?: ReactNode;
   /** Buttons in the right-hand cluster, before the rating block. */
   actions?: ReactNode;
+  /**
+   * Render `actions` beside the rating chip instead of on their own row.
+   * A single compact control (the profile page's settings gear) reads as
+   * dead space on a full-width row; a wide cluster (the public page's
+   * Friends + Challenge) keeps its own line above the identity row.
+   */
+  actionsInline?: boolean;
   /** The player's uploaded picture, when one exists. */
   avatarUrl?: string | null;
   /** Unix ms the account joined — shown as a small "Joined" line. */
@@ -72,7 +80,7 @@ export function ProfileHeader({
           ~200px) painted straight over the name and badge on phones. In
           normal flow nothing can ever overlap: the buttons take their own
           line on small screens and sit beside the rating on wide ones. */}
-      {actions && (
+      {actions && !actionsInline && (
         <div className="mb-3 flex flex-wrap items-center justify-end gap-2 animate-fade-in-up">
           {actions}
         </div>
@@ -112,7 +120,7 @@ export function ProfileHeader({
 
       {/* The rating chip stays in the flex row (it wraps naturally on
           phones). */}
-      {rating !== null && rating !== undefined && (
+      {(rating !== null && rating !== undefined) || (actionsInline && actions) ? (
         <div className="ml-auto flex flex-wrap items-center gap-2.5">
           {rating !== null && rating !== undefined && (
             /* The rating as a small anchored chip: label on top, number and
@@ -140,8 +148,9 @@ export function ProfileHeader({
               </div>
             </div>
           )}
+          {actionsInline && actions}
         </div>
-      )}
+      ) : null}
       </div>
     </div>
   );
