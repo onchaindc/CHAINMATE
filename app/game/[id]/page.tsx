@@ -26,6 +26,7 @@ import { BoardSettings } from "@/components/game/board-settings";
 import { CaptureTray } from "@/components/game/capture-tray";
 import { ChessBoard } from "@/components/game/chess-board";
 import { EndGameModal } from "@/components/game/end-game-modal";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { GameChat } from "@/components/game/game-chat";
 import { MoveHistory } from "@/components/game/move-history";
 import { PlayerCard } from "@/components/game/player-card";
@@ -80,9 +81,11 @@ export default function GamePage() {
   useAiOpponent({ game, submitAiMove, disabled: busy !== null });
   /**
    * The one-active-game gate refused the viewer on THIS board (they tried to
-   * join or rematch while another game was still running). Self-contained so
-   * it can gate the early-return screens: only meaningful on an open hosted
-   * board the viewer could have sat down at, and never for the game itself.
+   * join or rematch while another game was still running). A POPUP now, not
+   * a page replacement: the board underneath stays put, so refusing to let
+   * someone sit down no longer looks like having sat them down anyway. Only
+   * meaningful on an open hosted board the viewer could have sat down at,
+   * and never for the game itself.
    */
   const gateHere =
     Boolean(activeGameId) &&
@@ -92,6 +95,14 @@ export default function GamePage() {
     game.status === "waiting" &&
     game.creator !== myId &&
     !(game.invited && game.invited !== myId);
+  /** The gate popup stays open on the board it refused — no page swap. */
+  const [gatePopupOpen, setGatePopupOpen] = useState(true);
+  useEffect(() => {
+    setGatePopupOpen(true);
+  }, [activeGameId]);
+  /** The board an AI rematch ran into — that popup's subject. Above every
+      early return: hooks run in the same order on every render. */
+  const [aiRematchGate, setAiRematchGate] = useState<string | null>(null);
 
   const gameOver = game ? isGameOver(game.status) : false;
 
@@ -438,36 +449,15 @@ export default function GamePage() {
     );
   }
 
-  /** The gate refused the viewer: show the game they are already in. */
-  if (gateHere && activeGameId) {
-    return (
-      <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
-        <p className="font-mono text-2xs uppercase tracking-[0.22em] text-muted-foreground">
-          One game at a time
-        </p>
-        <h1 className="font-display mt-3 text-2xl font-bold tracking-tight">
-          You already have a game in progress
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Finish the board you are on before sitting down at another one.
-        </p>
-        <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Link href={`/game/${activeGameId}`}>
-            <Button size="lg">
-              <Play aria-hidden />
-              Resume your game
-            </Button>
-          </Link>
-          <Link
-            href="/play"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            Back to the lobby
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  /** The gate refused the viewer: a popup over THIS board, not a page swap. */
+  const gatePopup = gateHere && activeGameId ? (
+    <ActiveGameGateDialog
+      open={gatePopupOpen}
+      activeGameId={activeGameId}
+      attempted="joining this game"
+      onClose={() => setGatePopupOpen(false)}
+    />
+  ) : null;
 
   const waiting = game.status === "waiting";
   /**
@@ -1049,15 +1039,16 @@ export default function GamePage() {
                       );
                       router.push(`/game/${next.id}`);
                     } catch (err) {
+                      // A running game blocked the rematch: the popup says so,
+                      // with the way back to the board that is in the way.
                       const gated = activeGameIdFromError(err);
-                      if (gated) router.push(`/game/${gated}`);
+                      if (gated) setAiRematchGate(gated);
                     }
                   }
                 : game.backend === "hosted"
                   ? async () => {
-                      // The hook navigates to the running game itself when the
-                      // one-active-game gate fires; swallow the rethrow so the
-                      // modal's void() stays silent.
+                      // The gate (if it fires) sets the same activeGameId
+                      // state above, which renders the popup over this page.
                       await rematch().catch(() => undefined);
                     }
                   : undefined
@@ -1067,6 +1058,19 @@ export default function GamePage() {
             startReplay();
           }}
           onClose={() => setResultOpen(false)}
+        />
+      )}
+
+      {/* The one-active-game gate, as a popup: joining a second open game or
+          rematch-blocked games get the warning plus the way back to the
+          running board, over the page they are already on. */}
+      {gatePopup}
+      {aiRematchGate && (
+        <ActiveGameGateDialog
+          open={Boolean(aiRematchGate)}
+          activeGameId={aiRematchGate}
+          attempted="your rematch"
+          onClose={() => setAiRematchGate(null)}
         />
       )}
     </div>

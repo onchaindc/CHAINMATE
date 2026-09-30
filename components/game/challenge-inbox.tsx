@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Swords, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -32,6 +33,8 @@ export function ChallengeInbox() {
   const [players, setPlayers] = useState<Record<string, PlayerInfo>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the gate refused an accept — the popup names the running match. */
+  const [gate, setGate] = useState<string | null>(null);
   /** Answered or hidden by hand — never show these again this session. */
   const dismissed = useRef<Set<string>>(new Set());
 
@@ -70,12 +73,12 @@ export function ChallengeInbox() {
       forget(game.id);
       router.push(`/game/${started.id}`);
     } catch (err) {
-      // One board at a time: an accepter with a game already running is sent
-      // back to that board instead of shown a dead-end error.
+      // One board at a time: an accepter with a game already running gets the
+      // gate popup naming that game — the way back without a dead-end error.
       const gated = activeGameIdFromError(err);
       if (gated) {
         forget(game.id);
-        router.push(`/game/${gated}`);
+        setGate(gated);
       } else {
         setError(err instanceof Error ? err.message : "Couldn't accept that challenge.");
       }
@@ -100,7 +103,7 @@ export function ChallengeInbox() {
 
   // Don't shout about a game the player is already looking at.
   const visible = challenges.filter((g) => pathname !== `/game/${g.id}`).slice(0, 2);
-  if (visible.length === 0) return null;
+  if (visible.length === 0 && gate === null) return null;
 
   return (
     <div
@@ -178,6 +181,15 @@ export function ChallengeInbox() {
           </div>
         );
       })}
+
+      {/* An accept the gate refused: the popup names the game in the way and
+          takes the player back to it. */}
+      <ActiveGameGateDialog
+        open={gate !== null}
+        activeGameId={gate ?? ""}
+        attempted="accepting a challenge"
+        onClose={() => setGate(null)}
+      />
     </div>
   );
 }

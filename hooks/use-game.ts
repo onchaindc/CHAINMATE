@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Chess } from "chess.js";
 import { describePosition, turnLabel, type PositionInfo } from "@/lib/chess";
 import { getStoreForId } from "@/lib/store";
@@ -26,7 +25,6 @@ export type BusyAction =
   | null;
 
 export function useGame(id: string) {
-  const router = useRouter();
   const storeRef = useRef<GameStore | null>(null);
   if (!storeRef.current) {
     storeRef.current = getStoreForId(id);
@@ -201,16 +199,14 @@ export function useGame(id: string) {
     // `apply: false` — the server creates a brand-new game, and writing that
     // into this hook (still bound to the old id) would flash the fresh board
     // and re-fire the end-game modal before the caller navigates.
-    () =>
-      runAction("rematch", () => storeRef.current!.rematch(id), false).catch((err) => {
-        // The gate fired because another game is still running (an unfinished
-        // one started elsewhere, a stray tab). Going to THAT game is the
-        // answer — never stacking a rematch on top of it.
-        const gated = activeGameIdFromError(err);
-        if (gated) router.push(`/game/${gated}`);
-        throw err;
-      }),
-    [id, runAction, router],
+    //
+    // When the one-active-game gate refuses, this RETHROWS (as always): the
+    // caller is the one that knows what the player was trying to do, so it
+    // owns the response — the gate popup names the game in the way and
+    // offers the way back to it. Silent redirects read as "the new game
+    // opened"; a dialog does not.
+    () => runAction("rematch", () => storeRef.current!.rematch(id), false),
+    [id, runAction],
   );
   /** Settle a flag fall right now — silent: failures fall back to polling. */
   const resolveTimeout = useCallback(async () => {

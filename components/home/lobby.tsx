@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { CountryFlag } from "@/components/ui/country-flag";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { GameRow } from "@/components/game/game-row";
 import { RecentForm } from "@/components/profile/recent-form";
@@ -214,6 +215,8 @@ export function Lobby() {
       setChallenging(null);
     }
   };
+  /** The gate id the popup is currently showing (challenge or matchmaking). */
+  const gateShown = challengeGate ?? match.gate;
 
   const stats = data?.stats;
   const resume = data?.mine ?? [];
@@ -391,35 +394,19 @@ export function Lobby() {
                 )}
 
                 {challengeError && <ErrorNote message={challengeError} className="mt-3" />}
-                {/* One board at a time: the running game is the answer, not an error. */}
-                {challengeGate && (
-                  <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-3.5 py-2.5">
-                    <p className="text-xs text-muted-foreground">
-                      You already have a game in progress.
-                    </p>
-                    <Link
-                      href={`/game/${challengeGate}`}
-                      className={buttonVariants({ size: "sm", variant: "outline" })}
-                    >
-                      Resume
-                    </Link>
-                  </div>
-                )}
                 {match.error && <ErrorNote message={match.error} className="mt-3" />}
-                {/* Searching is refused while a game is running — point back at it. */}
-                {match.gate && (
-                  <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-3.5 py-2.5">
-                    <p className="text-xs text-muted-foreground">
-                      You already have a game in progress.
-                    </p>
-                    <Link
-                      href={`/game/${match.gate}`}
-                      className={buttonVariants({ size: "sm", variant: "outline" })}
-                    >
-                      Resume
-                    </Link>
-                  </div>
-                )}
+
+                {/* One board at a time: a refused challenge or search gets the
+                    gate popup, naming the running match with the way back. */}
+                <ActiveGameGateDialog
+                  open={gateShown !== null}
+                  activeGameId={gateShown ?? ""}
+                  attempted={challengeGate !== null ? "a challenge" : "a matchmaking search"}
+                  onClose={() => {
+                    setChallengeGate(null);
+                    match.cancel();
+                  }}
+                />
 
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border/60 pt-4 sm:grid-cols-4">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Bot, Loader2, Play } from "lucide-react";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { ChessBoard } from "@/components/game/chess-board";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -15,7 +16,7 @@ import { getStore } from "@/lib/store";
 import { useIdentity } from "@/lib/identity-context";
 import { HostedGameStore } from "@/lib/store/hosted-store";
 import { LocalGameStore } from "@/lib/store/local-store";
-import { activeGameIdFromError, AI_LEVELS, AI_PLAYER_ID, START_FEN, aiLevelFor, normalizeAiDifficulty, type AiDifficulty, type GameState } from "@/lib/types";
+import { activeGameIdFromError, AI_LEVELS, AI_PLAYER_ID, START_FEN, aiLevelFor, isGameOver, normalizeAiDifficulty, type AiDifficulty, type GameState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -65,7 +66,7 @@ async function startSoloGame(
   difficulty: AiDifficulty,
   options: { timeControl?: string } | undefined,
   identityIsUser: boolean,
-): Promise<GameState> {
+): Promise<GameState | { gate: string }> {
   const local = getStore("local") as LocalGameStore;
   const running = await local.findActiveGame();
   if (running) return running;
@@ -76,10 +77,14 @@ async function startSoloGame(
     } catch (err) {
       const gated = activeGameIdFromError(err);
       if (!gated) throw err;
-      // The blocker may be a game only the server knows about — ask it.
+      // The blocker may be a game only the server knows about — ask it. A
+      // game that has actually finished between the gate firing and this
+      // read is not a blocker: try to create for real.
       const game = await (getStore("hosted") as HostedGameStore).getGame(gated);
-      if (game) return game;
-      throw err;
+      if (game && !isGameOver(game.status)) {
+        return { gate: gated };
+      }
+      return startSoloGame(difficulty, options, identityIsUser);
     }
   }
   return local.createAiGame(difficulty, options);
@@ -95,6 +100,8 @@ export default function SoloPage() {
   const [error, setError] = useState<string | null>(null);
   /** The player's running game, when there is one — the resume card below. */
   const [running, setRunning] = useState<GameState | null>(null);
+  /** Set when the gate refused a new bot game — the popup names the match. */
+  const [gate, setGate] = useState<string | null>(null);
 
   /**
    * Preselected opponent, from `?level=` when a rematch sent us back here.
@@ -137,13 +144,21 @@ export default function SoloPage() {
   const play = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setGate(null);
     try {
-      const game = await startSoloGame(
+      const result = await startSoloGame(
         difficulty,
         timeControl === "No clock" ? undefined : { timeControl },
         identity.status === "user",
       );
-      router.push(`/game/${game.id}`);
+      if ("gate" in result) {
+        // One game at a time: say so, name the running match, offer the way
+        // back — never act as if a new game had opened.
+        setGate(result.gate);
+        setBusy(false);
+        return;
+      }
+      router.push(`/game/${result.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start the game");
       setBusy(false);
@@ -329,6 +344,15 @@ export default function SoloPage() {
           </div>
         </div>
       </div>
+
+      {/* One game at a time: the gate popup names the running match and takes
+          the player back to it, over the solo screen they are still on. */}
+      <ActiveGameGateDialog
+        open={gate !== null}
+        activeGameId={gate ?? ""}
+        attempted="a new bot game"
+        onClose={() => setGate(null)}
+      />
     </div>
   );
 }

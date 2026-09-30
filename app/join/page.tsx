@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { ErrorNote } from "@/components/ui/states";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { getGameBackend } from "@/lib/config";
 import { getStoreForId } from "@/lib/store";
+import { activeGameIdFromError } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function normalizeId(value: string): string {
@@ -26,6 +28,8 @@ export default function JoinGamePage() {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the gate refused a join — the popup names the running match. */
+  const [gate, setGate] = useState<string | null>(null);
 
   const join = useCallback(
     async (e: React.FormEvent) => {
@@ -37,12 +41,19 @@ export default function JoinGamePage() {
       }
       setBusy(true);
       setError(null);
+      setGate(null);
       try {
         const store = getStoreForId(id);
         const game = await store.joinGame(id);
         router.push(`/game/${game.id}`);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not join the game");
+        // One game at a time: name the running match instead of a dead-end error.
+        const gated = activeGameIdFromError(err);
+        if (gated) {
+          setGate(gated);
+        } else {
+          setError(err instanceof Error ? err.message : "Could not join the game");
+        }
         setBusy(false);
       }
     },
@@ -111,6 +122,15 @@ export default function JoinGamePage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* A join the gate refused: the popup names the game in the way and
+          takes the player back to it. */}
+      <ActiveGameGateDialog
+        open={gate !== null}
+        activeGameId={gate ?? ""}
+        attempted="joining that game"
+        onClose={() => setGate(null)}
+      />
     </div>
   );
 }

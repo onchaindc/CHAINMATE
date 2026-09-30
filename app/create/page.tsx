@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { BackLink, PageHeader } from "@/components/ui/page-header";
 import { ErrorNote } from "@/components/ui/states";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { getGameBackend } from "@/lib/config";
 import { getStore } from "@/lib/store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
+import { activeGameIdFromError } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -36,6 +38,8 @@ export default function CreateGamePage() {
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the gate refused a creation or a search — the popup names the match. */
+  const [gate, setGate] = useState<string | null>(null);
 
   /**
    * `?mode=ai` used to flip this page into single-player. Solo has its own
@@ -59,11 +63,16 @@ export default function CreateGamePage() {
   const create = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setGate(null);
     try {
       const game = await getStore().createGame({ timeControl, visibility });
       router.push(`/game/${game.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create the game");
+      // One game at a time: name the running match instead of printing an
+      // error that reads like a fault.
+      const gated = activeGameIdFromError(err);
+      if (gated) setGate(gated);
+      else setError(err instanceof Error ? err.message : "Failed to create the game");
       setBusy(false);
     }
   }, [router, timeControl, visibility]);
@@ -112,6 +121,18 @@ export default function CreateGamePage() {
           </div>
 
           {match.error && <ErrorNote message={match.error} />}
+
+          {/* Searching is refused while a game is running — the popup names
+              the match and offers the way back to it. */}
+          <ActiveGameGateDialog
+            open={match.gate !== null || gate !== null}
+            activeGameId={match.gate ?? gate ?? ""}
+            attempted={gate !== null ? "a new game" : "a matchmaking search"}
+            onClose={() => {
+              setGate(null);
+              match.cancel();
+            }}
+          />
 
           {match.seeking && (
             <div className="animate-fade-in-up flex flex-col items-center gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-4 py-5 text-center">

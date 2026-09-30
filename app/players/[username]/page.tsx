@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AchievementGrid } from "@/components/game/achievement-grid";
+import { ActiveGameGateDialog } from "@/components/game/active-game-gate-dialog";
 import { GameRow } from "@/components/game/game-row";
 import { PlayerAvatar } from "@/components/auth/player-avatar";
 import { CountryFlag } from "@/components/ui/country-flag";
@@ -71,6 +72,8 @@ export default function PublicPlayerPage() {
   const [challenging, setChallenging] = useState(false);
   /** Removing a friend is destructive: the dialog names them first. */
   const [removing, setRemoving] = useState(false);
+  /** Set when the gate refused a challenge — the popup names the running match. */
+  const [challengeGate, setChallengeGate] = useState<string | null>(null);
 
   const store = useMemo(() => getStore("hosted") as HostedGameStore, []);
   const viewerId = identity.playerId;
@@ -152,15 +155,17 @@ export default function PublicPlayerPage() {
     if (!player) return;
     setChallenging(true);
     setError(null);
+    setChallengeGate(null);
     try {
       const game = await store.challenge(player.playerId, "10 + 0");
       router.push(`/game/${game.id}`);
     } catch (err) {
-      // One board at a time: the gate is not a failure to print, it names
-      // the game the player should be on — go to it.
+      // One board at a time: the gate is not a failure to print — the popup
+      // names the game the player should be on and offers the way back.
       const gated = activeGameIdFromError(err);
       if (gated) {
-        router.push(`/game/${gated}`);
+        setChallengeGate(gated);
+        setChallenging(false);
       } else {
         setError(err instanceof Error ? err.message : "Couldn't send the challenge.");
         setChallenging(false);
@@ -420,6 +425,15 @@ export default function PublicPlayerPage() {
         You will no longer be friends, and you will not be able to message each
         other. You can always add them again later.
       </ConfirmDialog>
+
+      {/* A challenge refused by the one-game gate: the popup names the running
+          match instead of silently taking the player to it. */}
+      <ActiveGameGateDialog
+        open={challengeGate !== null}
+        activeGameId={challengeGate ?? ""}
+        attempted={`a challenge to ${guestDisplayName(player.username) || GUEST_NAME}`}
+        onClose={() => setChallengeGate(null)}
+      />
     </div>
   );
 }
