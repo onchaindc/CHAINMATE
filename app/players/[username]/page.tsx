@@ -25,6 +25,7 @@ import { ProfileBadge, ProfileHeader } from "@/components/profile/profile-header
 import { RecentForm } from "@/components/profile/recent-form";
 import { StatTiles, formatStreak } from "@/components/profile/stat-tiles";
 import { useIdentity } from "@/lib/identity-context";
+import { activeGameIdFromError } from "@/lib/types";
 import { GUEST_NAME, guestDisplayName } from "@/lib/identity";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
@@ -155,8 +156,15 @@ export default function PublicPlayerPage() {
       const game = await store.challenge(player.playerId, "10 + 0");
       router.push(`/game/${game.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't send the challenge.");
-      setChallenging(false);
+      // One board at a time: the gate is not a failure to print, it names
+      // the game the player should be on — go to it.
+      const gated = activeGameIdFromError(err);
+      if (gated) {
+        router.push(`/game/${gated}`);
+      } else {
+        setError(err instanceof Error ? err.message : "Couldn't send the challenge.");
+        setChallenging(false);
+      }
     }
   };
 

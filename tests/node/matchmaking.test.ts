@@ -146,6 +146,7 @@ test("cancelling leaves the pool, so nobody is paired against a ghost", async ()
 });
 
 test("a pairing is only offered once", async () => {
+  await clearPool();
   const [a, b] = pair();
   await account(a, "Once_A");
   await account(b, "Once_B");
@@ -154,6 +155,12 @@ test("a pairing is only offered once", async () => {
   await hosted.seekMatch(b, "10 + 0");
   const collected = await hosted.pollSeek(a, "10 + 0");
   assert.equal(collected.status, "matched");
+
+  /* One game at a time: the pairing created a real game, so a fresh search
+     only makes sense once it has ended. Resign it, then search again. */
+  if (collected.status === "matched") {
+    await hosted.resignHostedGame(collected.game.id, a);
+  }
 
   /* Hitting Search again must start a fresh search, not re-serve the game just
      collected — that is how a player ends up dumped back into an old board. */

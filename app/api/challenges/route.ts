@@ -5,6 +5,7 @@ import {
   declineChallenge,
   listIncomingChallenges,
 } from "@/lib/server/hosted";
+import { ActiveGameGateError } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -91,6 +92,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
   } catch (err) {
+    // One-game-at-a-time: carry the running game's id so the client can offer
+    // a way back to the board instead of a dead end.
+    if (err instanceof ActiveGameGateError) {
+      return NextResponse.json(
+        { error: err.message, activeGameId: err.activeGameId },
+        { status: 409 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to update the challenge";
     // A challenge that was already answered, or was never ours to answer, is a
     // conflict rather than a server fault — the client shows the message.

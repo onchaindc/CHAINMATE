@@ -1357,10 +1357,14 @@ async function createHostedGameForTournament(
   white: string,
   black: string,
 ): Promise<GameState> {
-  const { createHostedGame, joinHostedGame, writeHostedGameWithChat } = await import(
+  // The unchecked primitives: a bracket pairing must always be able to sit
+  // down. The one-active-game gate exists for games a player CHOOSES to
+  // start; the event's schedule is not theirs to defer, and a stray casual
+  // game must never stall a round (the host can force-end live boards).
+  const { createHostedGameUnchecked, joinHostedGameUnchecked, writeHostedGameWithChat } = await import(
     "@/lib/server/hosted",
   );
-  const game = await createHostedGame(white, {
+  const game = await createHostedGameUnchecked(white, {
     timeControl: doc.timeControl,
     visibility: "public",
   });
@@ -1369,8 +1373,8 @@ async function createHostedGameForTournament(
   game.tournamentId = doc.id;
   await writeHostedGameWithChat(game);
   // A tournament match starts immediately — Black joins, game goes active.
-  // (joinHostedGame(id, playerId) — the game id comes first.)
-  await joinHostedGame(game.id, black);
+  // (The unchecked join takes the already-built game state, not an id.)
+  await joinHostedGameUnchecked(game, black);
   return game;
 }
 

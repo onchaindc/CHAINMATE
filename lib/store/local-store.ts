@@ -5,9 +5,10 @@ import { sanHistoryOf } from "@/lib/ai-engine";
 import { requestAiMove } from "@/lib/ai-runner";
 import { botThinkTimeMs } from "@/lib/types";
 import { computeClocks } from "@/lib/clocks";
-import { LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
+import { isHostedGameId, LOCAL_GAME_PREFIX, LOCAL_PLAYER_KEY } from "@/lib/config";
 import { buildRuleSummary } from "@/lib/summary";
 import {
+  ActiveGameGateError,
   AI_PLAYER_ID,
   isGameOver,
   type AiDifficulty,
@@ -157,7 +158,66 @@ export class LocalGameStore implements GameStore {
     return next;
   }
 
+  /**
+   * This device's one unfinished game — hosted or local, or null.
+   *
+   * One board at a time is a rule of the app, not an artefact of the backend:
+   * an unfinished local game blocks a new one even when the server cannot see
+   * it (guests, offline play). When the running game is hosted, "starting" a
+   * local game silently becomes RESUMING it — the game the player already has
+   * is always the better answer than an error.
+   */
+  private activeLocalGame(): GameState | null {
+    const games = readGames();
+    const me = getPlayerId();
+    const active = Object.values(games).find(
+      (g) =>
+        !isGameOver(g.status) &&
+        // Hosted mirrors are this browser's own (they only arrive through
+        // takeOverLocalGame); local games carry this tab's player id.
+        (isHostedGameId(g.id) || g.creator === me || g.opponent === me),
+    );
+    return active ?? null;
+  }
+
+  /**
+   * The one game this device still has running — hosted or local — or null.
+   * The client-side half of the one-active-game gate: the on-device store can
+   * answer for unfinished games the server has never seen (guests, offline
+   * play), and for hosted games it is mirroring.
+   */
+  async findActiveGame(): Promise<GameState | null> {
+    return this.activeLocalGame();
+  }
+
+  /**
+   * Hand a hosted game over to the local store.
+   *
+   * When the player's running game turns out to be a hosted one, the local
+   * store must be able to answer for it (its own gate, offline reads) — a
+   * light copy, never a second authority: the server stays the source of
+   * truth and normal polling refreshes it.
+   */
+  private takeOverLocalGame(game: GameState): GameState {
+    const games = readGames();
+    games[game.id] = game;
+    writeGames(games);
+    this.emit(game.id);
+    return game;
+  }
+
+  /** The shared one-game gate, from the local store's point of view. */
+  private gateOrResume(): GameState | null {
+    const active = this.activeLocalGame();
+    if (!active) return null;
+    // A running HOSTED game is not a dead end: resume it.
+    if (isHostedGameId(active.id)) return this.takeOverLocalGame(active);
+    throw new ActiveGameGateError(active.id);
+  }
+
   async createGame(options?: CreateGameOptions): Promise<GameState> {
+    const resumed = this.gateOrResume();
+    if (resumed) return resumed;
     const now = Date.now();
     const id = `${LOCAL_GAME_PREFIX}${randomHex(6)}`;
     const game: GameState = {
@@ -183,6 +243,10 @@ export class LocalGameStore implements GameStore {
     difficulty: AiDifficulty = "casual",
     options?: CreateGameOptions,
   ): Promise<GameState> {
+    // One unfinished game at a time — including against the bot. An unfinished
+    // local AI game blocks a second; a running hosted game becomes a resume.
+    const resumed = this.gateOrResume();
+    if (resumed) return resumed;
     const now = Date.now();
     const id = `${LOCAL_GAME_PREFIX}${randomHex(6)}`;
     const game: GameState = {

@@ -365,6 +365,48 @@ export interface CreateGameOptions {
   visibility?: "public" | "private";
 }
 
+/**
+ * Thrown when a player tries to start (or join) a game while one is still
+ * running. One board at a time is the contract — a player who is mid-game is
+ * not in the market for another — so every creation path checks for an active
+ * game and raises this instead of stacking a second one. `activeGameId` names
+ * the game that is in the way, so the UI can offer a way back to the board
+ * ("Resume") instead of leaving the player guessing which match is running.
+ */
+export class ActiveGameGateError extends Error {
+  /** The game that must finish (or be left) before a new one can start. */
+  readonly activeGameId: string;
+
+  constructor(activeGameId: string, message?: string) {
+    super(message ?? "You already have a game in progress. Finish it first.");
+    this.name = "ActiveGameGateError";
+    this.activeGameId = activeGameId;
+  }
+}
+
+/**
+ * Pull the blocked-on game id out of an error, however it travelled.
+ *
+ * The gate crosses a serialization boundary: the server throws
+ * `ActiveGameGateError`, but the HTTP layer turns it into `{ error, activeGameId }`
+ * JSON and the client store rebuilds an Error from the message — none of which
+ * preserve the class. This checks the class first, then the payload the API
+ * attached, so callers can branch on `activeGameId !== undefined` without
+ * caring where the error came from.
+ */
+export function activeGameIdFromError(err: unknown): string | undefined {
+  if (err instanceof ActiveGameGateError) return err.activeGameId;
+  if (
+    err instanceof Error &&
+    "activeGameId" in err &&
+    typeof (err as { activeGameId?: unknown }).activeGameId === "string" &&
+    (err as { activeGameId: string }).activeGameId !== ""
+  ) {
+    return (err as { activeGameId: string }).activeGameId;
+  }
+  return undefined;
+}
+
 export interface GameStore {
   createGame(options?: CreateGameOptions): Promise<GameState>;
   /** Start a single-player game against the built-in on-device AI. */

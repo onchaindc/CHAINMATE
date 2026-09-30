@@ -31,7 +31,7 @@ import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
 import { LocalGameStore } from "@/lib/store/local-store";
 import { useMatchmaking } from "@/lib/use-matchmaking";
 import { mergeGamesById } from "@/lib/utils";
-import { AI_PLAYER_ID, aiLevelFor, isGameOver, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
+import { activeGameIdFromError, AI_PLAYER_ID, aiLevelFor, isGameOver, isPlayedGame, type GameState, type LiveGameEntry, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -193,15 +193,24 @@ export function Lobby() {
   }, [data?.stats.ratingHistory, data?.recent, playerId]);
 
   const [challengeError, setChallengeError] = useState<string | null>(null);
+  /** When the one-game gate blocked a challenge, the game that is in the way. */
+  const [challengeGate, setChallengeGate] = useState<string | null>(null);
   const challengeFriend = async (friendId: string) => {
     setChallenging(friendId);
     setChallengeError(null);
+    setChallengeGate(null);
     try {
       const store = getStore("hosted") as HostedGameStore;
       const game = await store.challenge(friendId, timeControl);
       router.push(`/game/${game.id}`);
     } catch (err) {
-      setChallengeError(err instanceof Error ? err.message : "Could not send the challenge");
+      // The gate is not a failure to report — it names the game to go back to.
+      const gated = activeGameIdFromError(err);
+      if (gated) {
+        setChallengeGate(gated);
+      } else {
+        setChallengeError(err instanceof Error ? err.message : "Could not send the challenge");
+      }
       setChallenging(null);
     }
   };
@@ -382,7 +391,35 @@ export function Lobby() {
                 )}
 
                 {challengeError && <ErrorNote message={challengeError} className="mt-3" />}
+                {/* One board at a time: the running game is the answer, not an error. */}
+                {challengeGate && (
+                  <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-3.5 py-2.5">
+                    <p className="text-xs text-muted-foreground">
+                      You already have a game in progress.
+                    </p>
+                    <Link
+                      href={`/game/${challengeGate}`}
+                      className={buttonVariants({ size: "sm", variant: "outline" })}
+                    >
+                      Resume
+                    </Link>
+                  </div>
+                )}
                 {match.error && <ErrorNote message={match.error} className="mt-3" />}
+                {/* Searching is refused while a game is running — point back at it. */}
+                {match.gate && (
+                  <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-3.5 py-2.5">
+                    <p className="text-xs text-muted-foreground">
+                      You already have a game in progress.
+                    </p>
+                    <Link
+                      href={`/game/${match.gate}`}
+                      className={buttonVariants({ size: "sm", variant: "outline" })}
+                    >
+                      Resume
+                    </Link>
+                  </div>
+                )}
 
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border/60 pt-4 sm:grid-cols-4">
                   <LobbyLink href="/create" icon={Clock} label="Set up a game" />

@@ -10,7 +10,6 @@ import {
   type GameAnalyzer,
 } from "@/lib/server/genlayer";
 import { glickoUpdate, START_RATING, START_RD } from "@/lib/ratings";
-import { aiLevelFor } from "@/lib/types";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import {
   claimWaitingRow,
@@ -36,7 +35,9 @@ import {
   withdrawSeekRow,
 } from "@/lib/supabase/db";
 import {
+  ActiveGameGateError,
   AI_PLAYER_ID,
+  aiLevelFor,
   isGameOver,
   isStaleGameState,
   type AiDifficulty,
@@ -774,6 +775,98 @@ export async function writeGame(game: GameState): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* One active game per player                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The player's one game that is still being played — or null.
+ *
+ * The rule is one board at a time: a player mid-match cannot start another
+ * game, join one, or accept a challenge until this one is finished, resigned,
+ * aborted or claimed by someone else. Everything a player can create counts:
+ * a waiting open game, a running match, a bot game, a challenge awaiting an
+ * answer. (A `waiting` game where the player is the INVITED party is a request
+ * someone else made of them, so it doesn't own them; they can leave it with
+ * Decline.) Seek-pool placeholder rows are excluded — they hold a pool place,
+ * not a board. Supabase is checked first when configured (the fast store can
+ * be per-instance, the database is not); the file store covers tests and
+ * single-instance deployments, where the index is the whole world.
+ */
+export async function readActiveHostedGame(playerId: string): Promise<GameState | null> {
+  const ttlFloor = Date.now() - CHALLENGE_TTL_MS;
+
+  if (supabaseConfigured()) {
+    try {
+      // The account path is best-effort: a game recorded under the account's
+      // player id (different from this device's guest id) must still count —
+      // cross-device continuity is the whole point of the account.
+      const games = await gamesForPlayer([playerId], 25);
+      const active = games.find(
+        (g) =>
+          !g.id.startsWith(SEEK_ID_PREFIX) &&
+          !isGameOver(g.status) &&
+          !(
+            g.status === "waiting" &&
+            g.invited === playerId &&
+            !g.opponent &&
+            (g.createdAt ?? 0) < ttlFloor
+          ),
+      );
+      return active ?? null;
+    } catch {
+      // No database answer: the file store below decides.
+    }
+  }
+
+  const entries = await readIndex();
+  const active = entries.find(
+    (e) =>
+      !e.id.startsWith(SEEK_ID_PREFIX) &&
+      !isGameOver(e.status) &&
+      (e.creator === playerId || e.opponent === playerId) &&
+      !(
+        e.status === "waiting" &&
+        e.invited === playerId &&
+        !e.opponent &&
+        (e.createdAt ?? 0) < ttlFloor
+      ),
+  );
+  if (active) {
+    // Re-read the real record: the index can trail a write by a moment, and
+    // the verdict ("you are in a game") should rest on the game itself.
+    const game = await getHostedGame(active.id);
+    if (game && !isGameOver(game.status)) return game;
+  }
+  return null;
+}
+
+/**
+ * The player has an unfinished game and may not start another. Raised by
+ * every creation/join path — the error carries the game's id so the UI can
+ * offer a straight way back to the board.
+ */
+function gateActiveGame(game: GameState | null): void {
+  if (game) throw new ActiveGameGateError(game.id);
+}
+
+/**
+ * Serialise gate-check-then-write on this instance.
+ *
+ * The gate is a check-then-act race: two tabs pressing "Play" at once both
+ * find no active game, then both create one. The local seek pool already
+ * chains its mutations for the same reason (withSeekLock); the gate reuses
+ * that chain so a creation and a seek can never interleave their check and
+ * write. Instance-wide, not global — cross-instance exclusivity comes from
+ * the durable store, exactly as it did before the gate existed.
+ */
+async function withActiveGameGate<T>(playerId: string, fn: () => Promise<T>): Promise<T> {
+  return withSeekLock(async () => {
+    gateActiveGame(await readActiveHostedGame(playerId));
+    return fn();
+  });
+}
+
 /** Record when a move was played — powers the real chess clocks. */
 function stampMoveTime(game: GameState): GameState {
   const last = game.moves[game.moves.length - 1];
@@ -782,6 +875,17 @@ function stampMoveTime(game: GameState): GameState {
 }
 
 export async function createHostedGame(
+  playerId: string,
+  options: CreateGameOptions = {},
+): Promise<GameState> {
+  // One board at a time — check and create share the lock, so two tabs racing
+  // "Play" cannot both pass the gate. The tournament engine needs the raw
+  // factory: a bracket pair must always be able to sit down.
+  return withActiveGameGate(playerId, () => createHostedGameUnchecked(playerId, options));
+}
+
+/** createHostedGame without the gate — the tournament engine's entry point. */
+export async function createHostedGameUnchecked(
   playerId: string,
   options: CreateGameOptions = {},
 ): Promise<GameState> {
@@ -823,6 +927,19 @@ export async function createHostedGame(
  * involving the AI id, and clock machinery works unchanged.
  */
 export async function createHostedAiGame(
+  playerId: string,
+  difficulty: AiDifficulty,
+  options: CreateGameOptions = {},
+): Promise<GameState> {
+  // A bot game IS a game: an unfinished one — hosted or on-device — blocks a
+  // second, exactly like a human opponent would.
+  return withActiveGameGate(playerId, () =>
+    createHostedAiGameUnchecked(playerId, difficulty, options),
+  );
+}
+
+/** createHostedAiGame without the hosted gate. */
+async function createHostedAiGameUnchecked(
   playerId: string,
   difficulty: AiDifficulty,
   options: CreateGameOptions = {},
@@ -1218,6 +1335,26 @@ export async function joinHostedGame(id: string, playerId: string): Promise<Game
   if (game.invited && game.invited !== playerId) {
     throw new Error("This challenge was sent to another player");
   }
+  // Join is starting a game, so non-creators pass the one-active-game gate
+  // first (gate and write share the lock). The creator is skipped HERE rather
+  // than inside the unchecked half only so the gate never answers a creator's
+  // call — the join's own validation ("You cannot join your own game") is the
+  // correct, more specific reply for them, as it has always been.
+  if (game.creator !== playerId) {
+    return withActiveGameGate(playerId, () => joinHostedGameUnchecked(game, playerId));
+  }
+  return joinHostedGameUnchecked(game, playerId);
+}
+
+/**
+ * The sit-down half of joinHostedGame, after the gate has said yes. Exported
+ * for the tournament engine: a bracket pairing must always be able to start —
+ * a stray casual game on one player's record must never block the round.
+ */
+export async function joinHostedGameUnchecked(
+  game: GameState,
+  playerId: string,
+): Promise<GameState> {
   const res = joinPlayerToGame(game, playerId);
   if (!res.ok) throw new Error(res.error);
   const now = Date.now();
@@ -1371,6 +1508,17 @@ export async function rematchHostedGame(prevId: string, playerId: string): Promi
   if (!other || other === AI_PLAYER_ID) {
     throw new Error("Rematch requires a human opponent");
   }
+  // A rematch starts a new game like any other — it waits its turn behind
+  // whatever is still running. Check and create share the lock.
+  return withActiveGameGate(playerId, () => rematchHostedGameUnchecked(other, prev, playerId));
+}
+
+/** The body of rematchHostedGame, after the gate has said yes. */
+async function rematchHostedGameUnchecked(
+  other: string,
+  prev: GameState,
+  playerId: string,
+): Promise<GameState> {
   const now = Date.now();
   const id = `hosted_${randomHex(6)}`;
   const game: GameState = {
@@ -2119,7 +2267,23 @@ export async function seekMatch(
     }
   }
 
-  return withSeekLock(() => seekMatchLocal(playerId, timeControl, now));
+  // Search for a match while a game is running and you end up in two — the
+  // gate applies to entering the pool exactly as it does to every other way
+  // of starting a game. Gate and pool registration share the lock, so the
+  // check and the write cannot interleave with a racing request. The
+  // idempotent paths above — a pairing already set for us, or our own row
+  // still claimable — return first, on purpose.
+  return withSeekLock(async () => {
+    const gate = await readActiveHostedGame(playerId);
+    if (gate) {
+      // Our own unclaimed seek row is not a second game — re-entering the
+      // pool is what pollSeek does on every poll.
+      const claimed =
+        gate.status === "waiting" && gate.id.startsWith(SEEK_ID_PREFIX);
+      if (!claimed) throw new ActiveGameGateError(gate.id);
+    }
+    return seekMatchLocal(playerId, timeControl, now);
+  });
 }
 
 /**
@@ -2181,6 +2345,9 @@ async function seekMatchLocal(
   const myRd = me.rd ?? START_RD;
   const maxDiff = ratingWindow(myRd, myRd, mine ? Math.max(0, now - mine.seekedAt) : 0);
 
+  // The gate checked in seekMatch is re-checked at the moment of pairing — a
+  // player can have started (or finished) a game while queued.
+  gateActiveGame(await readActiveHostedGame(playerId));
   if (best && bestDiff <= maxDiff) {
     const game = await gameForPair(
       best.playerId,
@@ -2276,6 +2443,19 @@ export async function createChallenge(
   if (fromPlayerId === toPlayerId) {
     throw new Error("You can't challenge yourself.");
   }
+  // A challenge the moment it is accepted IS a game — the sender must not be
+  // able to park several on different players while one match is running.
+  return withActiveGameGate(fromPlayerId, () =>
+    createChallengeUnchecked(fromPlayerId, toPlayerId, timeControl),
+  );
+}
+
+/** createChallenge without the gate (the duplicate-challenge dedupe lives here). */
+async function createChallengeUnchecked(
+  fromPlayerId: string,
+  toPlayerId: string,
+  timeControl?: string,
+): Promise<GameState> {
   const now = Date.now();
 
   if (supabaseConfigured()) {
@@ -2356,13 +2536,20 @@ export async function acceptChallenge(
 
   if (supabaseConfigured()) {
     try {
-      const started = await claimWaitingRow(id, playerId, now, playerId);
+      // The gate shares the lock with the claim: an accepter with an unfinished
+      // game is stopped before the row flips to active, on either path.
+      const started = await withActiveGameGate(playerId, () =>
+        claimWaitingRow(id, playerId, now, playerId),
+      );
       if (started) {
         await writeGame(started);
         return started;
       }
-    } catch {
-      // Fall through to the local path and let it report the real problem.
+    } catch (err) {
+      // The gate's verdict must surface, not drown in the generic fall-through.
+      if (err instanceof ActiveGameGateError) throw err;
+      // Everything else: fall through to the local path and let it report the
+      // real problem.
     }
   }
 
@@ -2376,7 +2563,12 @@ export async function acceptChallenge(
   if (game.status !== "waiting") {
     throw new Error("That challenge is no longer available.");
   }
-  return joinHostedGame(id, playerId);
+  // Accepting a challenge is starting a game: an unfinished one on the
+  // accepter's side blocks it, the same as creating or joining. The fast
+  // Supabase path above bypasses this function's join, so the gate is
+  // checked HERE — covering both paths. (The accepter is never the creator
+  // at this point — that case returned above — so the gate applies.)
+  return withActiveGameGate(playerId, () => joinHostedGameUnchecked(game, playerId));
 }
 
 /** Decline a challenge. The game is aborted, so it never affects a rating. */

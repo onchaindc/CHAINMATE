@@ -8,7 +8,7 @@ import { CountryFlag } from "@/components/ui/country-flag";
 import { useIdentity } from "@/lib/identity-context";
 import { getStore } from "@/lib/store";
 import { HostedGameStore, type PlayerInfo } from "@/lib/store/hosted-store";
-import { shortId, type GameState } from "@/lib/types";
+import { activeGameIdFromError, shortId, type GameState } from "@/lib/types";
 
 /** How often to check for a challenge. Fast enough to feel live. */
 const POLL_MS = 5000;
@@ -70,7 +70,15 @@ export function ChallengeInbox() {
       forget(game.id);
       router.push(`/game/${started.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't accept that challenge.");
+      // One board at a time: an accepter with a game already running is sent
+      // back to that board instead of shown a dead-end error.
+      const gated = activeGameIdFromError(err);
+      if (gated) {
+        forget(game.id);
+        router.push(`/game/${gated}`);
+      } else {
+        setError(err instanceof Error ? err.message : "Couldn't accept that challenge.");
+      }
     } finally {
       setBusyId(null);
     }

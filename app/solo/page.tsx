@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bot, Loader2 } from "lucide-react";
+import { ArrowRight, Bot, Loader2, Play } from "lucide-react";
 import { BotAvatar } from "@/components/game/bot-avatar";
 import { ChessBoard } from "@/components/game/chess-board";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,9 @@ import { ErrorNote } from "@/components/ui/states";
 import { useBoardPrefs } from "@/hooks/use-board-prefs";
 import { getStore } from "@/lib/store";
 import { useIdentity } from "@/lib/identity-context";
-import { AI_LEVELS, START_FEN, aiLevelFor, normalizeAiDifficulty, type AiDifficulty, type GameState } from "@/lib/types";
+import { HostedGameStore } from "@/lib/store/hosted-store";
+import { LocalGameStore } from "@/lib/store/local-store";
+import { activeGameIdFromError, AI_LEVELS, AI_PLAYER_ID, START_FEN, aiLevelFor, normalizeAiDifficulty, type AiDifficulty, type GameState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,6 +45,46 @@ import { cn } from "@/lib/utils";
  */
 const TIME_CONTROLS = ["1 + 0", "3 + 2", "5 + 0", "10 + 0", "15 + 10", "No clock"] as const;
 
+/**
+ * Start (or RESUME) the player's one bot game.
+ *
+ * One board at a time is a rule of the app, so before creating anything this
+ * asks both stores whether a game is already running:
+ *
+ *  - the on-device store answers for local games AND for hosted games it has
+ *    a record of (it mirrors them; see LocalGameStore) — a running game there
+ *    means the solo page simply returns it: "starting" IS resuming;
+ *  - the hosted store (the server) answers for every game it recorded, bot
+ *    or human, and returns the id via ActiveGameGateError when one blocks.
+ *
+ * The server verdict wins: when the hosted store refuses, `err.activeGameId`
+ * names the game to go back to — and when that running game is the bot's, the
+ * local path above usually finds it first and resumes without an error.
+ */
+async function startSoloGame(
+  difficulty: AiDifficulty,
+  options: { timeControl?: string } | undefined,
+  identityIsUser: boolean,
+): Promise<GameState> {
+  const local = getStore("local") as LocalGameStore;
+  const running = await local.findActiveGame();
+  if (running) return running;
+
+  if (identityIsUser) {
+    try {
+      return await (getStore("hosted") as HostedGameStore).createAiGame(difficulty, options);
+    } catch (err) {
+      const gated = activeGameIdFromError(err);
+      if (!gated) throw err;
+      // The blocker may be a game only the server knows about — ask it.
+      const game = await (getStore("hosted") as HostedGameStore).getGame(gated);
+      if (game) return game;
+      throw err;
+    }
+  }
+  return local.createAiGame(difficulty, options);
+}
+
 export default function SoloPage() {
   const router = useRouter();
   const identity = useIdentity();
@@ -50,6 +93,8 @@ export default function SoloPage() {
   const [timeControl, setTimeControl] = useState<string>("5 + 0");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The player's running game, when there is one — the resume card below. */
+  const [running, setRunning] = useState<GameState | null>(null);
 
   /**
    * Preselected opponent, from `?level=` when a rematch sent us back here.
@@ -71,31 +116,32 @@ export default function SoloPage() {
     if (level) setDifficulty(normalizeAiDifficulty(level));
   }, []);
 
+  /** Surface the game the player is already in — one board at a time. */
+  useEffect(() => {
+    let cancelled = false;
+    void (getStore("local") as LocalGameStore)
+      .findActiveGame()
+      .then((g) => {
+        if (!cancelled) setRunning(g);
+      })
+      .catch(() => {
+        /* a missing resume card costs nothing */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const selected = aiLevelFor(difficulty);
 
   const play = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      // Hosted first: a server-recorded bot game is visible to everyone —
-      // the Watch feed, recent games and both players' profiles — and works
-      // across devices. The offline store is the fallback for guests (whose
-      // identity the server cannot attribute) or when the server is down,
-      // so solo play never breaks.
-      let game: GameState | null = null;
-      if (identity.status === "user") {
-        try {
-          game = await getStore("hosted").createAiGame(
-            difficulty,
-            timeControl === "No clock" ? undefined : { timeControl },
-          );
-        } catch {
-          game = null; // fall through to the on-device store
-        }
-      }
-      game ??= await getStore("local").createAiGame(
+      const game = await startSoloGame(
         difficulty,
         timeControl === "No clock" ? undefined : { timeControl },
+        identity.status === "user",
       );
       router.push(`/game/${game.id}`);
     } catch (err) {
@@ -218,6 +264,29 @@ export default function SoloPage() {
               message={error}
               className="mt-4"
             />
+          )}
+
+          {/* The one game already running outranks a new one — and "Play"
+              below acts as Resume while it exists. */}
+          {running && (
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/[0.06] px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  You have a game in progress
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {running.opponent === AI_PLAYER_ID
+                    ? `Against ${aiLevelFor(running.aiDifficulty).name}`
+                    : "A live match is waiting for you"}
+                </p>
+              </div>
+              <Link href={`/game/${running.id}`}>
+                <Button size="sm" variant="outline">
+                  <Play aria-hidden />
+                  Resume
+                </Button>
+              </Link>
+            </div>
           )}
 
           <Button onClick={play} disabled={busy} className="mt-4 w-full sm:w-auto sm:min-w-72 sm:px-12" size="lg">

@@ -12,6 +12,7 @@ import {
   Flag,
   Handshake,
   Loader2,
+  Play,
   RefreshCw,
   SkipBack,
   SkipForward,
@@ -40,7 +41,7 @@ import { getStore } from "@/lib/store";
 import { fenAfterPly } from "@/lib/chess";
 import { isHostedGameId, isLocalGameId } from "@/lib/config";
 import { describeResult } from "@/lib/game-result";
-import { AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
+import { activeGameIdFromError, AI_PLAYER_ID, aiLevelFor, isGameOver, type PlayerStats } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export default function GamePage() {
@@ -61,6 +62,7 @@ export default function GamePage() {
     myTurn,
     winnerSide,
     optimistic,
+    activeGameId,
     join,
     submitMove,
     submitAiMove,
@@ -76,6 +78,20 @@ export default function GamePage() {
 
   const isAiGame = game?.opponent === AI_PLAYER_ID;
   useAiOpponent({ game, submitAiMove, disabled: busy !== null });
+  /**
+   * The one-active-game gate refused the viewer on THIS board (they tried to
+   * join or rematch while another game was still running). Self-contained so
+   * it can gate the early-return screens: only meaningful on an open hosted
+   * board the viewer could have sat down at, and never for the game itself.
+   */
+  const gateHere =
+    Boolean(activeGameId) &&
+    activeGameId !== id &&
+    game !== null &&
+    isHostedGameId(game.id) &&
+    game.status === "waiting" &&
+    game.creator !== myId &&
+    !(game.invited && game.invited !== myId);
 
   const gameOver = game ? isGameOver(game.status) : false;
 
@@ -417,6 +433,37 @@ export default function GamePage() {
           <Button variant="ghost" onClick={() => (window.location.href = "/")}>
             Back home
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  /** The gate refused the viewer: show the game they are already in. */
+  if (gateHere && activeGameId) {
+    return (
+      <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-24 text-center">
+        <p className="font-mono text-2xs uppercase tracking-[0.22em] text-muted-foreground">
+          One game at a time
+        </p>
+        <h1 className="font-display mt-3 text-2xl font-bold tracking-tight">
+          You already have a game in progress
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Finish the board you are on before sitting down at another one.
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link href={`/game/${activeGameId}`}>
+            <Button size="lg">
+              <Play aria-hidden />
+              Resume your game
+            </Button>
+          </Link>
+          <Link
+            href="/play"
+            className={cn(buttonVariants({ variant: "outline" }))}
+          >
+            Back to the lobby
+          </Link>
         </div>
       </div>
     );
@@ -992,17 +1039,26 @@ export default function GamePage() {
                 ? async () => {
                     // Fresh game against the same computer opponent, same level
                     // and clock. The colour draw is random again, exactly like
-                    // starting from the AI page.
-                    const next = await getStore("local").createAiGame(
-                      game.aiDifficulty ?? "casual",
-                      game.timeControl ? { timeControl: game.timeControl } : undefined,
-                    );
-                    router.push(`/game/${next.id}`);
+                    // starting from the AI page. One board at a time: if a game
+                    // is somehow still running, the store refuses (or hands the
+                    // running game back) and we go THERE instead.
+                    try {
+                      const next = await getStore("local").createAiGame(
+                        game.aiDifficulty ?? "casual",
+                        game.timeControl ? { timeControl: game.timeControl } : undefined,
+                      );
+                      router.push(`/game/${next.id}`);
+                    } catch (err) {
+                      const gated = activeGameIdFromError(err);
+                      if (gated) router.push(`/game/${gated}`);
+                    }
                   }
                 : game.backend === "hosted"
                   ? async () => {
-                      const next = await rematch();
-                      router.push(`/game/${next.id}`);
+                      // The hook navigates to the running game itself when the
+                      // one-active-game gate fires; swallow the rethrow so the
+                      // modal's void() stays silent.
+                      await rematch().catch(() => undefined);
                     }
                   : undefined
           }

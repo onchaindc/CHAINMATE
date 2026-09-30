@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Chess } from "chess.js";
 import { describePosition, turnLabel, type PositionInfo } from "@/lib/chess";
 import { getStoreForId } from "@/lib/store";
 import {
+  activeGameIdFromError,
   isGameOver,
   isStaleGameState,
   type GameState,
@@ -24,6 +26,7 @@ export type BusyAction =
   | null;
 
 export function useGame(id: string) {
+  const router = useRouter();
   const storeRef = useRef<GameStore | null>(null);
   if (!storeRef.current) {
     storeRef.current = getStoreForId(id);
@@ -33,6 +36,12 @@ export function useGame(id: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
+  /**
+   * Set when an action was refused by the one-active-game gate: the id of the
+   * game that is still running. The page turns this into a way back to the
+   * board instead of a dead-end error toast.
+   */
+  const [activeGameId, setActiveGameId] = useState<string | null>(null);
 
   /**
    * Optimistic move echo: the position AS IF our move already landed,
@@ -122,8 +131,15 @@ export function useGame(id: string) {
         if (apply) applyState(next);
         return next;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Something went wrong";
-        setError(message);
+        // "You already have a game in progress" is not a fault to display —
+        // it names the game to go back to.
+        const gated = activeGameIdFromError(err);
+        if (gated) {
+          setActiveGameId(gated);
+        } else {
+          const message = err instanceof Error ? err.message : "Something went wrong";
+          setError(message);
+        }
         throw err;
       } finally {
         setBusy(null);
@@ -185,8 +201,16 @@ export function useGame(id: string) {
     // `apply: false` — the server creates a brand-new game, and writing that
     // into this hook (still bound to the old id) would flash the fresh board
     // and re-fire the end-game modal before the caller navigates.
-    () => runAction("rematch", () => storeRef.current!.rematch(id), false),
-    [id, runAction],
+    () =>
+      runAction("rematch", () => storeRef.current!.rematch(id), false).catch((err) => {
+        // The gate fired because another game is still running (an unfinished
+        // one started elsewhere, a stray tab). Going to THAT game is the
+        // answer — never stacking a rematch on top of it.
+        const gated = activeGameIdFromError(err);
+        if (gated) router.push(`/game/${gated}`);
+        throw err;
+      }),
+    [id, runAction, router],
   );
   /** Settle a flag fall right now — silent: failures fall back to polling. */
   const resolveTimeout = useCallback(async () => {
@@ -265,6 +289,8 @@ export function useGame(id: string) {
     turnSide,
     myTurn,
     winnerSide,
+    /** Set when the one-active-game gate refused an action (id of the running game). */
+    activeGameId,
     /** Optimistic position echo (our last move, shown pre-confirmation). */
     optimistic,
     join,

@@ -246,6 +246,10 @@ test("an unfinished game is refused", async () => {
     /still in progress/,
   );
   assert.equal(calls.length, 0);
+
+  /* Leave no running game behind: the one-active-game gate would (correctly)
+     refuse the next test's startGame() for the same players. */
+  await hosted.resignHostedGame(game.id, WHITE);
 });
 
 /* ------------------------------------------------------------------ */

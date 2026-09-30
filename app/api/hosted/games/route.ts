@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
 import { createHostedAiGame, createHostedGame, listHostedGames } from "@/lib/server/hosted";
-import { normalizeAiDifficulty } from "@/lib/types";
+import { normalizeAiDifficulty, ActiveGameGateError } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -51,6 +51,14 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ game });
   } catch (err) {
+    // One-game-at-a-time is a rule, not a fault: the client gets the running
+    // game's id so it can offer a straight way back to the board.
+    if (err instanceof ActiveGameGateError) {
+      return NextResponse.json(
+        { error: err.message, activeGameId: err.activeGameId },
+        { status: 409 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to create game";
     return NextResponse.json({ error: message }, { status: 500 });
   }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveActingPlayer } from "@/lib/server/auth";
+import { ActiveGameGateError } from "@/lib/types";
 import {
   abortHostedGame,
   arriveHostedGame,
@@ -159,6 +160,14 @@ export async function POST(req: NextRequest, { params }: Params) {
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
   } catch (err) {
+    // The one-active-game gate: 409 with the running game's id, so the client
+    // can send the player back to the board they are already on.
+    if (err instanceof ActiveGameGateError) {
+      return NextResponse.json(
+        { error: err.message, activeGameId: err.activeGameId },
+        { status: 409 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Request failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }

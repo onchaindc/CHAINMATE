@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getStore } from "@/lib/store";
 import { HostedGameStore } from "@/lib/store/hosted-store";
+import { activeGameIdFromError } from "@/lib/types";
 
 /** Poll interval while waiting in the seek pool. */
 const SEEK_POLL_MS = 2500;
@@ -27,6 +28,8 @@ export interface Matchmaking {
   /** In the pool, polling for a partner. */
   seeking: boolean;
   error: string | null;
+  /** The one-active-game gate refused the search: the running game's id. */
+  gate: string | null;
   /** Enter the pool. Navigates to the game as soon as a pair is found. */
   start: (timeControl: string) => Promise<void>;
   /** Leave the pool. */
@@ -44,6 +47,8 @@ export function useMatchmaking(): Matchmaking {
   const [starting, setStarting] = useState(false);
   const [seeking, setSeeking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the server refused the search because a game is still running. */
+  const [gate, setGate] = useState<string | null>(null);
   const mounted = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attempts = useRef(0);
@@ -73,6 +78,7 @@ export function useMatchmaking(): Matchmaking {
   const start = useCallback(
     async (timeControl: string) => {
       setError(null);
+      setGate(null);
       setStarting(true);
       attempts.current = 0;
       try {
@@ -123,7 +129,14 @@ export function useMatchmaking(): Matchmaking {
         setStarting(false);
         setSeeking(false);
         active.current = false;
-        setError(err instanceof Error ? err.message : "Failed to find an opponent");
+        // Searching while a game is running is refused by the gate — that is
+        // not a failure, it points at the board to go back to.
+        const gated = activeGameIdFromError(err);
+        if (gated) {
+          setGate(gated);
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to find an opponent");
+        }
       }
     },
     [router],
@@ -137,5 +150,5 @@ export function useMatchmaking(): Matchmaking {
     void store().cancelSeek().catch(() => {});
   }, [stopPolling]);
 
-  return { starting, seeking, error, start, cancel };
+  return { starting, seeking, error, gate, start, cancel };
 }

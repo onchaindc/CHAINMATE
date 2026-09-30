@@ -40,6 +40,8 @@ interface ApiResponse {
   player?: PublicPlayer;
   /** The viewer's blocked player ids (/api/blocks). */
   blocked?: string[];
+  /** Set when the request was refused because a game is already running. */
+  activeGameId?: string;
   friendship?: "none" | "requested" | "incoming" | "friends";
   friends?: PlayerStats[];
   incoming?: PlayerStats[];
@@ -119,7 +121,15 @@ async function api(path: string, init?: RequestInit): Promise<ApiResponse> {
   });
   const data = (await res.json().catch(() => ({}))) as ApiResponse;
   if (!res.ok || data.error) {
-    throw new Error(data.error ?? `Request failed (${res.status})`);
+    const err = new Error(data.error ?? `Request failed (${res.status})`);
+    // The one-active-game gate names the game that is in the way, so the UI
+    // can offer a straight way back to the board. HTTP does not carry Error
+    // subclasses; re-attach the id here so callers can read it uniformly
+    // (activeGameIdFromError checks both shapes).
+    if (data.activeGameId) {
+      (err as Error & { activeGameId?: string }).activeGameId = data.activeGameId;
+    }
+    throw err;
   }
   return data;
 }
