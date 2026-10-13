@@ -41,6 +41,8 @@ export default function PublicPlayerPage() {
   const [player, setPlayer] = useState<{
     playerId: string;
     username: string;
+    /** Optional free-form display name (presentational; name shows as-is). */
+    displayName?: string | null;
     isGuest: boolean;
     country: string | null;
     rating: number;
@@ -217,7 +219,9 @@ export default function PublicPlayerPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 lg:py-16">
       <ProfileHeader
-        name={guestDisplayName(player.username) || GUEST_NAME}
+        name={
+          player.displayName?.trim() || guestDisplayName(player.username) || GUEST_NAME
+        }
         eyebrow="Player"
         country={player.country}
         rating={player.rating}

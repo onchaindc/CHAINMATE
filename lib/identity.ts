@@ -49,6 +49,27 @@ export function guestDisplayName(username?: string | null): string {
 }
 
 /**
+ * Display names are the free-form layer: unlike usernames they may hold any
+ * characters — spaces, emoji, scripts that don't share an alphabet with the
+ * keyboard layout. The only rules are honesty rules, not identity rules:
+ *
+ *  1–30 visible code points (counted per code point, so emoji survive),
+ *  no control characters, no line breaks — and nothing else. A display
+ *  name is never unique and never URL-addressable; the username keeps
+ *  those jobs. Empty (after trimming) means "clear my display name".
+ */
+export const DISPLAY_NAME_MAX = 30;
+
+/** Returns true when useable; false values are for the settings UI locally. */
+export function isValidDisplayName(value: string): boolean {
+  const chars = Array.from(value.trim()).map((c) => c.codePointAt(0)!);
+  if (chars.length < 1 || chars.length > DISPLAY_NAME_MAX) return false;
+  // Control/format characters only (U+0000–001F, U+007F–009F) are banned —
+  // everything else, including emoji and combining marks, belongs.
+  return chars.every((x) => x > 0x1f && (x < 0x7f || x > 0x9f));
+}
+
+/**
  * No derived labels exist anymore. Kept only as a tombstone so any leftover
  * caller compiles and renders nothing — never a name.
  * @deprecated
@@ -82,6 +103,8 @@ export interface AuthIdentity {
   /** The account's permanent player id (fresh `acct_…` id, never a guest id). */
   playerId: string;
   username: string;
+  /** Optional free-form display name (presentational only; see 0019). */
+  displayName?: string | null;
   rating: number;
   accessToken: string;
 }

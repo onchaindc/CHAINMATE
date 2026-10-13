@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { supabaseConfigured } from "@/lib/supabase/config";
-import { usernameTaken, profileForUserId } from "@/lib/supabase/db";
+import { usernameTaken, profileForUserId, setPlayerDisplayName } from "@/lib/supabase/db";
 import { validateUsername } from "@/lib/achievements";
+import { isValidDisplayName } from "@/lib/identity";
 import { updatePlayerCountry, updatePlayerIdentity, getPlayerStats } from "@/lib/server/hosted";
 
 export const runtime = "nodejs";
@@ -35,7 +36,13 @@ async function resolveAuthUser(req: NextRequest): Promise<{ userId: string; prof
  * game store, but the profile update targets the Supabase profile by user_id.
  */
 export async function POST(req: NextRequest) {
-  let body: { playerId?: string; country?: string | null; username?: string; accessToken?: string };
+  let body: {
+    playerId?: string;
+    country?: string | null;
+    username?: string;
+    displayName?: string | null;
+    accessToken?: string;
+  };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -121,6 +128,45 @@ export async function POST(req: NextRequest) {
       // updatePlayerIdentity() materialises a record for any id it is handed,
       // so calling it first would fabricate a stats row under a mismatched id.
       await updatePlayerIdentity(storePlayerId, { username: newUsername });
+    }
+
+    // Handle display-name change — the free-form presentation layer. Unlike
+    // the username it is not unique and not url-addressable, so there is no
+    // availability check: validity is the whole gate, and an empty value
+    // means "clear it" (the profile falls back to the username).
+    if ("displayName" in body) {
+      const storePlayerId = auth?.profile?.player_id || playerId;
+      if (!storePlayerId || !auth) {
+        return NextResponse.json(
+          { error: "Sign in to change your display name." },
+          { status: 401 },
+        );
+      }
+      const raw = body.displayName;
+      const next = typeof raw === "string" ? raw.trim() : "";
+      if (next.length > 0 && !isValidDisplayName(next)) {
+        return NextResponse.json(
+          {
+            error:
+              "Display names are 1–30 characters with no control characters. Any other characters — emoji, spaces, accents — are welcome.",
+          },
+          { status: 400 },
+        );
+      }
+      const saved = await setPlayerDisplayName(
+        auth.profile?.player_id ?? storePlayerId,
+        auth.userId,
+        next || null,
+      );
+      if (!saved) {
+        return NextResponse.json(
+          {
+            error:
+              "No profile is linked to this account yet, so the display name could not be saved. Sign out and back in to finish account setup.",
+          },
+          { status: 409 },
+        );
+      }
     }
 
     // Handle country change

@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SectionLabel } from "@/components/ui/page-header";
 import { useIdentity } from "@/lib/identity-context";
-import { getIdentityToken } from "@/lib/identity";
+import { getIdentityToken, isValidDisplayName } from "@/lib/identity";
 import {
   BOARD_THEMES,
   PIECE_SETS,
@@ -153,6 +153,14 @@ export function SettingsList({ stats }: { stats: PlayerStats | null }) {
         hint="3–20 characters · letters, numbers, underscores"
       >
         <SettingsUsernameEditor />
+      </Row>
+
+      <Row
+        icon={UserRound}
+        label="Display name"
+        hint="Shown on your profile · any characters, emoji and spaces welcome"
+      >
+        <SettingsDisplayNameEditor />
       </Row>
 
       <Row
@@ -458,6 +466,128 @@ function SettingsUsernameEditor() {
       {state === "ok" && <p className="text-2xs text-positive">Available</p>}
       {state === "taken" && <p className="text-2xs text-destructive">That username is taken</p>}
       {state === "checking" && <p className="text-2xs text-muted-foreground">Checking…</p>}
+      {error && <p className="text-2xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Display-name editing, in Settings. The free-form layer: unlike the
+ * username editor there is NO availability check (display names are never
+ * unique) and NO character stripping (emoji, spaces, any script belongs).
+ * The input's maxLength mirrors the server's validation exactly; validity
+ * is checked on save the way the server will re-check it.
+ */
+function SettingsDisplayNameEditor() {
+  const identity = useIdentity();
+  const token = getIdentityToken();
+  const current = identity.displayName ?? "";
+  const [editing, setEditing] = useState(false);
+  const [next, setNext] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const canEdit = !identity.isGuest && identity.linked;
+
+  const save = async () => {
+    const value = next.trim();
+    if (value.length > 0 && !isValidDisplayName(value)) {
+      setError("1–30 characters, no control characters.");
+      return;
+    }
+    if (value === current.trim()) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/players/me", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ playerId: identity.playerId, displayName: value || null }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Failed to update display name.");
+      await identity.refresh();
+      setSuccess(true);
+      setEditing(false);
+      setTimeout(() => setSuccess(false), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update display name.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!canEdit) {
+    return (
+      <span className="text-2xs text-muted-foreground">
+        {identity.isGuest ? "Create an account to pick a name" : "Finish account setup first"}
+      </span>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <span className="flex items-center gap-2">
+        {current ? (
+          <span className="text-sm text-foreground">{current}</span>
+        ) : (
+          <span className="text-2xs text-muted-foreground">Not set — your username shows</span>
+        )}
+        {success && <span className="text-2xs text-positive">Saved</span>}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setEditing(true);
+            setNext(current);
+            setError(null);
+            setSuccess(false);
+          }}
+        >
+          {current ? "Edit" : "Add"}
+        </Button>
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-64">
+      <div className="flex gap-2">
+        <Input
+          autoFocus
+          value={next}
+          maxLength={40}
+          onChange={(e) => {
+            // No stripping: emoji and spaces belong here. The 30-code-point
+            // rule is enforced on save, the same way the server does it —
+            // maxLength only keeps runaway input out of the box.
+            setNext(e.target.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && !saving && void save()}
+          className="text-sm"
+          aria-label="Display name"
+          placeholder="How your name should look"
+        />
+        <Button
+          size="icon"
+          disabled={saving || next.trim().length === 0}
+          onClick={() => void save()}
+          aria-label="Save display name"
+        >
+          {saving ? <Loader2 className="animate-spin" aria-hidden /> : <Check aria-hidden />}
+        </Button>
+        <Button size="icon" variant="ghost" onClick={() => setEditing(false)} aria-label="Cancel">
+          <X aria-hidden />
+        </Button>
+      </div>
       {error && <p className="text-2xs text-destructive">{error}</p>}
     </div>
   );

@@ -22,6 +22,13 @@ export interface ProfileRow {
   last_played_at: number | null;
   /** Optional ISO 3166-1 alpha-2 country code (flag display only). */
   country: string | null;
+  /**
+   * Optional free-form display name (emoji + any characters, not unique).
+   * Purely presentational: NULL ≡ "show the username". The username stays
+   * the identity primitive (unique, URL-addressable, strictly validated) —
+   * this never replaces it and is never used for lookup.
+   */
+  display_name: string | null;
   peak_rating: number;
   wins: number;
   losses: number;
@@ -764,6 +771,30 @@ export async function linkProfileToAccount(input: {
     throw new Error("We couldn't save your profile. Please try again.");
   }
   return data as unknown as ProfileRow;
+}
+
+/**
+ * Save (or clear) the optional free-form display name on a profile row.
+ * Keyed like every other profile write: by the account's user_id when a row
+ * is bound to one, falling back to player_id for rows that only have one.
+ * Returns false when no row matched (the caller reports the unlinked state
+ * rather than pretending the save landed).
+ */
+export async function setPlayerDisplayName(
+  playerId: string,
+  userId: string | null,
+  displayName: string | null,
+): Promise<boolean> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return false;
+  const filterColumn = userId ? "user_id" : "player_id";
+  const filterValue = userId ?? playerId;
+  const { data } = await admin
+    .from("profiles")
+    .update({ display_name: displayName || null, updated_at: new Date().toISOString() })
+    .eq(filterColumn, filterValue)
+    .select("user_id, player_id");
+  return Array.isArray(data) && data.length > 0;
 }
 
 /** Update the optional country flag on a player's profile (display only). */

@@ -23,6 +23,12 @@ export interface IdentityState {
   /** The active player id (account id when signed in, device guest otherwise). */
   playerId: string;
   username: string;
+  /**
+   * The account's optional free-form display name (emoji + any characters).
+   * Purely presentational — null ≡ "show the username". Never used for
+   * lookup, linking or routing: the username keeps all of those jobs.
+   */
+  displayName: string | null;
   rating: number | null;
   isGuest: boolean;
   /**
@@ -43,6 +49,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<IdentityStatus>("loading");
   const [playerId, setPlayerId] = useState("");
   const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [rating, setRating] = useState<number | null>(null);
   const [linked, setLinked] = useState(true);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -74,6 +81,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           authenticated?: boolean;
           linked?: boolean;
           username?: string | null;
+          displayName?: string | null;
           playerId?: string | null;
           avatarUrl?: string | null;
         };
@@ -87,6 +95,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           ratedPlayerId = nextPlayerId;
           setPlayerId(nextPlayerId);
           setUsername(nextUsername);
+          setDisplayName(data.displayName ?? null);
           setLinked(isLinked);
           setAvatarUrl(data.avatarUrl ?? null);
           setStatus("user");
@@ -94,6 +103,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
             userId: auth.userId,
             playerId: nextPlayerId,
             username: nextUsername,
+            displayName: data.displayName ?? null,
             rating: auth.rating,
             accessToken: auth.accessToken,
           });
@@ -103,6 +113,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           setStatus("guest");
           setPlayerId(g.playerId);
           setUsername(g.username);
+          setDisplayName(null);
           setAvatarUrl(null);
           ratedPlayerId = g.playerId;
           // Guests have no account to link; don't leave the flag false.
@@ -142,6 +153,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
           userId: session.user.id,
           playerId: existing?.playerId ?? getGuestIdentity().playerId,
           username: existing?.username ?? "",
+          displayName: existing?.displayName ?? null,
           rating: existing?.rating ?? 0,
           accessToken: session.access_token,
         });
@@ -165,6 +177,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
             userId: session.user.id,
             playerId: existing?.playerId ?? getGuestIdentity().playerId,
             username: existing?.username ?? "",
+            displayName: existing?.displayName ?? null,
             rating: existing?.rating ?? 0,
             accessToken: session.access_token,
           });
@@ -199,6 +212,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
         status,
         playerId,
         username,
+        displayName,
         rating,
         isGuest: status === "guest",
         linked,

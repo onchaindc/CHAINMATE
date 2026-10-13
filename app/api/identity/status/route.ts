@@ -109,6 +109,7 @@ export async function GET(req: NextRequest) {
     linked: true,
     userId: data.user.id,
     username: profile.username,
+    displayName: profile.display_name ?? null,
     playerId: profile.player_id,
     rating: profile.rating,
     games: profile.games,

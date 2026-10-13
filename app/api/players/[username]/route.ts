@@ -62,6 +62,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       player: {
         playerId,
         username: profile.username,
+        displayName: profile.display_name ?? null,
         isGuest: profile.is_guest,
         country: profile.country,
         rating: profile.rating,

@@ -104,9 +104,12 @@ function ProfileContent() {
   // account has no profiles row (identity.linked === false) a rename cannot
   // persist, so the banner below says so instead of letting this placeholder
   // look like a name that just refuses to change.
-  // The signed-in account's name, or the device's stable handle — the profile
-  // header never reads as the bare word "Guest".
-  const name = guestDisplayName(identity.username) || "Player";
+  // Display order: the optional free-form display name (emoji and any
+  // characters welcome — the presentation layer from 0019), then the signed-
+  // in account's username or the device's stable handle. The profile header
+  // never reads as the bare word "Guest".
+  const name =
+    identity.displayName?.trim() || guestDisplayName(identity.username) || "Player";
   const rating = stats?.rating ?? identity.rating;
   const provisional = stats ? stats.games < 5 : false;
   const winRate =

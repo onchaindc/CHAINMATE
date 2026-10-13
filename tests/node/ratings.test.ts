@@ -264,6 +264,7 @@ function profileRow(playerId: string, over: Partial<ProfileRow> = {}): ProfileRo
     rd: 80,
     last_played_at: 1_700_000_000_000,
     country: null,
+    display_name: null,
     peak_rating: 1520,
     wins: 12,
     losses: 4,
