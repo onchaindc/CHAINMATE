@@ -779,6 +779,12 @@ export async function linkProfileToAccount(input: {
  * is bound to one, falling back to player_id for rows that only have one.
  * Returns false when no row matched (the caller reports the unlinked state
  * rather than pretending the save landed).
+ *
+ * Write ERRORS THROW rather than report false: false means "no profile row",
+ * a genuinely different failure from a rejected write, and collapsing both
+ * into false reported every rejected write as "no profile linked" — with
+ * the most likely real cause being the 0019 migration not applied yet, a
+ * state no sign-out/sign-in cycle can fix.
  */
 export async function setPlayerDisplayName(
   playerId: string,
@@ -786,14 +792,26 @@ export async function setPlayerDisplayName(
   displayName: string | null,
 ): Promise<boolean> {
   const admin = getSupabaseAdmin();
-  if (!admin) return false;
+  if (!admin) throw new Error("Accounts aren't configured yet.");
   const filterColumn = userId ? "user_id" : "player_id";
   const filterValue = userId ?? playerId;
-  const { data } = await admin
+  const { data, error } = await admin
     .from("profiles")
     .update({ display_name: displayName || null, updated_at: new Date().toISOString() })
     .eq(filterColumn, filterValue)
     .select("user_id, player_id");
+  if (error) {
+    // PostgREST rejects an unknown-column write as PGRST204. The deployment
+    // needs migration 0019_display_names.sql applied — say so instead of the
+    // unlinked-profile message, which would send the player into a hopeless
+    // sign-out/sign-in loop.
+    if (/display_name|PGRST204/i.test(error.message)) {
+      throw new Error(
+        "The display-name field isn't in the database yet. Run supabase/migrations/0019_display_names.sql in the Supabase SQL editor, then try again.",
+      );
+    }
+    throw new Error(error.message);
+  }
   return Array.isArray(data) && data.length > 0;
 }
 
