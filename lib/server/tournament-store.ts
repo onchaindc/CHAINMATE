@@ -420,41 +420,46 @@ function iso(ms: number | null | undefined): string | null {
 /**
  * One row per tournament. `entry_fee_nim` is a NULLABLE RESERVED column for
  * Phase 2B — this phase never writes it (it stays NULL for every row).
+ * Shared by the mirror write and the status-lock's self-heal (same payload,
+ * so the healed row never disagrees with the one the mirror would write).
  */
+function rowOf(doc: TournamentDocument): Record<string, unknown> {
+  return {
+    id: doc.id,
+    name: doc.name,
+    description: doc.description,
+    creator_player_id: doc.creatorId,
+    format: doc.format,
+    time_control: doc.timeControl,
+    max_players: doc.maxPlayers,
+    status: doc.status,
+    swiss_rounds: doc.swissRounds,
+    registration_closes_at: iso(doc.registrationClosesAt),
+    scheduled_start_at: iso(doc.scheduledStartAt),
+    scheduled_end_at: iso(doc.scheduledEndAt),
+    cancel_reason: doc.cancelReason ?? null,
+    min_players: doc.minPlayers ?? null,
+    start_when_full: doc.startWhenFull ?? false,
+    started_at: iso(doc.startedAt),
+    completed_at: iso(doc.completedAt),
+    next_round_at: iso(doc.nextRoundAt),
+    current_round: doc.currentRound,
+    total_rounds: doc.totalRounds,
+    winner_player_id: doc.winnerId,
+    // Phase 2B economy: exact luna text + preset + payout aggregate.
+    entry_fee_luna: doc.entryFeeLuna ?? null,
+    prize_preset: doc.prizePreset ?? null,
+    payout_status: doc.payoutStatus ?? "none",
+    updated_at: new Date().toISOString(),
+  };
+}
+
 async function upsertTournamentRow(doc: TournamentDocument): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
-  const { error } = await admin.from("tournaments").upsert(
-    {
-      id: doc.id,
-      name: doc.name,
-      description: doc.description,
-      creator_player_id: doc.creatorId,
-      format: doc.format,
-      time_control: doc.timeControl,
-      max_players: doc.maxPlayers,
-      status: doc.status,
-      swiss_rounds: doc.swissRounds,
-      registration_closes_at: iso(doc.registrationClosesAt),
-      scheduled_start_at: iso(doc.scheduledStartAt),
-      scheduled_end_at: iso(doc.scheduledEndAt),
-      cancel_reason: doc.cancelReason ?? null,
-      min_players: doc.minPlayers ?? null,
-      start_when_full: doc.startWhenFull ?? false,
-      started_at: iso(doc.startedAt),
-      completed_at: iso(doc.completedAt),
-      next_round_at: iso(doc.nextRoundAt),
-      current_round: doc.currentRound,
-      total_rounds: doc.totalRounds,
-      winner_player_id: doc.winnerId,
-      // Phase 2B economy: exact luna text + preset + payout aggregate.
-      entry_fee_luna: doc.entryFeeLuna ?? null,
-      prize_preset: doc.prizePreset ?? null,
-      payout_status: doc.payoutStatus ?? "none",
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "id" },
-  );
+  const { error } = await admin
+    .from("tournaments")
+    .upsert(rowOf(doc), { onConflict: "id" });
   if (error) {
     console.warn(`[chainmate] tournament mirror failed (${doc.id}):`, error.message);
   }
@@ -617,27 +622,126 @@ export async function tournamentIdForGame(gameId: string): Promise<string | null
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Cross-instance status lock                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The slice of the Supabase client the durable status lock uses, as a
+ * structural interface. Production passes the real admin client (cast);
+ * tests inject a fake through setTournamentStatusLockAdmin — there is no
+ * environment that points the app at a test database.
+ */
+export interface TournamentStatusLockAdmin {
+  from(table: string): {
+    update(values: Record<string, unknown>): {
+      eq(col: string, value: string): {
+        eq(col: string, value: string): {
+          select(): PromiseLike<{
+            data: { id: string }[] | null;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+    select(columns: string): {
+      eq(col: string, value: string): {
+        maybeSingle(): PromiseLike<{
+          data: { status: string } | null;
+          error: { message: string } | null;
+        }>;
+      };
+    };
+    upsert(
+      row: Record<string, unknown>,
+      opts: { onConflict: string },
+    ): PromiseLike<{ error: { message: string } | null }>;
+  };
+}
+
+/** Test seam: replace the durable status-lock client entirely. */
+let statusLockAdminOverride: TournamentStatusLockAdmin | null | undefined;
+
+/** Test-only injection point for the durable status lock. */
+export function setTournamentStatusLockAdmin(
+  admin: TournamentStatusLockAdmin | null,
+): void {
+  statusLockAdminOverride = admin;
+}
+
+function statusLockAdmin(): TournamentStatusLockAdmin | null {
+  if (statusLockAdminOverride !== undefined) return statusLockAdminOverride;
+  const real = getSupabaseAdmin();
+  return real ? (real as unknown as TournamentStatusLockAdmin) : null;
+}
+
 /** Conditional status update — the cross-instance lock for status transitions. */
 export async function transitionTournamentStatus(
   id: string,
   from: TournamentStatus,
   to: TournamentStatus,
 ): Promise<boolean> {
-  const admin = getSupabaseAdmin();
+  const admin = statusLockAdmin();
   if (!admin) return true; // no durable lock available — in-process check stands
-  const { data, error } = await admin
-    .from("tournaments")
-    .update({ status: to, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("status", from)
-    .select("id");
-  if (error) {
-    // Durable lock unavailable — fall back to the in-process transition check
-    // rather than failing the action (same philosophy as hosted.ts).
-    console.warn("[chainmate] tournament status lock unavailable:", error.message);
-    return true;
+  const table = admin.from("tournaments");
+  const attempt = async (): Promise<boolean> => {
+    const { data, error } = await table
+      .update({ status: to, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status", from)
+      .select();
+    if (error) {
+      // Durable lock unavailable — fall back to the in-process transition
+      // check rather than failing the action (same philosophy as hosted.ts).
+      console.warn("[chainmate] tournament status lock unavailable:", error.message);
+      return true;
+    }
+    return Array.isArray(data) && data.length > 0;
+  };
+  if (await attempt()) return true;
+
+  // The guarded update matched nothing. That has TWO meanings:
+  //  (a) another instance won the race and genuinely transitioned first, or
+  //  (b) the mirror row is missing or stale — it was never written (fast
+  //      store and mirror can drift apart: the mirror is best-effort), or an
+  //      earlier transition's mirror write failed mid-flight.
+  // Meaning (b) used to be PERMANENT: eq("status", from) matches nothing
+  // forever, so every host action after it — start, complete, cancel — died
+  // with "could not be started / already done elsewhere" and no amount of
+  // retrying healed it. Distinguish the two by the runtime source of truth,
+  // the fast store: if it still holds `from`, nobody transitioned anywhere,
+  // and the mirror is the thing that is wrong.
+  try {
+    const { data: row, error: readError } = await (admin
+      .from("tournaments")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle() as PromiseLike<{
+      data: { status: string } | null;
+      error: { message: string } | null;
+    }>);
+    if (readError) return true; // no durable answer — in-process check stands
+    if (row?.status === to) return true; // already done — adopt, the doc follows
+
+    // Heal only against a fast store that still agrees with this transition;
+    // a fast doc that has moved on is the other instance's game and is
+    // reported as "done elsewhere" to the caller, exactly as before.
+    const doc = await getTournamentDoc(id);
+    if (!doc || doc.status !== from) return false;
+    const { error: healError } = await table.upsert(rowOf(doc), { onConflict: "id" });
+    if (healError) {
+      console.warn(
+        `[chainmate] tournament status lock could not heal the mirror (${id}):`,
+        healError.message,
+      );
+      return false;
+    }
+    return await attempt();
+  } catch {
+    // Healing is best-effort: the honest answer to "did anyone transition?"
+    // with the mirror silent is no, in-process check stands.
+    return false;
   }
-  return Array.isArray(data) && data.length > 0;
 }
 
 export type { TournamentSummary };
